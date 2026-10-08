@@ -2774,8 +2774,11 @@ def _attr(value):
 
 def _known(steps):
     """The well-formed steps, mended (see _mend), without names there are no steps for. A screen or procedure step
-    without "read", "exact" or "learned", which only she sets (think, _quick, run_plan)."""
+    without "read", "exact" or "learned", which only she sets (think, _quick, run_plan). Never a shortcut, which
+    only shortcut_plan makes: one presses the Windows key, and a model copying one from her history could plan
+    Win+S, typing a command and Enter."""
     steps = [_mend(s) for s in steps if isinstance(s, dict) and isinstance(s.get("do"), str) and s["do"]]
+    steps = [s for s in steps if s["do"] != "shortcut"]
     unknown = [s["do"] for s in steps if s["do"] not in KNOWN_STEPS]
     if unknown:
         print(f"  no such steps, left out: {', '.join(unknown)}")
@@ -3386,7 +3389,21 @@ def task_worker():
                 chat = (payload.get("origin") or {}).get("phone")
                 ask = (lambda q: PHONE["ask"](chat, q)) if chat is not None and PHONE["ask"] else None
                 job = coder.Job(folder, payload["task"], ask=ask, cancelled=lambda: TASK_STORE.is_cancelled(task["id"]))
-                ok, said = job.run()
+                try:
+                    ok, said = job.run()
+                except Exception as exc:  # out of time, OpenCode stopped, or you cancelled it: what it changed stays,
+                    # so the way back is kept and said as well. Only a job that finished said it: one that hit the
+                    # 30 minutes said "Open Tasks for the details", its snapshot a loose commit only git fsck found
+                    TASK_STORE.finish(task["id"], json.dumps({"edited": job.edited, "ran": job.ran, "refused": job.refused,
+                                                              "snapshot": snap}), tasking.redact(str(exc)) or "it stopped")
+                    changed = f"It changed {len(job.edited)} file{'' if len(job.edited) == 1 else 's'} first. " \
+                              f"{coder.undo_line(snap)}" if job.edited else ""
+                    if TASK_STORE.is_cancelled(task["id"]):
+                        if changed:
+                            tell_task(task, f"Task {task['id']} was cancelled: {task['description']}. {changed}")
+                    else:
+                        tell_task(task, _task_result_line(task, changed or "Open Tasks for the details.", False))
+                    return
                 done = said or (f"It changed {len(job.edited)} file{'' if len(job.edited) == 1 else 's'}."
                                 if job.edited else "It didn't change anything.")
                 if job.refused:
@@ -3442,7 +3459,8 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
                     "Chrome/141.0 Safari/537.36", "Accept-Language": "en-US,en;q=0.9"}
 # keys and typing never go to these, so nothing she hears, a video included, can run commands on the PC
 SHELLS = {"cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe", "wt.exe", "openconsole.exe", "conhost.exe",
-          "wsl.exe", "bash.exe", "mintty.exe"}
+          "wsl.exe", "bash.exe", "mintty.exe", "alacritty.exe", "wezterm-gui.exe", "tabby.exe", "putty.exe",
+          "powershell_ise.exe"}
 KEY_NAMES = {"control": "ctrl", "escape": "esc", "return": "enter", "pgup": "page_up", "pageup": "page_up",
              "pgdn": "page_down", "pagedown": "page_down", "del": "delete", "arrowleft": "left", "arrowright": "right",
              "arrowup": "up", "arrowdown": "down", "spacebar": "space",
@@ -3749,11 +3767,45 @@ CHATS = {"whatsapp.exe", "whatsapp.root.exe", "telegram.exe", "signal.exe", "sla
          "mattermost.exe"}
 
 
+# Code editors with a terminal of their own: typing and Enter in it run a command as in a command window, so their
+# terminal counts as one. It's the box with the focus named "Terminal 1, powershell" (VS Code's and its forks')
+IDES = {"code.exe", "code - insiders.exe", "cursor.exe", "kiro.exe", "windsurf.exe", "vscodium.exe", "trae.exe"}
+TERMINAL_BOX = re.compile(r"\s*terminal\b", re.I)
+
+
+def in_terminal(exe):
+    """True if the window in front, of program exe, is a command window, or a code editor with its terminal focused."""
+    return exe in SHELLS or (exe in IDES and bool(TERMINAL_BOX.match(str((win.ui_focused() or {}).get("name") or ""))))
+
+
+def hosted_chat(hwnd):
+    """True if window hwnd is a web view (msedgewebview2.exe) that a chat app (CHATS) started. WhatsApp's 2025 app
+    puts its web view in front once its message box has the keyboard, and "type see you soon and press enter" sent
+    it to whichever chat was open, as msedgewebview2.exe isn't a chat app's own program."""
+    import psutil
+    try:
+        proc = psutil.Process(win._pid(hwnd))
+        for _ in range(4):  # the view's own process, the web view's main one, then the app
+            proc = proc.parent()
+            if proc is None:
+                return False
+            if proc.name().lower() in CHATS:
+                return True
+    except (psutil.Error, OSError):
+        return False
+    return False
+
+
 def not_into_shell(keys=()):
+    """Raises if typing (no keys) or keys would go where they run a command or send a message with nobody asked."""
     front = os.path.basename(win.foreground_exe()).lower()
-    if front in SHELLS:
+    if in_terminal(front):
         raise RuntimeError("I don't type into command windows")
-    if keys and keys[-1] == "enter" and front in CHATS:
+    # Start's search, where typing and Enter start any program: a plan once pressed Win+S, typed and pressed Enter
+    if front in agent.LAUNCHERS and (not keys or keys[-1] == "enter"):
+        raise RuntimeError("I don't type into Start's search, as that could start any program")
+    if keys and keys[-1] == "enter" and (front in CHATS or front == "msedgewebview2.exe" and
+                                         hosted_chat(win.front_window())):
         raise RuntimeError("I only send a message after reading it back to you, so say message and who it's to")
 
 

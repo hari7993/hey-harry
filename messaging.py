@@ -906,10 +906,12 @@ def prepare_files(app, contact, paths, caption=""):
     paths = check_files(paths)
     caption = " ".join(str(caption or "").split())[:MAX_TEXT]
     name, handle = find_contact(contact, app)
+    before = chat_open(app)
     hwnd = open_chat(app, handle, "")
     if box_shown(app, hwnd) is None:  # as in prepare: not linked, or the chat didn't open
         why = offline_reason(app, hwnd)
         raise RuntimeError(why or f"{APPS[app]['say']} didn't open the chat with {name}, so I've not sent anything")
+    _opened(app, hwnd, before, name, handle)
     if waiting(hwnd)[1] and not discard_preview(app, hwnd):  # files left waiting from before would go too
         raise RuntimeError(f"something's already waiting to go in {APPS[app]['say']}, so I've not added anything")
     box = _focus_box(app, hwnd)
@@ -1038,6 +1040,42 @@ def send_files(ready):
     raise RuntimeError("WhatsApp still shows it waiting to go, so it may not have sent")
 
 
+def chat_open(app):
+    """The name of the chat open in the app now, as its message box says ("Type a message to Ravi"), or ""."""
+    hwnd = window_of(app) if APPS[app]["compose"] else None
+    try:
+        return compose_box(app, hwnd)[1] if hwnd else ""
+    except Exception:
+        return ""
+
+
+def _theirs(app, to, name, handle):
+    """True if the chat called to is that person's: what you call them, the chat she followed for them, or their
+    number."""
+    entry = read_follows().get(f"{other_key(APPS[app]['say'])}:{alias_key(name)}") or {}
+    digits = re.sub(r"\D", "", str(to))
+    return _same_chat(to, name) or any(_chat_key(n) == _chat_key(to) for n in entry.get("names") or []) or \
+        (len(digits) >= 7 and digits == re.sub(r"\D", "", str(handle)))
+
+
+def _opened(app, hwnd, before, name, handle, wait=3.0):
+    """Raises unless the link opened that person's chat. It doesn't always switch: for a number not on WhatsApp it
+    stays on the chat that was open, and she typed into Ravi's chat, sent it there after a yes, said "Sent to Mum."
+    and took Ravi's replies for Mum's. So the chat must change from the one open before (before), given a moment, or
+    already be theirs."""
+    if not before or _theirs(app, before, name, handle):
+        return
+    end = time.time() + wait
+    while True:
+        to = compose_box(app, hwnd)[1]
+        if to and _chat_key(to) != _chat_key(before):
+            return
+        if time.time() > end:
+            raise RuntimeError(f"{APPS[app]['say']} stayed on {before}'s chat and didn't open {name}'s. Is the number "
+                               f"I have for them right? I've not typed anything")
+        time.sleep(0.4)
+
+
 def prepare(app, contact, text):
     """Open the chat with the message typed in, ready for a yes. Returns what she should read back."""
     app = app_key(app)
@@ -1045,12 +1083,14 @@ def prepare(app, contact, text):
         raise RuntimeError("I can only message on WhatsApp or Telegram so far")
     text = clean_text(text)
     name, handle = find_contact(contact, app)
+    before = chat_open(app)
     hwnd = open_chat(app, handle, text)
     if APPS[app]["compose"] and box_shown(app, hwnd) is None:
         # no message box: not linked to the phone (the Reconnect button: a 7 s look on the 2025 app's big page, so
         # only now), or the chat didn't open, as for a number not on WhatsApp. Never Enter into whatever that is
         why = offline_reason(app, hwnd)
         raise RuntimeError(why or f"{APPS[app]['say']} didn't open the chat with {name}, so I've not typed anything")
+    _opened(app, hwnd, before, name, handle)
     shown = typed_text(app, hwnd)
     if shown is not None and shown != text:  # the link left the text out (WhatsApp's 2025 app): she types it
         type_into(app, hwnd, text)
