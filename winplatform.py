@@ -16,8 +16,33 @@ from functools import lru_cache
 from urllib.parse import quote
 
 # --------------------------------------------------------------------------- paths
-APPDATA_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Hey Jev")
-LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Hey Jev", "Logs")
+# On 8 Oct `python -m unittest` from the repo root imported siri through the old hand checks (test_listen.py and co.)
+# before tests/support.py had moved %APPDATA%, and the test run wrote 982 turns into her real history, 1,488 runs into
+# the task log, 88 dictations, and an empty contacts book over three real people. So under a test run (support.py
+# sets HEYJEV_TESTING to the real folders before it imports anything, or a test runner was loaded before this file)
+# her real folders are refused outright. A normal run never loads unittest, so for her this is one dict lookup.
+_RUNNER = "unittest" in sys.modules or "pytest" in sys.modules
+
+
+def own_data(path):
+    """path, unless this is a test run and path is in her real data, which raises instead."""
+    real = os.environ.get("HEYJEV_TESTING")
+    if real is None and not _RUNNER:
+        return path
+    home = os.path.expanduser("~")
+    bases = (real or os.pathsep.join((os.environ.get("APPDATA", ""), os.environ.get("LOCALAPPDATA", "")))).split(
+        os.pathsep) + [os.path.join(home, "AppData", "Roaming"), os.path.join(home, "AppData", "Local"), home]
+    target = os.path.normcase(os.path.abspath(path))
+    for base in filter(None, bases):
+        mine = os.path.normcase(os.path.abspath(os.path.join(base, "Hey Jev")))
+        if target == mine or target.startswith(mine + os.sep):
+            raise RuntimeError(f"a test run reached her real data ({path}): import tests.support first, and run the "
+                               "suite as python -m unittest discover -s tests -t .")
+    return path
+
+
+APPDATA_DIR = own_data(os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Hey Jev"))
+LOG_DIR = own_data(os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Hey Jev", "Logs"))
 os.makedirs(APPDATA_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
