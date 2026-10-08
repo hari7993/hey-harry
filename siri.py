@@ -873,10 +873,29 @@ def _digits_said(text):
     return "".join(out)
 
 
+PRONOUN = re.compile(r"\s*(?:him|her|them)\s*", re.I)
+
+
+def meant(app, contact):
+    """(app, contact) with "him", "her" or "them" as whoever she told you replied last, here or on the phone; None
+    if nobody has. Never the word itself: "send this to him" typed "him" into WhatsApp's search and offered Himanshu,
+    the chats it opened marked read."""
+    if not PRONOUN.fullmatch(str(contact or "")):
+        return app, contact
+    who = REPLYING[origin()]
+    if time.time() > who["until"] or not who["contact"]:
+        return None
+    return app or who["app"], who["contact"]
+
+
 def stage_message(app, contact, text, back=None):
     """Open the chat with the text typed in and ask before sending. Returns the plan she should run now.
 
     Apps with a link of their own take it; the rest get walked through their own search box."""
+    to = meant(app, contact)
+    if to is None:
+        return make_plan(say="Who's that for? Say their name.")
+    app, contact = to
     key = messaging.app_key(app)
     if (STAGED["ready"] or {}).get("files"):
         drop_staged()  # files waiting before aren't left in WhatsApp's preview
@@ -957,6 +976,10 @@ def direct_install(words):
 
 def stage_files(app, contact, paths, caption="", back=None):
     """Put the files in the chat's preview and ask before sending, as stage_message does for words."""
+    to = meant(app, contact)
+    if to is None:
+        return make_plan(say="Who's that for? Say their name.")
+    app, contact = to
     if (STAGED["ready"] or {}).get("files"):
         drop_staged()
     back = window_to_put_back(back)
@@ -1256,6 +1279,11 @@ def replied(replies):
         shown = " ".join(str(rs[-1].get("from") or contact).split())
         name = watch.spoken_sender(re.sub(r"[^\w\s'.+-]", "", shown).strip() or contact)
         said = f": \u201c{words}\u201d" if words else "."
+        if any(r.get("by_alias") for r in rs):  # a display name anyone can give themselves: never said to be them
+            who, ask = f"Someone called {name} wrote", "If that's who you messaged, what should I reply?"
+            out.append({"say": f"{who} on {app}{said} {ask}", "keep": f"{who} on {app}. {ask}",
+                        "phone": f"Someone called {shown} wrote on {app}{said}\n{ask}", "contact": contact, "app": app})
+            continue
         out.append({"say": f"{name} replied on {app}{said} What should I reply?",
                     "keep": f"{name} replied on {app}. What should I reply?",
                     "phone": f"{shown} replied on {app}{said}\nWhat should I reply?", "contact": contact, "app": app})
@@ -1874,7 +1902,7 @@ Reply with one JSON object and nothing else: {"steps": [...], "say": "..."}
 {"do":"new_tab"}  a new tab in their browser
 {"do":"timer","seconds":300,"label":"Tea","alert":"Hey, your tea's ready."}  a timer or a reminder, the alert is said when it ends. Give it a label and alert only if they say what it's for
 {"do":"cancel_timers"}  {"do":"dark_mode","on":true}  {"do":"lock"}  {"do":"sleep"}  {"do":"shutdown"}  {"do":"restart"}  {"do":"abort_shutdown"}  {"do":"dictate"}  dictate writes down what they say next, until they say stop transcribing
-{"do":"screen","task":"click the second video on the page"}  look at their screen and do this, or answer it: what's on the screen, read or sum up this page, click, pick or fill in something, or a task in an app or site no step or skill covers, like a Windows setting. Write the task in full, every detail. It can come after steps that open something. Use it with "say" ""
+{"do":"screen","task":"click the second video on the page"}  look at their screen and do this, or answer it: what's on the screen, read or sum up this page, click, pick or fill in something, or a task in an app or site no step or skill covers: a Windows setting, an email, the calendar, files and folders. Never refuse these. Write the task in full, every detail. It can come after steps that open something. Use it with "say" ""
 {"do":"memory","action":"add","target":"user","content":"Their website CareerID is careerid.in"}  save to your memory. action add, replace or remove. target user (who they are: names, sites, people, apps, likes, words) or memory (your own notes, like what works on this PC). replace and remove find the entry by "old_text", a few words from it
 {"do":"lookup","what":"disk"}  facts about this PC: disk, battery, cpu, memory (RAM), apps (what's using the most), network, uptime, system, or messages (what came in on WhatsApp, Teams, Messages and so on, and who from). Never say you can't check these
 {"do":"recall","query":"careerid","day":"2026-10-03"}  search your past conversations with them by words, a day, or both: "what did we talk about yesterday", "what was that video". "after":"7d" for the last week
@@ -1886,7 +1914,7 @@ lookup, recall, web, read, weather, news and skill_view send the results back to
 {"do":"skill","action":"create","name":"work-mode","description":"Their work setup","triggers":["work mode"],"steps":[...],"say":"Work mode's on.","notes":"..."}  learn something to do again. When they teach you a routine ("when I say X, do Y"), save it with its steps, so next time X runs straight away. Steps are the ones here that act, not lookups. Without fixed steps, put how to do it in "notes". action create, patch (with "old" and "new" text from it) or delete
 {"do":"research","topic":"budget phones in India under 20,000"}  for "look into", "research", "find out all about", the topic in a few words: you work on it in the background while they carry on, then tell them and save a note
 {"do":"note","title":"Shopping list","text":"..."}  save a note for them. {"do":"open_notes"}  show their notes
-{"do":"command","command":"npm test","cwd":"C:\\\\path\\\\to\\\\project","description":"Run the tests"}  only when they explicitly ask for terminal, command, test, build, lint, Git or system-diagnostic work: run it in the background, hidden. Code checks it: read-only checks and tests run; anything that changes files or programs waits for their explicit approval; destructive/admin/security/credential/download commands are blocked. Always give an existing full cwd. Never put secrets in a command
+{"do":"command","command":"npm test","cwd":"C:\\\\path\\\\to\\\\project","description":"Run the tests"}  only when they explicitly ask for terminal, command, test, build, lint, Git or system-diagnostic work, never for files or folders: run it in the background, hidden. Code checks it: checks and tests run; changes wait for their approval; destructive, admin and download commands are blocked. Always give an existing full cwd. Never put secrets in a command
 {"do":"schedule","when":"2026-10-07T18:00:00","repeat":"","description":"Check C drive","task":{"kind":"lookup","what":"disk"}}  durable work at a time. when: local ISO date/time, "tomorrow at 6 PM", "in 2 hours". repeat is empty, "every 30 minutes", "daily at 6 PM", or "every Monday at 9 AM". task is one of: {"kind":"reminder","text":"call Mum"}; {"kind":"lookup","what":"disk|battery|cpu|memory|apps|network|uptime|system"}; {"kind":"research","topic":"..."}; {"kind":"command","command":"git status","cwd":"C:\\\\path"}. Never schedule send, delete, publish, pay, account, security, typing, clicking or screen actions
 {"do":"send_screenshot"}  a picture of their screen to their own phone, only when asked ("send me a screenshot"). On the phone, "screenshot" means this
 {"do":"code","task":"add a dark mode toggle to the settings page","cwd":"C:\\\\path\\\\to\\\\project"}  coding work on one of their projects, when they ask for it: OpenCode does it in the background in that git project folder, she asks first and tells them when it's done. Always the full folder
@@ -2678,8 +2706,8 @@ def context():
              f"In front: {win.front_app_name() or 'nothing'}.",
              f"Their apps: {', '.join(sorted(set(APP_SAY.values())))}."]  # so "open prone" can be Chrome
     if settings.get("name"):
-        lines.append(f"Their name is {settings.get('name')}. Use it now and then, the way a person would, not in every "
-                     f"reply.")
+        lines.append(f"Their name is {settings.get('name')}, never any other. Use it now and then, the way a person "
+                     f"would, not in every reply.")
     if not settings.get("vision"):
         lines.append("They've turned off looking at the screen in Settings, so never use screen: say it's off there.")
     try:
@@ -4528,12 +4556,25 @@ def fix_names(text):
     return text
 
 
+SAY_MOST = 250  # letters of an answer said out loud: 374-letter ones with lists ran on, and she fell 40 s behind
+
+
 def tidy(line, cut=True):
-    """Her line, ready to say: no markdown, and at most three sentences, since a chatty model can run on. Not cut
-    (cut False) when she asks before doing something: a long message read back stopped before who it was to and
-    "Send it?", and a yes still sent it."""
+    """Her line, ready to say: no markdown or list numbers, and out loud whole sentences up to SAY_MOST letters, since
+    a chatty model can run on. In full on the phone, where it's read. Not cut (cut False) when she asks before doing
+    something: a long message read back stopped before who it was to and "Send it?", and a yes still sent it."""
     line = re.sub(r"[*_#`]+", "", str(line or "")).strip()
-    return " ".join(re.split(r"(?<=[.!?])\s+", line)[:3]) if cut and len(line) > 400 else line
+    # "1. Pixel 9a\n2. Galaxy A55": said as sentences, never "one point", nor run together
+    line = re.sub(r"(?m)^[ \t]*(?:\d+[.)]|[-•])[ \t]+(.*?)[ \t]*$", lambda m: m[1] + (
+        "" if re.search(r"[.!?:;,]$", m[1]) else "."), line)
+    if not cut or REPLY_TO.get() is not None or len(line) <= SAY_MOST:
+        return line
+    said = []
+    for sentence in re.split(r"(?<=[.!?:])\s+", line):
+        if said and len(" ".join(said + [sentence])) > SAY_MOST:
+            break
+        said.append(sentence)
+    return " ".join(said)
 
 
 # --------------------------------------------------------------------------- Is it for her?
@@ -4774,6 +4815,7 @@ REPLY_TO = contextvars.ContextVar("reply_to", default=None)  # a turn from your 
 PHONE_CHAT = contextvars.ContextVar("phone_chat", default=None)  # and the chat it came from, for a task's result
 PHONE = {"send": None, "ask": None, "photo": None}  # set by run_voice_assistant once Telegram is there: send(chat,
 # line), ask(chat, question), photo(chat, png bytes, caption)
+PHONE_SHOWN = ("A message from your phone", "Answered on your phone")  # all the PC shows of a phone turn
 TAPPED = contextvars.ContextVar("tapped", default=False)  # the phone's Yes button: the only yes for a phone question
 PHONE_PICTURES = {}  # chat -> ([pictures as data URLs], when): the last you sent from your phone, an album's together
 PICTURE_FOR = 600.0  # seconds pictures you sent stay what your messages are about, for "and which is cheaper?"
@@ -4866,6 +4908,12 @@ PHONE_SHOT = re.compile(r"(?:(?:take|grab|get)(?: me)?(?: a)? )?screen ?shot|(?:
                         r"(?:as|in) a (?:picture|photo)", re.I)  # said on the phone, where a snipping tool is no use
 
 
+def bare_answer(text, words):
+    """True if a message's text is only a yes or a no that isn't in what was said: the model's, never yours."""
+    t = plain(str(text or ""))
+    return bool(YES.fullmatch(t) or NO.fullmatch(t)) and not re.search(rf"\b{re.escape(t)}\b", plain(str(words)))
+
+
 def phone_screenshot(words):
     """A screenshot for your phone, asked for in so many words, or just "screenshot" on the phone: no model needed."""
     t = plain(words)
@@ -4901,11 +4949,16 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
     # kept through talk she lets go ("Hmm", a mumble, someone else), so the yes can still follow; gone once she acts
     pending = PENDING["plan"] if time.time() < PENDING["until"] and PENDING["origin"] == origin() and \
         (origin() == "voice" or TAPPED.get()) else None
-    answer = plain(words) if pending else ""
-    if origin() == "phone" and not TAPPED.get() and PENDING["origin"] == "phone" and PENDING["plan"] is not None \
-            and time.time() < PENDING["until"] and YES.fullmatch(plain(words)):
-        say("Tap Yes on my question to go ahead.", notify)  # only the button answers a question on the phone
+    typed = origin() == "phone" and not TAPPED.get() and PENDING["origin"] == "phone" and \
+        PENDING["plan"] is not None and time.time() < PENDING["until"]  # typed while her question waits for a tap
+    if typed and (YES.fullmatch(plain(words)) or said_yes(words, PENDING["plan"])):
+        # only the button answers a question on the phone. Any yes, not just a bare one: "Yes, type it" went to the
+        # model, which planned the step again and ran it with no tap
+        say("Tap Yes on my question to go ahead.", notify)
         return True
+    if typed and NO.fullmatch(plain(words)):
+        pending = PENDING["plan"]  # a typed no is the No button: "no" got "Sure." and left the message typed in
+    answer = plain(words) if pending else ""
     # a mumbled yes isn't one; the phone's Yes button is as clear as a yes gets
     if pending and (said_yes(words, pending) or (TAPPED.get() and words == "yes")) and not (gate and sure < UNSURE):
         print("  (yes, doing what she asked about)")
@@ -4976,7 +5029,8 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
         if plan:
             print(f"  quick: {json.dumps(plan['steps']) if plan['steps'] else 'reply'}")
         else:
-            emit(notify, "Thinking", words or text)
+            # what you typed on your phone isn't shown on the PC's screen for the room to read, nor her answer (below)
+            emit(notify, "Thinking", (words or text) if origin() == "voice" else PHONE_SHOWN[0])
             TURN_SPOKE.clear()
             if not gate and STREAM_SAY and origin() == "voice":  # with her name it's for her: "One moment" if slow
                 threading.Thread(target=fill_silence, args=(words or text, notify), daemon=True).start()
@@ -5023,6 +5077,9 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
                 if messaging.app_key(first.get("app") or "whatsapp") != "whatsapp" else \
                 make_plan(say="I can send it to your phone, just ask for a screenshot.") if TO_ME.fullmatch(who) else \
                 share_files(who, first.get("caption") or first.get("text") or "")
+        elif first and bare_answer(first.get("text"), words or text):
+            # a yes or no you never said as the message: "You not sent the message" had "yes" ready to send
+            plan = make_plan(say="What should the message say?")
         elif first:  # the model planned a message: open the chat with it typed in and ask, never send
             plan = stage_message(first.get("app"), first.get("contact") or first.get("to"), first.get("text"))
         wanted = next((s for s in plan.get("steps") or [] if s.get("do") == "install"), None)
@@ -5083,7 +5140,8 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
         print(f"  couldn't keep this turn: {exc!r}")
     learn_later(words or text, [s for s in kept["steps"] if isinstance(s, dict)], failed, gate)
     note = note or voice_error
-    emit(notify, "Something went wrong" if note else "Ready", note or kept["say"] or describe(kept["steps"]) or "Done")
+    emit(notify, "Something went wrong" if note else "Ready", note or (PHONE_SHOWN[1] if origin() == "phone" else
+                                                                       kept["say"] or describe(kept["steps"]) or "Done"))
     if dictate:
         return "dictate"
     if playing_after([s for s in kept["steps"] if isinstance(s, dict) and s.get("do")]):
@@ -6168,43 +6226,55 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             except Exception as exc:
                 print(f"  keeping the models warm failed: {exc!r}")
 
-    def heads_ups():
+    noticed = queue.Queue()  # what look_around found to tell on the PC: (line, said for, kept, reply)
+
+    def look_around():
         """What she noticed (see watch.Watcher): messages every few seconds, since WhatsApp takes its notification
-        away again within moments, the rest every 20 seconds, and finished background work straight away."""
-        next_look, next_message = time.time() + 20, time.time() + watch.MESSAGE_LOOK
-        later = []  # what came up during a dictation, told once it stops: (line, said for, kept, reply)
+        away again within moments, replies to your phone straight away, and the rest every 20 seconds. On a thread
+        of its own, never waiting for her turn: in heads_ups the looks stopped while she waited to tell something,
+        and a turn of a minute or two (a task in an app) lost a reply that came in meanwhile."""
+        next_look = time.time() + 20
         night = []  # replies in the quiet hours that didn't reach your phone
         while True:
-            time.sleep(2)
-            lines = []
-            while not ANNOUNCE.empty():
-                lines.append(ANNOUNCE.get())
-            now = time.time()
-            replies = []
-            if now >= next_message:
-                next_message = now + watch.MESSAGE_LOOK
-                if settings.get("notifications"):  # replies are looked for with heads-ups off too, day and night
-                    try:
-                        line = watcher.messages(win.front_app_name)  # only asks which app is in front if needed
-                        if line and settings.get("heads_ups"):
-                            lines.append(line)
-                        replies = replied(watcher.take_replies())
-                    except Exception as exc:
-                        print(f"  message check failed: {exc!r}")
+            time.sleep(watch.MESSAGE_LOOK)
+            lines, replies = [], []
+            if settings.get("notifications"):  # replies are looked for with heads-ups off too, day and night
+                try:
+                    line = watcher.messages(win.front_app_name)  # only asks which app is in front if needed
+                    if line and settings.get("heads_ups"):
+                        lines.append(line)
+                    # as they came: deliver_replies words them. Worded here too, every reply reached you as
+                    # "buntyyy replied on WhatsApp", without what they wrote or the chat's own name
+                    replies = watcher.take_replies()
+                except Exception as exc:
+                    print(f"  message check failed: {exc!r}")
             for r in deliver_replies(replies):  # your phone, day or night: it keeps its own quiet hours
                 if settings.get("heads_ups") and not (watch.quiet() and r["sent"]):  # the PC keeps its quiet hours
-                    (night if watch.quiet() else later).append((r["say"], "reply", r["keep"], r))
+                    (night if watch.quiet() else lines).append((r["say"], "reply", r["keep"], r))
             if night and not watch.quiet():  # the night's replies your phone didn't get, at 7
-                later += night
+                lines += night
                 night.clear()
-            if now >= next_look:
-                next_look = now + 20
+            if time.time() >= next_look:
+                next_look = time.time() + 20
                 if settings.get("heads_ups"):
                     try:
                         lines += watcher.check(False, win.front_app_name())
                     except Exception as exc:
                         print(f"  heads-up check failed: {exc!r}")
-            later += [(line, "heads-up", None, None) for line in lines if line]
+            for line in lines:
+                if line:
+                    noticed.put(line if isinstance(line, tuple) else (line, "heads-up", None, None))
+
+    def heads_ups():
+        """What look_around noticed, and finished background work straight away, told once she's free."""
+        later = []  # what came up during a dictation, told once it stops: (line, said for, kept, reply)
+        while True:
+            time.sleep(2)
+            while not ANNOUNCE.empty():
+                later.append((ANNOUNCE.get(), "heads-up", None, None))
+            while not noticed.empty():
+                later.append(noticed.get())
+            later = [item for item in later if item[0]]
             # never over a dictation, but once it stops: a reminder or a finished task that came up during one was
             # taken off the queue and lost, the reminder already marked done
             while later and not rec.dictating and tell(*later[0][:3]):
@@ -6341,6 +6411,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     threading.Thread(target=task_worker, daemon=True).start()
     threading.Thread(target=warm_cache, daemon=True).start()
     threading.Thread(target=summarize_days, daemon=True).start()
+    threading.Thread(target=look_around, daemon=True).start()
     threading.Thread(target=heads_ups, daemon=True).start()
     threading.Thread(target=keep_warm, daemon=True).start()
     watch_return(lambda since: welcome(True, since))
