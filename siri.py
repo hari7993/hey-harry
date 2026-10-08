@@ -461,9 +461,12 @@ def _digits(text):
 
 
 def parse_duration(text):
-    """Total seconds mentioned in the sentence, or None."""
+    """Total seconds mentioned in the sentence, or None. With an "in" or "after", only that: "remind me to stretch for
+    10 minutes in 1 hour" is due in 3600 s, where both added up made it 4200."""
+    t = _digits(text)
+    when = IN_DURATION.search(t)
     total = 0
-    for num, unit, extra in DURATION.findall(_digits(text)):
+    for num, unit, extra in DURATION.findall(when[0] if when else t):
         secs = UNITS[unit]
         total += float(num) * secs + (secs / 4 if "quarter" in extra else secs / 2 if extra else 0)
     return int(total) or None
@@ -1420,10 +1423,11 @@ QUICK = [(re.compile(p), make) for p, make in (
     (r"previous(?: (?:song|track|video|one))?|(?:play )?(?:the )?(?:previous|last) (?:song|track|video|one)"
      r"|go back a (?:song|track|video)", _step(do="media", action="previous")),
     # YouTube's own page, using the last search: no screenshot or model needed
-    (r"(?:play|open|click)(?: the)? (?P<n>first|second|third|fourth|fifth|[1-5]) (?:video|one)(?: on youtube)?", _nth),
-    (r"play (?P<q>.+?)(?: on youtube)?", _play),
-    (r"(?:search|look up|find)(?: for| about)? (?P<q>.+?) on youtube", _search("youtube")),
-    (r"(?:search )?youtube for (?P<q>.+)", _search("youtube")),
+    # "on you tube", as speech-to-text writes it at times: it googled "career eye dee on you tube"
+    (r"(?:play|open|click)(?: the)? (?P<n>first|second|third|fourth|fifth|[1-5]) (?:video|one)(?: on you ?tube)?", _nth),
+    (r"play (?P<q>.+?)(?: on you ?tube)?", _play),
+    (r"(?:search|look up|find)(?: for| about)? (?P<q>.+?) on you ?tube", _search("youtube")),
+    (r"(?:search )?you ?tube for (?P<q>.+)", _search("youtube")),
     (r"(?:google|search(?: google)?(?: for| about)?|look up) (?P<q>.+?)(?: on google)?", _search("google")),
     # volume
     (r"(?:turn(?:ed)?|bring|crank)(?: the)?(?: volume| sound| music| it)? up(?: a bit| a little| more)?|(?:volume|sound) up"
@@ -1745,10 +1749,37 @@ def as_said(lowered, words):
     return m.group(0).strip() if m else lowered
 
 
-def quick(words, gate=False):
+# A search or video for the words heard goes to the model, which puts misheard words right, when speech-to-text was
+# less sure of them than QUERY_SURE or they spell letters out: all 4 played or searched on the PC on 7 and 8 October
+# were under 90% sure, and at least 3 were misheard ("play ten" at 55%, "search for amount" at 88%), and "search
+# career eye dee on you tube" googled the letters. Apps, sites and the rest are matched against known names, so stay
+QUERY_SURE = 0.9
+LETTER_NAMES = set("ay bee cee see dee ee eff ef gee aitch eye jay kay el em en oh pee cue ar ess es tee you vee ex "
+                   "why zed zee".split())
+ONLY_LETTERS = set("bee cee dee eff ef gee aitch el em en pee ar ess tee vee zed zee".split())  # not everyday words
+
+
+def misheard_query(plan, words, sure=1.0):
+    """True if the plan searches or plays words that may well be misheard (see QUERY_SURE)."""
+    said = plain(words)
+    for s in plan.get("steps") or []:
+        q = str(s.get("query") or "").lower()
+        if s.get("do") not in ("youtube", "google") or s.get("rank") or not q or q not in said:
+            continue  # "play the second video" plays the last search, and a routine's search is its own
+        pairs = zip(q.split(), q.split()[1:])
+        if sure < QUERY_SURE or any(a in LETTER_NAMES and b in LETTER_NAMES and {a, b} & ONLY_LETTERS for a, b in pairs):
+            return True
+    return False
+
+
+def quick(words, gate=False, sure=1.0):
     """A plan for a simple command without asking the model, so it happens straight away. None if it isn't one.
-    gate as in handle: "cold" for words said without her name, which may not be for her."""
+    gate as in handle: "cold" for words said without her name, which may not be for her. sure: how sure
+    speech-to-text was of the words (speech.Heard)."""
     plan = _quick(words, gate)
+    if plan and misheard_query(plan, words, sure):
+        print(f"  what to look for may be misheard ({sure:.0%} sure): the model")
+        return None
     for step in (plan or {}).get("steps") or []:
         if step.get("do") == "type" and step.get("text"):
             step["text"] = as_said(step["text"], words)
@@ -2738,6 +2769,10 @@ TOOL_ARG = re.compile(r"<arg_key>([^<]*)</arg_key>\s*<arg_value>(.*?)</arg_value
 # Ling also writes them a line each: task="click the second video"</arg_value>, at times without the closing quote, or
 # task={"kind": "reminder", "text": "call Mum"}
 TOOL_ATTR = re.compile(r"^[ \t]*(\w+)[ \t]*=[ \t]*(.*?)[ \t]*(?:</arg_value>)?[ \t]*$", re.M)
+# or several on one line, ending " /": seconds=300 label="5 min" alert="..." / made seconds '300 label="5 min" ...'
+# and a YouTube query 'lofi music" play=true /' (8 October)
+NEXT_ATTR = re.compile(r"[ \t]+(\w+)[ \t]*=[ \t]*")
+QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')
 # Every step she can take: the ones PROMPT, RESEARCH and agent.AGENT_PROMPT list, and the rest do_step knows. Any other
 # name is a misreading, left out so she doesn't say "I can't Here yet": prose in a tool call once came out as {"do":
 # "Here"}, and a broken one as {"do": "do"}. procedure: one of hers, which the skills list teaches. Never agent_resume,
@@ -2772,6 +2807,32 @@ def _attr(value):
         return value[1:-1]
 
 
+def _attrs(args):
+    """The key=value arguments of a tool call, a line each or several to a line (see NEXT_ATTR), each as _attr."""
+    out = {}
+    for key, rest in TOOL_ATTR.findall(args):
+        while True:
+            value, after = rest, ""
+            quoted = QUOTED.match(rest)
+            if quoted and (re.fullmatch(r"\s*/?>?\s*", rest[quoted.end():]) or NEXT_ATTR.match(rest, quoted.end())):
+                value, after = quoted[0], rest[quoted.end():]  # a quote inside the value keeps it whole, as before
+            elif rest[:1] in "{[":
+                try:
+                    end = json.JSONDecoder().raw_decode(rest)[1]
+                    value, after = rest[:end], rest[end:]
+                except ValueError:
+                    pass
+            elif not rest.startswith('"'):
+                nxt = NEXT_ATTR.search(rest)
+                value, after = (rest[:nxt.start()], rest[nxt.start():]) if nxt else (rest, "")
+            out[key] = _attr(re.sub(r"[ \t]+/>?$", "", value))
+            nxt = NEXT_ATTR.match(after)
+            if not nxt:
+                break
+            key, rest = nxt[1], after[nxt.end():]
+    return out
+
+
 def _known(steps):
     """The well-formed steps, mended (see _mend), without names there are no steps for. A screen or procedure step
     without "read", "exact" or "learned", which only she sets (think, _quick, run_plan)."""
@@ -2795,7 +2856,7 @@ def parse_plan(raw):
         for do, args in calls:
             pairs = TOOL_ARG.findall(args)  # a value can be JSON too: <arg_key>task</arg_key><arg_value>{"kind": ...
             step = {"do": do, **({k.strip(): _arg(v) for k, v in pairs} if pairs else
-                                 {k: _attr(v) for k, v in TOOL_ATTR.findall(args)})}
+                                 _attrs(args))}
             text, known = re.sub(r"</?\w+>", "", args).strip(), _mend({"do": do})["do"] in KNOWN_STEPS
             # <arg_key>steps</arg_key><arg_value>[...]: the plan itself. But a skill's steps are its own: "when I say
             # work mode, ..." opened Gmail and set the volume on 7 October instead of saving the routine
@@ -4953,7 +5014,7 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
             emit(notify, "Heard", heard_as(words))  # above the popup, before she acts: you can see she has the words
         # a screenshot for the phone: straight away when called by name, or asked on the phone; heard without her
         # name, the model decides it was for her first, as for anything that leaves the PC
-        plan = (None if gate else phone_screenshot(words)) or quick(words, gate)
+        plan = (None if gate else phone_screenshot(words)) or quick(words, gate, sure)
         if plan and phone_picture() and any(s.get("do") == "screen" for s in plan["steps"]) and \
                 POINTS_AT_PICTURE.search(plain(words)) and not NAMES_THE_PC.search(plain(words)):
             plan = None  # "what's this?" about the picture you just sent from your phone: the model sees it (think)

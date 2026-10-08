@@ -52,24 +52,34 @@ def main():
     siri.run_plan = lambda plan, notify: (taken.append(plan), ([], False, None, []))[1]  # nothing is done
     history.add = lambda *a, **k: None  # nothing is kept
     siri.learn_later = lambda *a, **k: None
-    wrong, times = 0, []
+    # the model's own time, phrase by phrase: timed around the whole turn, the ones settled on this PC (about 0 s)
+    # made its average look 0.7 s when the model took 2 to 4.7 s (8 October)
+    wrong, calls, model = 0, [], []
+    think = siri.think
+
+    def timed(*a, **k):
+        t = time.time()
+        try:
+            return think(*a, **k)
+        finally:
+            calls.append(time.time() - t)
+    siri.think = timed
     for said, want in CASES:
         taken.clear()
         siri.ROOM.clear()  # each one on its own, not as part of a conversation
         text = speech.heard(said, 0.95)
-        log, t = io.StringIO(), time.time()
+        log, before = io.StringIO(), len(calls)
         with contextlib.redirect_stdout(log):
             what = siri.route(text, "other", open_mic=True)
             if isinstance(what, tuple):
                 siri.handle(what[0], what[1], 0, None, what[2])
-        secs = time.time() - t
-        if isinstance(what, tuple):
-            times.append(secs)
+        if len(calls) > before:
+            model.append(sum(calls[before:]))
         plan = taken[0] if taken else None
         got = None if plan is None else (plan["steps"][0]["do"] if plan.get("steps") else "say")
         good = got == want
         wrong += not good
-        where = "on this PC" if not isinstance(what, tuple) else f"{secs:.1f}s"
+        where = f"model {model[-1]:.1f}s" if len(calls) > before else "on this PC"
         print(f"  {'ok ' if good else 'BAD'} {said!r:44} -> {str(got):8} (want {want}, {where})")
         if not good:
             for line in log.getvalue().splitlines():
@@ -77,8 +87,9 @@ def main():
                     print(f"        {line.strip()[:150]}")
             if plan:
                 print(f"        she'd say: {str(plan.get('say'))[:120]!r}")
-    print(f"{len(CASES) - wrong} of {len(CASES)} right. The model took {sum(times) / max(1, len(times)):.1f}s on average "
-          f"for the {len(times)} that went to it, the rest were decided on this PC.")
+    print(f"{len(CASES) - wrong} of {len(CASES)} right. {len(model)} went to the model"
+          + (f", which took {sum(model) / len(model):.1f}s on average and {max(model):.1f}s at most" if model else "")
+          + f"; the other {len(CASES) - len(model)} were settled on this PC, so they don't test the model.")
     sys.exit(1 if wrong > ALLOWED else 0)
 
 
