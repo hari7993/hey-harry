@@ -1250,6 +1250,20 @@ def _find_step(s):
     return None, "it isn't on screen", False
 
 
+def done_already(r, i):
+    """What she says if the control step i of r's procedure presses isn't there because the task's done already, or
+    None: its last step checks for a control that shows it done, and that's on screen now. "Turn on now" in Settings
+    is "Turn off now" once night light's on, so "turn on night light" said again stopped there, counted as a failure
+    and called the model with a screenshot to mend it, and after 3 such the procedure was put away. Not for one with
+    slots, whose check is about what it wrote this time."""
+    last = r.proc["steps"][-1] if r.proc["steps"] else {}
+    if r.proc.get("slots") or last.get("do") != "expect" or not last.get("has") or last.get("gone") or \
+            i >= len(r.proc["steps"]) - 1 or expect(last, r, wait=0) is not True:
+        return None
+    print(f"  {label(r.proc['steps'][i])} isn't there, but the task's done already")
+    return f"It's already {last['state']}." if last.get("state") in ("on", "off") else "That's done already."
+
+
 def replay(r, start=0, notify=None):
     """r's procedure from step start: each step's place checked first (not_in_place, expect), its control found again
     by name and role, passed through the gate on what's live, done holding ACT, and what it typed read back from the
@@ -1310,7 +1324,8 @@ def replay(r, start=0, notify=None):
         if do == "ui":
             el, why, two = _find_step(s)
             if el is None:
-                return failed(r, i, s, why, env=two, notify=notify)
+                line = None if two else done_already(r, i)
+                return finish(r, "done", line) if line else failed(r, i, s, why, env=two, notify=notify)
             try:
                 live = win.ui_info(el)
             except Exception as exc:  # gone, or not answering, since it was found: a page that drew itself again
