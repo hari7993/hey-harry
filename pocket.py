@@ -74,9 +74,14 @@ class Engine:
 
     def make(self, text, voice=DEFAULT, on_audio=None, stop=None):
         """Say text in voice: on_audio(samples, float32 at RATE) gets it a sentence at a time. Returns all of it.
-        stop(): True to stop making it, as when she's been stopped mid-line."""
+        stop(): True to stop making it, as when she's been stopped mid-line, or before it began: a line queued behind
+        others, once she was stopped, still took 3 s to make (the first sentence is made before stop is looked at)."""
         import sherpa_onnx
+        if stop and stop():
+            return np.zeros(0, np.float32)
         with self.lock:
+            if stop and stop():
+                return np.zeros(0, np.float32)
             if self.tts is None:
                 self._load()
             self.used = time.time()

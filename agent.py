@@ -564,6 +564,21 @@ def load_stats():
         return {}
 
 
+_stats_seen = [None, {}]  # (mtime, size) of the stats file, and what it held then
+
+
+def _stats_now():
+    """load_stats, read again only once the file has changed. Not for changing: keep and _note_run load their own."""
+    try:
+        st = stats_path().stat()
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    if _stats_seen[0] != key:
+        _stats_seen[:] = [key, load_stats()]
+    return _stats_seen[1]
+
+
 def _save_stats(data):
     atomic_write_text(stats_path(), json.dumps(data, indent=1, sort_keys=True), tmp_prefix=".procedures_")
 
@@ -632,11 +647,12 @@ def procedures():
     """{name: procedure} for each one she may run: one code wrote, unchanged since (its sha1 in .procedures.json),
     cut down by tidy. One edited by hand or by a model is left out, and said so once in the log."""
     host.routines()  # brings her skills up to date, every few seconds
-    stats, found = load_stats(), {}
-    for entry in host._skill_cache[1]:
-        proc = entry.get("procedure")
-        if not isinstance(proc, dict):
-            continue
+    entries = [e for e in host._skill_cache[1] if isinstance(e.get("procedure"), dict)]
+    # only read when there's one to check, and then only once it's changed: match() runs on every quick(), and the
+    # read doubled its median
+    stats, found = _stats_now() if entries else {}, {}
+    for entry in entries:
+        proc = entry["procedure"]
         name = entry["dir"]
         kept = stats.get(name) or {}
         if sha(proc) not in (kept.get("shas") or [kept.get("sha")]):

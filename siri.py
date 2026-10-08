@@ -1521,6 +1521,12 @@ def sys_intent(t):
 _skill_cache = [0.0, []]
 
 
+def used_later(name):
+    """skills.used, off the turn: Hermes' bookkeeping locks, reads and writes its usage file, and "work mode" waited
+    18-26 ms for it inside quick(), before anything happened."""
+    threading.Thread(target=skills.used, args=(name,), daemon=True).start()
+
+
 def routines():
     """(phrase, skill) for every skill with steps and the phrases that start it, read again every few seconds."""
     if time.time() - _skill_cache[0] > 5:
@@ -1771,7 +1777,7 @@ def _quick(words, gate=False):
     for phrase, skill in routines():
         if phrase and t == phrase:
             print(f"  routine: {skill['dir']}")
-            skills.used(skill["dir"])
+            used_later(skill["dir"])
             return make_plan(skill["plan"]["steps"], skill["plan"]["say"])
     # Without her name the model decides it was for her first: staging opens the chat with the words typed in
     # ("WhatsApp Mum: running late" from across the room), and an install sits through winget searches
@@ -2288,7 +2294,7 @@ def skills_block(text=""):
         entries = [e for e in _skill_cache[1] if not e.get("procedure") or e["dir"] in runnable]
         detail = relevant_skills(text, entries)
         for name in detail:
-            skills.used(name)
+            used_later(name)
         return skills.system_prompt_block(entries, detail)
     except Exception as exc:
         print(f"  couldn't list her skills: {exc!r}")
@@ -4266,7 +4272,7 @@ class Line:
         if str(self.v).startswith(("onecore:", "sapi:")) or os.path.exists(self.path):
             return
         if str(self.v).startswith("pocket:"):
-            self.audio = pocket.stream(text, self.v.split(":", 1)[1], stop=HER.stop.is_set)
+            self.audio = pocket.stream(text, self.v.split(":", 1)[1], stop=HER.stopper())
         else:
             self.audio = queue.Queue()
             threading.Thread(target=self._fish, daemon=True).start()
@@ -4627,6 +4633,7 @@ class Her:
     def __init__(self):
         self.stop = threading.Event()  # she stops: every player looks between SLICE pieces
         self.turn, self.until, self.level, self.asking = 0, 0.0, 1.0, False
+        self.cut_turn = None  # the last turn she was stopped in, see stopper
 
     def begin(self):
         """A turn of hers starts: she may talk again, at full volume."""
@@ -4645,10 +4652,18 @@ class Her:
     def unduck(self):
         self.until = 0.0
 
+    def stopper(self):
+        """stop() for a line made now: True once she's stopped, and still after this turn, when stop is cleared for
+        the next. Her voice on this PC made a stopped answer's queued sentences anyway, one after another under its
+        one lock, once end() cleared stop: the next answer started 3 to 10 s late."""
+        turn = self.turn
+        return lambda: self.stop.is_set() or self.cut_turn == turn
+
     def cut(self, why, turn=None):
         """Stops her, if this is still the turn it was meant for. True if she was stopped."""
         if (turn is not None and turn != self.turn) or self.stop.is_set():
             return False
+        self.cut_turn = self.turn
         self.stop.set()
         agent.STOP.set()  # a task she's doing in an app stops too, and doesn't act again (agent.stopped)
         voice_bits.mark_speech_interrupted()  # the model is told, next turn (think)
@@ -4689,7 +4704,34 @@ def echo_of(t, within=90.0):
     """True if t is her own voice heard back: long, and nearly word for word what she said in the last minute or so."""
     t = words_of(t)
     hers = " ".join(line for when, line in list(HER_SAID) if time.time() - when < within)
-    return len(t.split()) >= ECHO_WORDS and voice_bits.is_tts_echo(t, words_of(hers), threshold=ECHO_SURE)
+    return len(t.split()) >= ECHO_WORDS and tts_echo(t, words_of(hers))
+
+
+def tts_echo(a, b, sure=ECHO_SURE):
+    """voice_bits.is_tts_echo(a, b), the same answer, without a difflib match for every window that can't be one. It
+    slid a SequenceMatcher across her lines a letter at a time: 90-120 ms for a few words heard after a long answer,
+    on every word update while she talked (barge) and twice before such a turn (act_on). A window's letters in common
+    with a, counted as it slides, bound its ratio from above (difflib's quick_ratio), so only the few that could
+    reach sure are compared: about 1-3 ms."""
+    if not a or not b:
+        return False
+    if 2.0 * min(len(a), len(b)) / (len(a) + len(b)) >= sure and difflib.SequenceMatcher(None, a, b).ratio() >= sure:
+        return True  # the whole of it, as is_tts_echo checks first (real_quick_ratio bounds it)
+    n = len(a)
+    if n < voice_bits.MIN_FRAGMENT_LENGTH_FOR_ECHO or n >= len(b):
+        return False
+    need, have = collections.Counter(a), collections.Counter(b[:n])
+    common = sum(min(k, have[c]) for c, k in need.items())
+    for start in range(len(b) - n + 1):
+        if start:
+            out, new = b[start - 1], b[start + n - 1]
+            have[out] -= 1
+            common -= have[out] < need[out]
+            common += have[new] < need[new]
+            have[new] += 1
+        if 2.0 * common / (2 * n) >= sure and difflib.SequenceMatcher(None, a, b[start:start + n]).ratio() >= sure:
+            return True
+    return False
 
 
 def stop_said(t):
