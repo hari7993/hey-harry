@@ -12,8 +12,8 @@
 ## Quick install
 
 ```
-git clone https://github.com/hari7993/hey-jev.git
-cd hey-jev
+git clone https://github.com/hari7993/hey-harry.git
+cd heyharry
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
