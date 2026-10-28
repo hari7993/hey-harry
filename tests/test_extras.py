@@ -1,4 +1,4 @@
-"""Atticus's ideas, for Windows (extras.py and its modules, 28 October 2026): where to click drawn on the screen, the
+"""Newer skills (extras.py and its modules, 28 October 2026): where to click drawn on the screen, the
 calendar, Spotify, named helpers and their live view, files by what's in them, a reply in the open email, and meeting
 notes. Nothing here acts on the PC, listens or goes online: tests.support trips that, and fakes stand in for Windows
 Search, the screen, the audio and the model."""

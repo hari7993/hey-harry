@@ -346,7 +346,7 @@ ORB_DASHES = 32
 
 def draw_orb(cv, cx, cy, r, mode="idle", level=0.0, t=0.0, open_=1.0, look=(0.0, 0.0), colour=WHITE, glow=True,
              a=1.0, halo=None):
-    """Atticus's orb (its thinking-orbs, MIT, by Jakub Antalik), drawn the island's way: a ring of short dashes
+    """An orb (after thinking-orbs, MIT, by Jakub Antalik), drawn the island's way: a ring of short dashes
     round an empty middle, r px from it, its edge wobbling with smooth noise. mode "idle": it breathes; "voice": it
     ripples and the dashes stretch with level, a voice 0 to 1; "busy": a light runs round it while she thinks or
     works. open_: shut for a blink, it squashes flat as her eyes do; look: it leans a little that way."""
@@ -359,7 +359,7 @@ def draw_orb(cv, cx, cy, r, mode="idle", level=0.0, t=0.0, open_=1.0, look=(0.0,
     squash = 0.25 + 0.75 * open_
     lw = max(1.1, r * 0.095)
     gx = 0.22 if glow else 0.0
-    n = ORB_DASHES if r >= 14 else 22  # small, as on the capsule, fewer, so each dash stands apart as on Atticus's
+    n = ORB_DASHES if r >= 14 else 22  # small, as on the capsule, fewer, so each dash stands apart
     for i in range(n):
         th = i / n * math.tau + turn
         wob = amp * (0.55 * math.sin(3 * th + 1.3 * t) + 0.3 * math.sin(5 * th - 1.9 * t + 1.1) +

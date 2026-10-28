@@ -108,7 +108,7 @@ class Play(Routing):
                 self.assertIsNone(self.quick(f"hey harry can you {words} please"))
 
     def test_spotify_is_played_on_spotify_never_searched_on_youtube(self):
-        """28 October 2026 (extras.py, after Atticus): "on Spotify" is Spotify's own search and its play button,
+        """28 October 2026 (extras.py): "on Spotify" is Spotify's own search and its play button,
         with no model, where it went to the model before."""
         import spotify
         from unittest import mock

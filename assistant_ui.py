@@ -785,7 +785,7 @@ class AssistantWindow:
         self.mode_switch = tk.Canvas(header, bg=BG, highlightthickness=0, cursor="hand2", takefocus=1)
         self.mode_switch.pack(side="right", anchor="n")
         self._build_mode_switch()
-        # Atticus's orange pill while Full access is on (Settings > Safety); a click turns it off
+        # An orange pill while Full access is on (Settings > Safety); a click turns it off
         self.full_badge = tk.Label(header, text="\u25cf  Full access", font=self.f_small, fg="#b86e00", bg="#fff1db",
                                    padx=self.px(10), pady=self.px(4), cursor="hand2")
         self.full_badge.bind("<Button-1>", lambda e: self.set_full_access(False))
@@ -1054,7 +1054,7 @@ class AssistantWindow:
     def _build_home(self):
         page = self._page("Your Harry stats", "Everything since you started using Harry. Refreshes each time you open this tab.",
                           scroll=True)
-        ask = tk.Frame(page, bg=BG)  # typing to her instead of talking (28 October 2026, as Atticus's box has it)
+        ask = tk.Frame(page, bg=BG)  # typing to her instead of talking (28 October 2026)
         ask.pack(fill="x", pady=(0, self.px(16)))
         self.ask_box = HintEntry(ask, "Type to Harry instead of talking (or tap right Alt twice, anywhere)", width=64)
         self.ask_box.pack(side="left", fill="x", expand=True, ipady=self.px(3))
@@ -2022,7 +2022,7 @@ class AssistantWindow:
         self.wait_menu.grid(row=36, column=1, rowspan=2, sticky="e")
         self.wait_menu.bind("<<ComboboxSelected>>", lambda e: self.wait_changed())
         row(19, "Walkthrough", "Her setup and a short tour: what she needs, trying her out, and what she can do.")
-        # Safety, at the top: Full access, as Atticus has it, off unless turned on here
+        # Safety, at the top: Full access, off unless turned on here
         safety = tk.Frame(page, bg=BG)
         safety.pack(fill="x", before=form)
         mine.pack(fill="x", before=form)

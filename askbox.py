@@ -1,4 +1,4 @@
-"""Typing to her instead of talking (28 October 2026, after Atticus's box): a small dark box, under her answer card or
+"""Typing to her instead of talking (28 October 2026): a small dark box, under her answer card or
 near the top of the screen, that sends what you type to her as a turn of yours when you press Enter, as if you'd said
 it with her name. Clicking your words on her card opens it with them in, to fix a word and send them again. Up and
 Down go through what you typed before; Esc closes it; clicking away closes it too, keeping what you'd typed for the

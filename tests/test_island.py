@@ -557,7 +557,7 @@ class Capsule(unittest.TestCase):
         return fonted(self, **dict({"style": "capsule"}, **kw))
 
     def test_the_setting_is_the_answer_card_until_another_is_picked(self):
-        """28 October 2026: the answer card, Atticus's box for her turns, is the capsule the rest of the time."""
+        """28 October 2026: the answer card, a box for her turns, is the capsule the rest of the time."""
         self.addCleanup(settings.put, "island_style", None)
         self.assertEqual(settings.DEFAULTS["island_style"], "panel")
         isl = bare()
@@ -581,7 +581,7 @@ class Capsule(unittest.TestCase):
         return isl
 
     def test_the_answer_card_has_your_words_her_answer_how_long_and_try_again(self):
-        """28 October 2026, as Atticus's box: her eyes and x on top, your words in a bubble, her answer, then how long
+        """28 October 2026, the answer card: her eyes and x on top, your words in a bubble, her answer, then how long
         it took and Try again."""
         now = time.time()
         listening = self.card("listening", "Play Blinding Lights by")._harry()
@@ -609,7 +609,7 @@ class Capsule(unittest.TestCase):
         asked.put.assert_called_once_with(("again", "open notepad"))
 
     def test_her_answer_copies_and_your_words_open_to_fix(self):
-        """28 October 2026, as Atticus's box: a click on her answer copies it, with "Copied" where the time was; one
+        """28 October 2026, the answer card: a click on her answer copies it, with "Copied" where the time was; one
         on your words opens the typing box with them in, under the card, and what you send is a turn of yours."""
         now = time.time()
         isl = self.card("speaking", "It’s 24 degrees in Chennai.", "weather in chennai", now - 1.5, now)
@@ -650,7 +650,7 @@ class Capsule(unittest.TestCase):
         self.assertAlmostEqual(isl.asked_at, time.time(), delta=1)
 
     def test_what_she_learned_shows_under_her_answer(self):
-        """28 October 2026, Atticus's receipts: a green line on the card, else a popup; never said."""
+        """28 October 2026, receipts: a green line on the card, else a popup; never said."""
         now = time.time()
         isl = self.card("speaking", "Done.", "work mode", now - 1, now)
         plain = isl._harry()
@@ -668,7 +668,7 @@ class Capsule(unittest.TestCase):
         self.assertEqual(gone.popups[-1].data["title"], "Remembered")
 
     def test_her_steps_show_as_rows_live_then_done(self):
-        """28 October 2026, as Atticus lists its steps: a row each, the last few, "+N earlier" over them."""
+        """28 October 2026: a row each, the last few, "+N earlier" over them."""
         isl = self.card("doing", "Opening Spotify", "open spotify and play lofi")
         isl.panel, isl.harry = True, {"state": "doing", "text": "Opening Spotify"}
         isl.root, isl.hide_job, isl._wake, isl._place = mock.Mock(), None, lambda: None, lambda *a: None
@@ -699,7 +699,7 @@ class Capsule(unittest.TestCase):
         self.assertIsNone(isl.asked_at)
 
     def test_her_eyes_are_the_face_until_another_is_picked(self):
-        """28 October 2026: her eyes stay her face, the owner's wish; Atticus's orb is there to pick."""
+        """28 October 2026: her eyes stay her face, the owner's wish; the orb is there to pick."""
         self.addCleanup(settings.put, "island_face", None)
         self.assertEqual(settings.DEFAULTS["island_face"], "eyes")
         isl = bare()
@@ -1051,7 +1051,7 @@ if __name__ == "__main__":
 
 
 class TypingBox(unittest.TestCase):
-    """28 October 2026, after Atticus's box: typing to her instead of talking. Enter sends it, in one line, as a turn
+    """28 October 2026: typing to her instead of talking. Enter sends it, in one line, as a turn
     of yours; its grey hint is never sent; Up and Down go back through what you typed; clicking away keeps a draft."""
 
     def setUp(self):

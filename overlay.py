@@ -1,4 +1,4 @@
-"""Harry drawing on your screen (28 October 2026, after Atticus): a ring round where to click, numbered steps with a
+"""Harry drawing on your screen (28 October 2026): a ring round where to click, numbered steps with a
 line from one to the next, a box round a part of the window, a line under what to read and a short caption, each
 drawn on like a pen on a whiteboard. It sits over every window and is never in the way: clicks go through it, it
 never takes the focus, it's not in the taskbar or Alt+Tab, and it's left out of her own screenshots

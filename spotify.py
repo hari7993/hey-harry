@@ -1,4 +1,4 @@
-"""Spotify: songs, albums, artists, podcasts and playlists (28 October 2026, after Atticus's instant playlists): "play
+"""Spotify: songs, albums, artists, podcasts and playlists (28 October 2026): "play
 lofi beats on Spotify", "play my Discover Weekly", "play the album Rumours on Spotify", "play my liked songs".
 
 On Windows there's no AppleScript to tell Spotify what to play, so she opens Spotify's own search for it

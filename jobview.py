@@ -1,5 +1,4 @@
-"""What her helpers and background jobs are doing, live, in a corner of the screen (28 October 2026, after
-Atticus's corner chip and live mini screen): a card for each one going, with its name or title, what it's doing now,
+"""What her helpers and background jobs are doing, live, in a corner of the screen (28 October 2026): a card for each one going, with its name or title, what it's doing now,
 and a live picture of the window it works in (cards.py, Windows' own thumbnails), so you can watch it work behind
 your other windows. A click on one brings its window to the front; the x puts the card away till the next job.
 "Show me the helpers" and "hide the mini view" turn it on and off (settings "jobview", on unless you turn it off).

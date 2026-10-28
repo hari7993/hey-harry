@@ -1,4 +1,4 @@
-"""Finding your files by what's in them (28 October 2026, after Atticus): "find my notes about the Tokyo trip", "which
+"""Finding your files by what's in them (28 October 2026): "find my notes about the Tokyo trip", "which
 document mentions invoice 4521?", "search my files for 'quarterly targets'". It asks the same Windows Search index as
 filesearch.py, for the words inside documents, PDFs, slides and mail it has indexed, in your own folders only
 (filesearch.scopes). It reads nothing off the disk itself, so it answers in about a second.

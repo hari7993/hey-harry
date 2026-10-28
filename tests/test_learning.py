@@ -509,7 +509,7 @@ class Repeats(Home):
 
 
 class FirstTime(Home):
-    """28 October 2026, Atticus's way: a request the model planned is learned the first time it works, so asked again
+    """28 October 2026, learned on first use: a request the model planned is learned the first time it works, so asked again
     in the same words it happens at once with no model (siri.learn_first), and asked about another app it runs on
     that app (siri.swapped_routine)."""
 
@@ -594,7 +594,7 @@ class FirstTime(Home):
 
 
 class TryAgain(Home):
-    """28 October 2026, Atticus's Try again: the last request asked again as a correction, the model told what she did
+    """28 October 2026, Try again: the last request asked again as a correction, the model told what she did
     and to do it another way; after the model's own failure, only asked again."""
 
     def setUp(self):
@@ -659,7 +659,7 @@ class TryAgain(Home):
 
 
 class StrongerModel(Home):
-    """28 October 2026, after Atticus's MODEL_OFFER: when the free model fails, or a task in an app it planned falls
+    """28 October 2026: when the free model fails, or a task in an app it planned falls
     short, she offers a stronger model you saved a key for, and only your yes tries it, on that model alone."""
 
     def setUp(self):

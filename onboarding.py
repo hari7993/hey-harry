@@ -1,4 +1,4 @@
-"""Her walkthrough, the first time Hey Harry opens (28 October 2026, the owner's ask, after Atticus's setup window): a
+"""Her walkthrough, the first time Hey Harry opens (28 October 2026, the owner's ask): a
 640 px window that slides from page to page with dots under it, Back and Skip All.
 
 Meet Harry (her eyes, and the Right Alt key pressing itself), what she needs (her voice, her brain, the microphone and
@@ -24,7 +24,7 @@ W, H = 640, 640
 BG, TEXT, MUTED, LINE, CARD = "#ffffff", "#1b1b1b", "#6b6b70", "#e6e6ea", "#f5f5f7"
 ACCENT, GREEN, ORANGE, BLUE_LIT = "#0067c0", "#1f9d55", "#e08a00", "#3d9bff"
 NAV, GLOW = "#0f1116", "#5ee7f2"
-# the things to say on the last page, as Atticus floats its own out of its orb
+# the things to say on the last page
 IDEAS = ("“Open Spotify”", "“Volume to 30”", "“What’s on my screen?”",
          "“Remember I use Chrome”", "“Set a timer for 10 minutes”", "“Transcribe”",
          "“When I say work mode, open Gmail”", "“Any new messages?”", "“Play lo-fi”")
@@ -36,7 +36,7 @@ def _ui():
 
 
 class Pill(tk.Canvas):
-    """A rounded button drawn on a canvas, as Atticus's are: kind "primary" (blue), "secondary" (grey) or "quiet"
+    """A rounded button drawn on a canvas: kind "primary" (blue), "secondary" (grey) or "quiet"
     (words only)."""
 
     def __init__(self, parent, text, command, kind="primary", font=None, bg=BG, px=lambda n: n):
@@ -130,7 +130,7 @@ class Eyes(tk.Canvas):
 
 
 class Keycap(tk.Canvas):
-    """A key on the keyboard, as Atticus draws its shortcut: up, pressed (down a little), lit (blue, held) or done
+    """A key on the keyboard: up, pressed (down a little), lit (blue, held) or done
     (green, she heard you)."""
 
     def __init__(self, parent, label, app, big=False, bg=BG):
@@ -351,7 +351,7 @@ class Walkthrough:
         self.next()
 
     def _act_out(self):
-        """The key presses itself, holds and lets go, as Atticus's keycaps act out its shortcut, every 3.6 s."""
+        """The key presses itself, holds and lets go, every 3.6 s."""
         if not self.top.winfo_exists():
             return
         if self.current == "welcome":
@@ -477,7 +477,7 @@ class Walkthrough:
         self._check_ready()
 
     def _tick(self, parent, pop=True):
-        """A green tick in a circle that pops in, its stroke drawn on, as Atticus's do."""
+        """A green tick in a circle that pops in, its stroke drawn on."""
         px = self.app.px
         s = px(24)
         c = tk.Canvas(parent, width=s, height=s, bg=CARD, highlightthickness=0, bd=0)
@@ -771,7 +771,7 @@ class Walkthrough:
 
     def _draw_bloom(self, now):
         """Her eyes in the middle, and things to say blooming out of them to their places, then bobbing, one lit
-        up at a time, as Atticus's idea bubbles do round its orb."""
+        up at a time."""
         ui, px, c = _ui(), self.app.px, self.bloom
         c.delete("all")
         w, h = int(c.cget("width")), int(c.cget("height"))

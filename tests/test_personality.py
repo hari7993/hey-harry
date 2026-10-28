@@ -1,4 +1,4 @@
-"""28 October 2026, Atticus's way of answering in Harry's voice: answer first, a done task in one sentence of what's now
+"""28 October 2026, Her way of answering, in Harry's voice: answer first, a done task in one sentence of what's now
 true, and a failure that says what to do (siri.fail_line). An untouched SOUL.md moves to the new default; one you
 edited stays yours. No model, voice or network."""
 import os
@@ -94,7 +94,7 @@ class StepLabels(unittest.TestCase):
 
 
 class OnlyWhatSheSaw(unittest.TestCase):
-    """28 October 2026, Atticus's rule: a step that left nothing to see fails, said so, and is never learned."""
+    """28 October 2026, the rule: a step that left nothing to see fails, said so, and is never learned."""
 
     def test_an_app_whose_window_never_came_isnt_called_open(self):
         app = mock.Mock()
@@ -121,7 +121,7 @@ class OnlyWhatSheSaw(unittest.TestCase):
 
 
 class Windows(unittest.TestCase):
-    """28 October 2026, as Atticus places them: a named app's window on a side or a screen, with no model."""
+    """28 October 2026: a named app's window on a side or a screen, with no model."""
     MONS = [{"name": "Built-in Display", "x": 0, "y": 0, "w": 1920, "h": 1200, "work": (0, 0, 1920, 1152),
              "built_in": True, "primary": True},
             {"name": "DELL U2720Q", "x": 1920, "y": 0, "w": 2560, "h": 1440, "work": (1920, 0, 2560, 1400),

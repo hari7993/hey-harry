@@ -1,4 +1,4 @@
-"""A reply to the email on your screen, written into its reply box and never sent (28 October 2026, after Atticus):
+"""A reply to the email on your screen, written into its reply box and never sent (28 October 2026):
 "reply saying sounds good, see you at 7", "write a reply saying yes but ask to move it to Friday", "answer this email,
 tell him I'll send the deck tomorrow".
 

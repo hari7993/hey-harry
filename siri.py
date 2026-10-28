@@ -13,7 +13,7 @@ import toolbox
 import screen_watch
 import phrasebook  # more ways to say her scripted lines, so she doesn't sound the same every time
 import identity  # her name: Harry, or the one you gave her
-# Atticus's ideas, for Windows (28 October 2026): where to click drawn on the screen, files by what's in them, a
+# Newer skills (28 October 2026): where to click drawn on the screen, files by what's in them, a
 # calendar, Spotify, named helpers and their live view, a reply in the email in front, meeting notes. Its steps are
 # registered as it's imported, before the step sets below are worked out from the registry
 import extras
@@ -26,7 +26,7 @@ from secrets_store import get_secret, missing_secrets
 from dictation import Dictation, START as DICTATE_START, USER_VOCAB, fix_vocab, read_vocab, save_vocab
 
 agent.bind(sys.modules[__name__])  # her tasks in apps (agent.py) do their steps and talk through this module
-extras.bind(sys.modules[__name__])  # and Atticus's ideas (extras.py) theirs
+extras.bind(sys.modules[__name__])  # and the newer skills (extras.py) theirs
 dream.bind(sys.modules[__name__])  # dream mode asks what's said plainly and what's playing through here
 HERE = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(HERE, ".env"))
@@ -89,7 +89,7 @@ TASK_STORE = tasking.Store()  # %APPDATA%\Hey Harry\tasks.db, opened only when f
 # Her personality, Hermes Agent's SOUL.md: read fresh every time, edit it to change how she talks (Memory tab)
 SOUL_PATH = os.path.join(win.APPDATA_DIR, "SOUL.md")
 # 27 October: Hari said she still sounded like a bot, so she's told to sound alive and match his mood; 28 October
-# (deva-san): to answer first, as Atticus does. The rest is said shorter for room, as her prompt is at its budget
+# (deva-san): to answer first. The rest is said shorter for room, as her prompt is at its budget
 # (tests/test_learning.py PromptSize)
 DEFAULT_SOUL = """You are Harry, the AI assistant who runs this Windows laptop for its owner, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
 Talk like a person, not a machine: everyday spoken English, short sentences, contractions, a light, dry wit now and then. Never stiff, gushing or at their expense.
@@ -100,7 +100,7 @@ Use their name now and then, not in every reply. When something fails, say what 
 You can banter about Marvel and pop culture, but you're their assistant first."""
 # Her personality as it was written before: an untouched SOUL.md still holding one of these is moved to DEFAULT_SOUL
 # (soul); one you've edited is yours and stays. The first until 27 October; the second, told to sound alive, until 28
-# October, when she was told to answer first, as Atticus does
+# October, when she was told to answer first
 OLD_SOULS = ("""You are Harry, the AI assistant who runs this Windows laptop for the person who owns it, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
 Talk like a person, not a machine: everyday spoken English, short sentences, contractions. Friendly and relaxed, with a light, dry wit now and then. Never stiff, never gushing, never at their expense.
 Be direct, the way Hermes Agent is: a small ask gets a one-line answer, finished work gets a short report of what you did. No filler like "Great question" or "I'd be happy to", and don't repeat their request back.
@@ -3175,7 +3175,7 @@ def slot_routine(t, gate=False):
     return None
 
 
-# Windows by name, on a side or a screen, with no model (28 October 2026, as Atticus places them): "Chrome on the
+# Windows by name, on a side or a screen, with no model (28 October 2026): "Chrome on the
 # left, Notepad on the right", "put VS Code on my big screen", "Spotify full screen on the laptop". Every app named
 # one she knows (known_app), or the model plans it (WINDOW_STEPS)
 SCREEN_WORDS = {"laptop": "laptop", "this screen": "laptop", "built in screen": "laptop", "monitor": "monitor",
@@ -3222,7 +3222,7 @@ def placed(t, gate=False):
 
 
 def swapped_routine(t):
-    """A routine she knows, asked for about another app (Atticus's swapped, 28 October 2026): with "open notepad and
+    """A routine she knows, asked for about another app (28 October 2026): with "open notepad and
     make it full screen" taught or learned, "open calculator and make it full screen" runs the same steps on
     Calculator, with no model. Only when the words are the routine's but for one app's name, both apps she knows
     (known_app), and the old one is only ever a step's "app": named anywhere else in it, the swap could change what
@@ -3741,7 +3741,7 @@ def _quick(words, gate=False):
     if gate != "cold" and settings.get("vision") and screen_watch.POINTED.fullmatch(t):
         print("  pointing at the screen")
         return make_plan([{"do": "screen", "task": words}])
-    # Atticus's, for Windows (extras.py): where to click, drawn on the screen; the calendar; Spotify; named helpers;
+    # The newer skills (extras.py): where to click, drawn on the screen; the calendar; Spotify; named helpers;
     # files by what's in them; a reply in the email in front; meeting notes. Before messages and files below, whose
     # words ("reply saying ...", "find notes about ...") would take theirs
     extra = extras.quick(words, gate)
@@ -4159,7 +4159,7 @@ POWER_OK = {"until": 0.0}
 # "yes" -> message_send in the last turns planned it for "yes send it" typed on the phone, with no button tapped
 SEND_OK = {"until": 0.0}
 # (ASKS_YES: the steps registered with effect "staged". agent_resume: a send, a delete or a payment in an app)
-# Full access (Settings > Safety, 28 October 2026, after Atticus's): off unless you turn it on in the window. No plan,
+# Full access (Settings > Safety, 28 October 2026): off unless you turn it on in the window. No plan,
 # no voice and no phone can turn it on; any of them can turn it off. On, a message typed into the chat she opened and
 # read back, or an app she looked up to install, goes ahead without "Send it?": she says what she's doing first, so
 # "stop" over her still cuts it, then does it. Only for words said with her name or straight after she answered,
@@ -4237,7 +4237,7 @@ def full_line(confirm):
 
 def full_access_said(t):
     """"Safe mode", "ask me first": Full access off, said or typed on the phone. "Turn on full access": only in the
-    window, as Atticus has it, where only you can lower her guard."""
+    window, where only you can lower her guard."""
     if FULL_OFF.fullmatch(t):
         if not settings.get("full_access"):
             return make_plan(say="Full access is already off. I ask before sending.")
@@ -4250,7 +4250,7 @@ def full_access_said(t):
     return None
 
 
-# Settings she changes by voice, only ever the safer way (28 October 2026, after Atticus): off by name, straight after
+# Settings she changes by voice, only ever the safer way (28 October 2026): off by name, straight after
 # she answered or typed on the phone, never from across the room; back on only in the window, so nobody else in the
 # room, or a video, can turn more of her on. (setting, words, what she says)
 VOICE_OFF = (
@@ -4265,7 +4265,7 @@ VOICE_OFF = (
      "Okay, I won't read your notifications. That's back on in Settings, under Notifications."))
 VOICE_ON = re.compile(r"(?:start|turn on|switch on)(?: the| your)? (?:learning|heads? ?ups|reading (?:my )?"
                       r"notifications|notifications)|(?:start )?learning again")
-# Her break (Atticus's pause): "take a break", "stop listening for 20 minutes", "pause listening". The mic only hears
+# Her break: "take a break", "stop listening for 20 minutes", "pause listening". The mic only hears
 # right Alt, and she doesn't speak up (heads-ups, screen commentary), until it's over (PAUSE_FOR minutes when no time
 # is said), you say "I'm back" with right Alt, or pick a mode in the window. A bare "pause" is the music's
 PAUSE = {"until": 0.0, "mode": None}  # until when, and the mode to go back to (run_voice_assistant's pause_tick)
@@ -4676,7 +4676,7 @@ LET_GO = [None]  # why think let this turn's plan go, if it did: "not asked for"
 
 def fail_line(exc, slow=False):
     """What she says when the model doesn't answer: what failed and what to do about it, in one sentence, as
-    Atticus's failure lines do (28 October 2026), rather than "I can't think right now"."""
+    a clear failure line does (28 October 2026), rather than "I can't think right now"."""
     text = str(exc)
     p = providers.split(settings.get("llm_model"))[0]
     if slow:
@@ -5194,7 +5194,7 @@ def repeats_note(said):
             "those words as its trigger and those steps, so next time it runs at once.")
 
 
-# Learned the first time it works (Atticus's learn, 28 October 2026): a request the model planned, said by name or
+# Learned the first time it works (28 October 2026): a request the model planned, said by name or
 # straight after she answered, that went through with nothing failed, each step one a routine may take, is kept as a
 # routine on its words, so asked again in the same words it happens at once with no model. It was two identical
 # repeats and a review's say-so before. Not typing, a look at the screen, a note or research, which are the moment's
@@ -5266,7 +5266,7 @@ def learn_first(words, steps, failed, gate, planned):
     receipt("Learned", f"Next time \u201c{t}\u201d is instant.")
 
 
-# Try again (28 October 2026, after Atticus's): the card's Try again, or "that's wrong, try again" said by name or
+# Try again (28 October 2026): the card's Try again, or "that's wrong, try again" said by name or
 # straight after she answered, asks her last request again as a correction, not a plain re-run. Within RETRY_WITHIN
 # of it: a routine she learned on her own that answered it is forgotten (learned again if the new try works); no
 # shortcut, routine or procedure answers it this time; the model is told what she did and said, to do it another way
@@ -5310,7 +5310,7 @@ def retry_note(plan):
 
 
 # A stronger model, offered once when the model fails or a task in an app it planned falls short (28 October 2026,
-# after Atticus's MODEL_OFFER): "Want me to try that with Claude Sonnet?" Only one on a provider whose key you saved,
+# ): "Want me to try that with Claude Sonnet?" Only one on a provider whose key you saved,
 # when the model picked is free or a small one, and only with your yes, since you pay for it. The yes asks again on
 # that model alone, its task in an app too, told what was tried before (retry_note); it's never offered on top of
 # itself. Her question is for the next thing said, within OFFER_FOR
@@ -6667,7 +6667,7 @@ def _think(text, gate, notify=None, sure=1.0):
                              + ("\n\n" + LOOK_STEPS if looks else "")
                              + ("\n\n" + WINDOW_STEPS if WINDOW_WORDS.search(plain(text)) else "")
                              + ("\n\n" + ORDER_STEPS if ORDER_WORDS.search(text) else "")
-                             + extras.prompt_block(text)  # Atticus's steps, for the words that may ask for one
+                             + extras.prompt_block(text)  # the newer skills' steps, for the words that may ask for one
                              + dream.prompt_block(text)  # and dream mode's, for words of dreams, scenes and moods
                              + ("\n\n" + known if known else "")
                              + memory_block() + context() + job_news(gate)
@@ -8749,7 +8749,7 @@ def do_step(step):
         on = step.get("on")
         want = not win.dark_mode() if on in (None, "toggle") else bool(on)
         win.set_dark_mode(want)
-        if win.dark_mode() != want:  # read back, as Atticus claims only what it saw
+        if win.dark_mode() != want:  # read back
             raise RuntimeError(f"Windows didn't switch to {'dark' if want else 'light'} mode")
         return str(on)
     if do == "night_light":  # straight in the registry, as Quick Settings does it: no Settings window
@@ -8826,7 +8826,7 @@ def default_line(steps):
 
 
 def step_label(step):
-    """A step in a few plain words for her answer card, as Atticus lists its steps (28 October 2026): "Opening
+    """A step in a few plain words for her answer card (28 October 2026): "Opening
     Notepad", "Searching the web: Iron Man 2 cast", "Pressing Ctrl+W". Only from the step's own fields, cut short:
     never the model's own words about it."""
     do = step.get("do")
@@ -8971,7 +8971,7 @@ def run_plan(plan, notify):
         for i, step in enumerate(steps):
             activity.step(i + 1, len(steps), "")
             label = step_label(step)
-            emit(notify, "Step", f"live\t{label}")  # her card's step rows, as Atticus lists them
+            emit(notify, "Step", f"live\t{label}")  # her card's step rows
             n_failed = len(failed)
             try:
                 if step["do"] in agent.DISPATCH:
@@ -9418,7 +9418,7 @@ NOTIFY = [None]  # the window's, for what happens off a turn: what her review le
 
 
 def receipt(kind, text):
-    """One quiet line on her answer card, as Atticus's memory receipts and Learned pill (28 October 2026): kind
+    """One quiet line on her answer card, like a receipt or a Learned pill (28 October 2026): kind
     "Learned" or "Remembered", and what. Never said out loud. On the card under her answer, or a short popup if the
     card has gone; a click opens the Memory tab."""
     text = " ".join(str(text or "").split())

@@ -51,10 +51,10 @@ NEW_LOOKS = {"selected_files", "installed_apps", "top_apps", "where", "open_wind
 # task on the screen, and nothing else; and the same job in the background (siri.queue_job), made a task row before
 # anything runs, so it's in no other set
 NEW_JOB = {"task", "todo_list", "background"}
-# an app's window on a side or a screen (siri.placed, 28 October 2026, as Atticus places them): moved like open, so
+# an app's window on a side or a screen (siri.placed, 28 October 2026): moved like open, so
 # read-safe and a routine's, said once it's there
 NEW_PLACE = {"place"}
-# Atticus's ideas for Windows (extras.py, 28 October 2026): where to click (show, said first, needing its words without
+# Newer skills (extras.py, 28 October 2026): where to click (show, said first, needing its words without
 # her name), the calendar (agenda, a look-up of others' words; event, said once done), Spotify (like YouTube: read-safe,
 # a routine's), helpers (said once started), a reply in the open email and meeting notes (both needing their words
 # without her name), files by what's in them (a look-up of others' words) and the jobs' live view (read-safe)

@@ -1,5 +1,4 @@
-"""Atticus's ideas, for Windows (28 October 2026, the owner's ask after reading github.com/SaarthurR/atticus-mac and
-its Windows port): where to click, drawn on the screen (showme.py, overlay.py); files found by what's in them
+"""Newer skills (28 October 2026, the owner's ask): where to click, drawn on the screen (showme.py, overlay.py); files found by what's in them
 (filecontents.py); a calendar (agenda.py); Spotify playlists (spotify.py); named helpers you talk to while they
 work (helpers.py) and a live view of them in the corner (jobview.py, cards.py); a reply written into the email on
 your screen (drafts.py); and a meeting helper with live notes and a recap (meeting.py, loopback.py).

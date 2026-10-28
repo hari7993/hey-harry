@@ -60,10 +60,10 @@ DEFAULTS = {
     # the island (island.py), all changed in the Island tab
     # capsule (27 October 2026: a floating glass capsule with her glowing eyes, the owner's pick from the mockups) or
     # pill (the black pill with Nixi's eyes it was before)
-    # panel (28 October 2026, the owner's pick): the capsule, but her turns open into a box as Atticus has them, what
+    # panel (28 October 2026, the owner's pick): the capsule, but her turns open into a box, what
     # you said in a bubble, her answer, how long it took and Try again
     "island_style": "panel",
-    # eyes (Nixi's, her own: the owner wants them, 28 October 2026), orb (Atticus's ring of dashes, there to pick) or
+    # eyes (Nixi's, her own: the owner wants them, 28 October 2026), orb (a ring of dashes, there to pick) or
     # wave (the Siri wave, the pill's alone)
     "island_face": "eyes",
     "island_theme": "amoled",  # system, light, dark or amoled (pure black)

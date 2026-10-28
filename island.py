@@ -226,7 +226,7 @@ class DynamicIsland:
     # ------------------------------------------------------------------ settings
     def _read_settings(self):
         g = settings.get
-        # the answer card is the capsule but for her turns, which it shows as Atticus's box does
+        # the answer card is the capsule but for her turns, which it shows
         self.panel = g("island_style") not in ("capsule", "pill")
         self.style = "pill" if g("island_style") == "pill" else "capsule"
         self.drop = bool(g("island_drop"))  # hanging from the top of the screen, a notch, with no gap above it
@@ -715,7 +715,7 @@ class DynamicIsland:
                       wander=False)
 
     def _panel_harry(self, state, expr, colour):
-        """Her turn as Atticus's box has it (28 October 2026, the owner's pick, her own eyes kept): her eyes and what
+        """Her turn in the answer card (28 October 2026, the owner's pick, her own eyes kept): her eyes and what
         she's doing at the top, with x to close it; what you said in a bubble on the right, the words coming in as
         you say them; her answer under it, coming in line by line; and once she's answered, how long it took and Try
         again, which asks her the same again."""
@@ -760,7 +760,7 @@ class DynamicIsland:
         H = min(self.island_max_h, H)
         eyes_w, eyes, _ = self._face(expr, colour, voice=live or state == "speaking", busy=busy)
         x_r, x_cx, x_cy = 11 * k, W - pad - 9 * k, 12 * k + head_h / 2
-        full = bool(settings.get("full_access"))  # Atticus's orange "Full access" pill, by the x
+        full = bool(settings.get("full_access"))  # An orange "Full access" pill, by the x
         f_badge = self._text(round(11 * k), 600)
         badge_w = (f_badge.measure("Full access") + 2 * 9 * k + 10 * k) if full else 0
         badge_h = 22 * k
@@ -776,7 +776,7 @@ class DynamicIsland:
             hot.append(("answer", pad - 4 * k, y_a - 3 * k, W - pad, y_a + len(a_lines) * a_lh))
         if again:
             hot.append(("again", W - pad - redo_w - 6 * k, y_f - 4 * k, W - pad + 6 * k, y_f + f_foot.line + 4 * k))
-        fill = tuple(0.91 * b + 0.09 * t for b, t in zip(th["body"], th["text"]))  # Atticus's white at 9% on the glass
+        fill = tuple(0.91 * b + 0.09 * t for b, t in zip(th["body"], th["text"]))  # white at 9% on the glass
         rim = tuple(0.82 * b + 0.18 * t for b, t in zip(th["body"], th["text"]))
         answered_at = self.answered_at
 
@@ -785,7 +785,7 @@ class DynamicIsland:
             eyes(cv, ox + pad - 8 * k, cy, a, now)
             if status:
                 col = th["muted"]
-                if live or busy:  # it shimmers while she's at it, as Atticus's does
+                if live or busy:  # it shimmers while she's at it
                     s = 0.35 * (0.5 + 0.5 * math.sin((now - self.t0) * 3.4))
                     col = tuple(m + (t - m) * s for m, t in zip(th["muted"], th["text"]))
                 sx = ox + pad - 8 * k + eyes_w + 4 * k
@@ -811,7 +811,7 @@ class DynamicIsland:
                 bx0, by1 = bx1 - q_w, by0 + q_h
                 mx, my = (bx0 + bx1) / 2, (by0 + by1) / 2
 
-                def bubble_sd(xs, ys):  # round, but for its bottom-right corner: Atticus's tail
+                def bubble_sd(xs, ys):  # round, but for its bottom-right corner: a speech-bubble tail
                     return np.minimum(face.rbox(xs, ys, mx, my, q_w / 2, q_h / 2, 16 * k),
                                       face.rbox(xs, ys, (mx + bx1) / 2, (my + by1) / 2, q_w / 4, q_h / 4, 5 * k))
                 box = (bx0 - 2, by0 - 2, bx1 + 2, by1 + 2)
@@ -864,7 +864,7 @@ class DynamicIsland:
 
     def _panel_press(self, name):
         """x on her turn's box: it goes; Try again: the same words asked again, as a turn of yours. Your words: in
-        the typing box, to fix and send again; her answer: copied (28 October 2026, as Atticus's box has them)."""
+        the typing box, to fix and send again; her answer: copied (28 October 2026)."""
         if name == "close":
             self.hide()
         elif name == "words" and self.you:
@@ -1388,7 +1388,7 @@ class DynamicIsland:
         her blinks, her glances about, her reactions), as big; expr: how they look (face.MOODS), unless a reaction's
         on. tint: the colour of what's going on, in their glow (MOOD_TINTS while a reaction lasts); voice: they
         bounce with it, as on the pill's big face; busy: she's thinking or working. With the Face setting on the
-        orb (Atticus's, 28 October 2026), the orb in their place, rippling with the voice, a light running round it
+        orb (28 October 2026), the orb in their place, rippling with the voice, a light running round it
         while she's busy and breathing when nothing's on, blinking and looking as they would."""
         k, th = self.k, self.theme()
         size, w = self.SMALL_EYES * k, self._eyes_w()

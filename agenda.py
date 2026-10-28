@@ -1,4 +1,4 @@
-"""Her calendar (28 October 2026, after Atticus): "what's on my calendar tomorrow?", "add lunch with Sam on Friday at
+"""Her calendar (28 October 2026): "what's on my calendar tomorrow?", "add lunch with Sam on Friday at
 1", "move my 3 PM to 4", "cancel the dentist", "am I free at 5?", "what's my next meeting?", and a word from her before
 each thing starts.
 
@@ -10,7 +10,7 @@ packaged apps and Outlook's to classic Outlook, so the iCal address is the way i
 changed where it lives: she opens that day in Google Calendar, or a new event filled in ("put it in my Google
 calendar"), for you to save.
 
-Moving or cancelling an event of hers is read back and asked about first, as Atticus's approval card has it."""
+Moving or cancelling an event of hers is read back and asked about first."""
 import calendar as _cal
 import datetime as dt
 import hashlib

@@ -1,4 +1,4 @@
-"""Her meeting helper (28 October 2026, after Atticus's Meeting Copilot): "take notes in this meeting", then "what did
+"""Her meeting helper (28 October 2026): "take notes in this meeting", then "what did
 they just ask?", "what should I say?", "what have we decided so far?", and "stop the meeting notes" for a recap.
 
 She hears both sides on this PC: you through the mic, and the others through what the PC plays (loopback.py), each

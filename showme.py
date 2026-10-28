@@ -1,4 +1,4 @@
-"""Where to click, shown on your screen (28 October 2026, after Atticus's "where do I click?" and its whiteboard):
+"""Where to click, shown on your screen (28 October 2026):
 "where do I click to turn on Bluetooth?", "show me how to change my wallpaper", "explain this page to me".
 
 She looks at the window in front as a task in an app does (its controls by UI Automation, and a screenshot), asks the

@@ -1,4 +1,4 @@
-"""Small dark cards in a corner of the screen (28 October 2026, after Atticus's corner chip and live mini screen):
+"""Small dark cards in a corner of the screen (28 October 2026):
 what her helpers and background jobs are doing, each with a live picture of the window it works in, and the meeting
 helper's notes. The picture is Windows' own (a DWM thumbnail): it moves as the window does, even behind your other
 windows, and costs nothing to draw. A card never takes the focus, isn't in the taskbar or Alt+Tab, and is left out

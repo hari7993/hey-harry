@@ -1,9 +1,9 @@
-"""Named helpers (28 October 2026, after Atticus's named agents): "make a helper called Researcher to find the best
+"""Named helpers (28 October 2026): "make a helper called Researcher to find the best
 budget laptops under 50,000", then "Researcher, look at battery life too" or "tell Researcher to stick to Lenovo",
 "how's Researcher doing?", "stop Researcher", "what are my helpers doing?".
 
 A helper is one of her jobs in the background (siri.queue_job, agent.Job) with a name you gave it, kept here by its
-task id. What you tell a running one reaches it in its next round (agent.messages reads Job.steer), as Atticus steers
+task id. What you tell a running one reaches it in its next round (agent.messages reads Job.steer)
 its agents by voice; what it's doing now comes from her activity, as the island shows it. When it's done she says so
 by its name (siri._task_result_line)."""
 import json

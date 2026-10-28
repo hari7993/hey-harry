@@ -1053,8 +1053,8 @@ def bring_to_front(hwnd):
 
 
 # --------------------------------------------------------------------------- A window by name, on a side or a screen
-# "Chrome on the left, Notepad on the right", "VS Code on my big screen" (28 October 2026). After Atticus for
-# Windows' winctl.py (FindlayHi/atticus-windows, MIT): every display with its name and whether it's the laptop's own
+# "Chrome on the left, Notepad on the right", "VS Code on my big screen" (28 October 2026). Every
+# display with its name and whether it's the laptop's own
 # panel, from Windows' display configuration, and a window put by its visible frame, so it lands exactly on its
 # half whatever its invisible resize borders. Real pixels throughout (_real_pixels), as SetWindowPos takes them
 class MONITORINFOEX(ctypes.Structure):
@@ -1229,7 +1229,7 @@ def place_window(app, where="full", screen="current", wait=3.0):
 def open_app(app, wait=8.0):
     """Like `open -a`: bring it to the front if it's open, else launch it and wait for its window. True if a window of
     it was seen (or a new one came to the front), False if none came in wait seconds: she says so, rather than that
-    it's open (28 October 2026, Atticus's rule, only what she saw)."""
+    it's open (28 October 2026, only what she saw)."""
     windows = app_windows(app)
     if windows:
         bring_to_front(windows[0])

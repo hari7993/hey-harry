@@ -1208,7 +1208,7 @@ class IslandTap(Case):
 
 
 class Typed(Case):
-    """28 October 2026, after Atticus's box: words typed to her (the typing box, Home's box) are a turn of yours off
+    """28 October 2026: words typed to her (the typing box, Home's box) are a turn of yours off
     the controls loop, with her card told a new one's begun; right Alt tapped twice opens the typing box."""
 
     def run_with(self, commands):
@@ -1235,7 +1235,7 @@ class Typed(Case):
         self.assertNotIn("ptt_turn", a.threads)  # nothing said, nothing to hear
 
     def test_a_break_hears_only_right_alt_then_goes_back(self):
-        """28 October 2026, Atticus's pause: "take a break" switches to right Alt only, and back once it's over."""
+        """28 October 2026, her break: "take a break" switches to right Alt only, and back once it's over."""
         seen = []
         self.addCleanup(siri.PAUSE.update, until=0.0, mode=None)
         a, said = self.run_with([lambda: siri.PAUSE.update(until=time.time() + 60),

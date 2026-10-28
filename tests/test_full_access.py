@@ -1,4 +1,4 @@
-"""Full access (28 October 2026, after Atticus's): off unless you turn it on in the window. On, a message typed into
+"""Full access (28 October 2026): off unless you turn it on in the window. On, a message typed into
 the chat she opened and read back, or an app she looked up, goes ahead without "Send it?", said first as a statement;
 only for words said to her by name or as a follow-up, that she was sure of, with nothing read this turn. Everything
 else asks as ever, and no plan, voice or phone can turn it on. No model, voice or network."""
@@ -191,7 +191,7 @@ if __name__ == "__main__":
 
 
 class SaferByVoice(Base):
-    """28 October 2026, after Atticus: settings by voice only ever the safer way, off by name and on only in the
+    """28 October 2026: settings by voice only ever the safer way, off by name and on only in the
     window; and her break (PAUSE), with no heads-ups or screen commentary, till it's over or you're back."""
 
     def setUp(self):
