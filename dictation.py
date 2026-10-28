@@ -1,4 +1,4 @@
-"""Dictation from Tatoscription: "Hey Jev, transcribe" records until "stop transcribing", then pastes the text at your cursor.
+"""Dictation from Tatoscription: "Hey Harry, transcribe" records until "stop transcribing", then pastes the text at your cursor.
 
 The audio never leaves the PC: the same local speech model that listens for "stop transcribing" writes the text.
 """
@@ -8,7 +8,7 @@ from winplatform import log_path
 
 MAX_SECS = 15 * 60  # stops by itself after this, in case the stop phrase gets missed
 HERE = os.path.dirname(os.path.abspath(__file__))
-HISTORY = log_path("Hey Jev dictation.jsonl")
+HISTORY = log_path("Hey Harry dictation.jsonl")
 START = re.compile(r"^\W*(?:(?:please|can you|could you)\s+)?(?:start\s+)?(?:transcrib\w*|dictat\w*|take notes)"
                    r"(?:\s+(?:this|this meeting|this call|notes|mode|now|please|for me))?\W*$", re.I)
 
@@ -189,12 +189,19 @@ def clean(text):
 
 class Dictation:
     def __init__(self, names):
-        # her name goes with the stop phrase however it was written: "Hey Jev" came out as "Hello" or "Heijev", and
-        # that was pasted at the end of the text
-        self.stop_rx = re.compile(rf"(?:\b(?:hey|hi|hay|hello|hallo|hullo|okay|ok)\W+)?"
-                                  rf"(?:\b(?:hey|hei|he|hi|ha|h|a)?(?:{names})\W+)?\b(?:stop|end|finish)\W+(?:the\W+)?"
-                                  r"(?:transcri|dictat)\w*\W*$", re.I)
+        """names: her names as regex alternatives (siri.NAMES), or a function that gives them as they are now, so a
+        new name of hers (identity.rename) goes with the stop phrase too."""
+        self.names = names
         self.active = False
+
+    @property
+    def stop_rx(self):
+        # her name goes with the stop phrase however it was written: "Hey Harry" may come out as "Hello" or run
+        # together, "Heyharry", and that was pasted at the end of the text
+        names = self.names() if callable(self.names) else self.names
+        return re.compile(rf"(?:\b(?:hey|hi|hay|hello|hallo|hullo|okay|ok)\W+)?"
+                          rf"(?:\b(?:hey|hei|he|hi|ha|h|a)?(?:{names})\W+)?\b(?:stop|end|finish)\W+(?:the\W+)?"
+                          r"(?:transcri|dictat)\w*\W*$", re.I)
 
     def start(self):
         self.active, self.started, self.heard = True, time.time(), []

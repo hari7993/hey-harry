@@ -178,7 +178,7 @@ class ClockTimes(unittest.TestCase):
     def test_a_timer_for_a_time_of_day_is_a_reminder_then(self):
         with mock.patch.object(siri.time, "time", return_value=self.T240PM):
             for said, timer, when, text in (
-                    ("remind me to call mum at 6 pm, Jev", {"seconds": 12600, "label": "Call Mum"}, "at 6 pm",
+                    ("remind me to call mum at 6 pm, Harry", {"seconds": 12600, "label": "Call Mum"}, "at 6 pm",
                      "call Mum"),
                     ("can you remind me to call mum at 6", {"seconds": 0, "label": "Call Mum"}, "at 6 pm", "call Mum"),
                     ("wake me up at 7 a.m.", {"seconds": 59000, "label": "Wake up"}, "at 7 am", "wake up"),
@@ -239,7 +239,7 @@ class WithStore(unittest.TestCase):
     """A fresh task database and no timers for each test."""
 
     def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="heyjev-timers-")
+        self.dir = tempfile.mkdtemp(prefix="heyharry-timers-")
         self.store = tasks.Store(os.path.join(self.dir, "tasks.db"))
         patcher = mock.patch.object(siri, "TASK_STORE", self.store)
         patcher.start()
@@ -390,7 +390,7 @@ class RemindersCountDown(WithStore):
 class DurableOnly(WithStore):
     """27 October, found while mapping: do_step started research on a bare thread of its own, beside the durable
     research task, and had a second way to approve or cancel a task. Every plan passes prepare_task_steps first, so
-    neither was reached; a bare thread would be lost when Jev closed, with nothing in Tasks to say so."""
+    neither was reached; a bare thread would be lost when Harry closed, with nothing in Tasks to say so."""
 
     def test_research_and_task_control_are_only_ever_task_rows(self):
         plan = siri.prepare_task_steps({"steps": [{"do": "research", "topic": "budget phones"}], "say": ""})
@@ -418,7 +418,7 @@ class Worker(unittest.TestCase):
     """A44: a reminder due during a 30 minute install was said only after the install finished."""
 
     def test_reminder_is_said_during_a_long_install(self):
-        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyjev-worker-"), "tasks.db"))
+        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyharry-worker-"), "tasks.db"))
         said, release, started = queue.Queue(), threading.Event(), threading.Event()
 
         def slow_install(payload, cancelled):
@@ -446,7 +446,7 @@ class Worker(unittest.TestCase):
 
     def test_a_repeat_long_missed_while_the_pc_was_off_isnt_said_hours_late(self):
         """24 October, on waking at 9: "Reminder from Friday 23 October at 9:35 PM: drink water.", an hourly one."""
-        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyjev-worker-"), "tasks.db"))
+        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyharry-worker-"), "tasks.db"))
         said, now = queue.Queue(), time.time()
         an_hour_ago = dt.datetime.fromtimestamp(now - 3600)
         with mock.patch.object(siri, "TASK_STORE", store), mock.patch.object(siri, "ANNOUNCE", said):
@@ -473,7 +473,7 @@ class Worker(unittest.TestCase):
         """Rewritten on purpose on 27 October (it was test_long_tasks_still_go_one_at_a_time): the slow tasks still
         go one at a time, and now jobs in the background (kind agent) run on a lane of their own beside them, two at
         a time (siri.JOB_WORKERS), so a job asked for by voice doesn't wait 30 minutes behind an install."""
-        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyjev-worker-"), "tasks.db"))
+        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyharry-worker-"), "tasks.db"))
         said, release, started, running = queue.Queue(), threading.Event(), threading.Event(), []
         overlap, jobs, two = [], [], threading.Event()
 
@@ -523,7 +523,7 @@ class Worker(unittest.TestCase):
     def test_a_wake_as_her_wait_ends_is_kept_for_her_next_look(self):
         """27 October, found while mapping: Store.wait cleared WAKE after waiting, so a set() that came between the
         wait ending and the clear was lost. The worker clears it before it looks for due tasks instead."""
-        folder = tempfile.mkdtemp(prefix="heyjev-worker-")
+        folder = tempfile.mkdtemp(prefix="heyharry-worker-")
 
         class Late(threading.Event):
             def wait(self, timeout=None):

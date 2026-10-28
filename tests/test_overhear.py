@@ -24,7 +24,7 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(siri.barge("okay now open", False), "duck")  # while it's still being said: turned down
 
     def test_her_name_stops_her_at_once(self):
-        self.assertEqual(siri.barge("Hey Jev", False), "cut")
+        self.assertEqual(siri.barge("Hey Harry", False), "cut")
 
     def test_stop_only_once_it_is_all_that_was_said(self):
         self.assertEqual(siri.barge("Stop.", True), "cut")

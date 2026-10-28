@@ -1,8 +1,8 @@
-# Hey Jev: Hermes, in voice. The researched plan
+# Hey Harry: Hermes, in voice. The researched plan
 
 7 October 2026. Branch `fix/reality-check` (commit 6fc3a9b). Hermes Agent at commit 3569fba6 (7 Oct 2026).
 
-Behind this plan are eight research studies: Hermes' code, Jev's code, voice ID, speed, the decision maker, papers,
+Behind this plan are eight research studies: Hermes' code, Harry's code, voice ID, speed, the decision maker, papers,
 and Reddit/GitHub (Reddit itself was blocked, so it used Hacker News, forums and GitHub issues instead). Every size
 below was checked on the download page, and nothing was downloaded or installed. The full notes and sources are listed
 at the end.
@@ -11,14 +11,14 @@ at the end.
 
 All seven phases are built, each committed on its own branch, the branches stacked:
 `phase0/fresh-start` → `phase1/voice-id` → `phase2/faster` → `phase3/decider` → `phase4/hermes-learning` →
-`phase5/telegram` → `phase6/agent-jobs`. Nothing is pushed. Jev is running from `phase6/agent-jobs`, and 312 tests
+`phase5/telegram` → `phase6/agent-jobs`. Nothing is pushed. Harry is running from `phase6/agent-jobs`, and 312 tests
 pass.
 
 | Phase | Built | Waiting on you | Changed from the plan, and why |
 |---|---|---|---|
 | 0 Fresh start | `backup.py`, the first-run greeting | – | – |
-| 1 Your voice | CAM++ voice ID, enrolment by voice, learning mode that switches itself on | Say **"Hey Jev, learn my voice"** and read the 10 sentences | Turns under 1 s aren't checked: on this PC, Windows' voices saying "Hey Jev" matched yours. A short command said without her name is let go once it's on |
-| 2 Faster | Streaming plain answers, the filler, Pocket voice ("Jev on this PC"), Kilo warm-up, 3 history turns | Try "Jev on this PC" in Settings > Voice. Fish stays until 30 Nov, then switches by itself | Ling's thinking stays "low": "none" was tested on 34 requests and was no faster, with more mistakes. Skill notes went into phase 4 |
+| 1 Your voice | CAM++ voice ID, enrolment by voice, learning mode that switches itself on | Say **"Hey Harry, learn my voice"** and read the 10 sentences | Turns under 1 s aren't checked: on this PC, Windows' voices saying "Hey Harry" matched yours. A short command said without her name is let go once it's on |
+| 2 Faster | Streaming plain answers, the filler, Pocket voice ("Harry on this PC"), Kilo warm-up, 3 history turns | Try "Harry on this PC" in Settings > Voice. Fish stays until 30 Nov, then switches by itself | Ling's thinking stays "low": "none" was tested on 34 requests and was no faster, with more mistakes. Skill notes went into phase 4 |
 | 3 Decider | MiniLM decider, trained on your 487 labelled turns, on by default since 8 October | Nothing. Settings `"decider": "shadow"` puts it back to logging only | Held-out result: it would stop 11 of 44 wrong answers to room talk and miss 3 of 63 requests, so it stayed shadow-only until real use: on 8 October its "sure it isn't for her" was right 16 times in 18, and the 2 it got wrong asked for something, which it now never lets go |
 | 4 Hermes learning | Hermes code synced at 3569fba6; curator; review rules; instant corrections; undo; better search; skills that fit written out | – | With full memory and 40 skills the prompt is about **3,800 tokens** (fixed part 2,400), and a test holds it within ≤ 4,000, a command or schedule request too. Without her name the room note comes on top: about 4,250 for such a request, held ≤ 4,300. The step list is trimmed; the 34-request test is still to re-run |
 | 5 Telegram | Bot, pairing, buttons, voice notes, owner-only, "send me a screenshot" | Paired (done) | Listens whenever a token is saved, so `/start` always gets an answer. Before this, it stayed off until Pair was pressed, and a `/start` sent first got nothing. It keeps trying when Telegram can't be reached, and says so on the PC if the token stops working |
@@ -29,7 +29,7 @@ said over her) is done, with Nemotron and Parakeet: see the README, Talking over
 
 ## In short
 
-Jev stays the body: the always-listening ears, the 0.7 s commands on the PC, Windows control and the safety rules.
+Harry stays the body: the always-listening ears, the 0.7 s commands on the PC, Windows control and the safety rules.
 Hermes' better parts come in as **Hermes' own code**, copied at a pinned commit: memory, skills, the curator,
 the learning review, past-chat search, the Telegram button and pairing logic, and its cron rules.
 
@@ -37,8 +37,8 @@ What the research changed in the draft:
 
 | Draft said | Research found | Now |
 |---|---|---|
-| Laya as the decision maker | Laya needs PyTorch and a 0.6–0.8 GB model. On this CPU it takes 0.3–0.75 s **per question**. Without training it is near chance (0.36), and it has a known "do NOT cancel" means cancel bug | A 23 MB local model (MiniLM, int8 ONNX) with small heads trained on Jev's own 487 hand-labelled turns. **3–10 ms**, no new packages. TypeSafe's own Jev is free on OpenCode "for a limited time" (`jev-1.13-free`, docs updated 6 Oct). It's optional, for coding-job decisions only, never on voice turns |
-| Bring in Hermes' code | `pip install hermes-agent` needs Python < 3.14, and Jev runs 3.14.0. Importing Hermes modules pulls in 60–130 of its files and creates a whole Hermes home folder on disk | **Copy** the needed Hermes files at commit 3569fba6, with a pinned-commit record (`UPSTREAM.json`) and a small sync script for later updates |
+| Laya as the decision maker | Laya needs PyTorch and a 0.6–0.8 GB model. On this CPU it takes 0.3–0.75 s **per question**. Without training it is near chance (0.36), and it has a known "do NOT cancel" means cancel bug | A 23 MB local model (MiniLM, int8 ONNX) with small heads trained on Harry's own 487 hand-labelled turns. **3–10 ms**, no new packages. TypeSafe's own Harry is free on OpenCode "for a limited time" (`jev-1.13-free`, docs updated 6 Oct). It's optional, for coding-job decisions only, never on voice turns |
+| Bring in Hermes' code | `pip install hermes-agent` needs Python < 3.14, and Harry runs 3.14.0. Importing Hermes modules pulls in 60–130 of its files and creates a whole Hermes home folder on disk | **Copy** the needed Hermes files at commit 3569fba6, with a pinned-commit record (`UPSTREAM.json`) and a small sync script for later updates |
 | Hermes' Telegram adapter | It is 7,320 lines and drags in 158 Hermes files (~96k lines). It also lets every DM through when no allowlist is set | The library Hermes uses (python-telegram-bot 22.8, a 769 KB download, its only dependency already installed) plus ~250 lines of Hermes' own logic: buttons, owner check, pairing, message splitting |
 | Faster answers (≤ 2 s) | Today she waits for the model's **whole** JSON reply before speaking. Ling most likely also "thinks" ~150 hidden tokens first (inferred from its token counts). Fish waits for 0.6 s of audio. The most common look-up (`skill_view`) costs a full extra model call | Stream the reply and speak the first sentence at once. Use the local voice, add a short filler, and drop the `skill_view` round trip. She stays on today's free models (your choice), so expect **~3 s** (from 4.6). Groq's free model would make it ~1.6 s, as an option for later |
 | Fish voice | **Fish's free model ends 30 Nov 2026**, 54 days from now | Decision needed: Kyutai Pocket TTS on the PC (98.3 MB, runs in the sherpa-onnx already installed, first audio ~0.2–0.4 s). Windows' voices stay the last fallback |
@@ -61,7 +61,7 @@ Today's numbers come from her own log, 1–7 Oct 2026: 566 turns, 422 of them wi
 | Model calls per question | 1, or 2 with a look-up (`skill_view` is the most common look-up) | 1 for nearly all; look-ups announced with a filler | Phase 2 |
 | Memory (RAM), running | 797 MB working set | **+120–205 MB** without Pocket: voice ID 40–70, decider 60–100, Telegram 20–35. **Pocket adds ~350 MB loaded and ~600 MB at its peak**, so about 1.3 GB in all. It could load only when needed and unload when idle, but loading costs its fast start; measured in phase 2 | Every phase |
 | Startup (`import siri`) | 0.65 s | No slower. New models load in the background | Every phase |
-| New pip packages | – | **One:** python-telegram-bot (phase 5). No PyTorch, no Electron, no new program. Telegram is a thread inside Jev that checks for messages whenever a bot token is saved, and only answers `/start` until you pair it | – |
+| New pip packages | – | **One:** python-telegram-bot (phase 5). No PyTorch, no Electron, no new program. Telegram is a thread inside Harry that checks for messages whenever a bot token is saved, and only answers `/start` until you pair it | – |
 | Tests | 216 pass in 9.5 s | All pass, plus each phase's new ones | Every phase |
 
 ## How it fits together
@@ -82,12 +82,12 @@ Background jobs (phase 6) ─► tasks.py queue ─► OpenCode CLI for coding, 
 
 ## Can she do what Hermes does?
 
-| Capability | Hermes | Jev today | After this plan |
+| Capability | Hermes | Harry today | After this plan |
 |---|---|---|---|
 | Memory and your profile (MEMORY.md / USER.md) | Yes | Yes, Hermes' code, 4 fixes behind | Current Hermes code, re-copied |
 | Skills she writes from experience | Yes | Yes, light version | Hermes format, plus checks before a new skill is kept |
 | Curator (tidies unused skills) | Yes | No | Yes, Hermes' rules: stale after 14 days, archived after 30, never deleted |
-| Learning review in the background | Yes, ~30k tokens a run | Yes, ~3–4.5k tokens | Hermes' prompts and triggers in Jev's single call; corrections reviewed **at once** |
+| Learning review in the background | Yes, ~30k tokens a run | Yes, ~3–4.5k tokens | Hermes' prompts and triggers in Harry's single call; corrections reviewed **at once** |
 | Past-chat search | FTS5, windows, scroll | FTS5, single hits | Hermes' query cleaner, plus context around each hit, dates and trigram matching |
 | Scheduled jobs | Cron | Timers, reminders, task queue | Plus Hermes' rules: late jobs, weekdays, and replies go back to wherever you asked from |
 | Background agents | `delegate_task` | Research tasks | Durable coding jobs through the OpenCode CLI, with Yes/No for each risky step |
@@ -109,19 +109,19 @@ before Fish's free model ends. Phases 0–2 come first for that reason.
 ### Phase 0: backup and fresh start (about half a day): **done 7 Oct**
 
 Branch `phase0/fresh-start`, commit b412a4f. The backup is
-`%LOCALAPPDATA%\Hey Jev\Backups\heyjev-2026-10-07_21-16-40.zip`: 417 turns, 13 USER.md entries, 7 skills. She
+`%LOCALAPPDATA%\Hey Harry\Backups\heyjev-2026-10-07_21-16-40.zip`: 417 turns, 13 USER.md entries, 7 skills. She
 greeted you after the wipe. 222 tests pass.
 
 **Goal:** your old data is zipped and restorable with one command. Memory starts empty, and on first start she says
-"Hey, I'm Jev, what can I do for you?"
+"Hey, I'm Harry, what can I do for you?"
 
 - **Before anything:** copy the 487 hand labels from the earlier session's temporary folder to
-  `%LOCALAPPDATA%\Hey Jev\decider\` (your decision 11). They're phase 3's training data, and a temporary folder can
+  `%LOCALAPPDATA%\Hey Harry\decider\` (your decision 11). They're phase 3's training data, and a temporary folder can
   be cleaned up at any time. They're never put in the repo, because the repo has a GitHub remote and they contain
   room and family talk.
-- **Backup:** `python backup.py` stops if Hey Jev is running, because she holds the databases open. It then zips
-  `%APPDATA%\Hey Jev` and the repo's `vocabulary.json` and `apps.json` into
-  `%LOCALAPPDATA%\Hey Jev\Backups\heyjev-<date>.zip`. It also takes `%LOCALAPPDATA%\Hey Jev\voice\` and
+- **Backup:** `python backup.py` stops if Hey Harry is running, because she holds the databases open. It then zips
+  `%APPDATA%\Hey Harry` and the repo's `vocabulary.json` and `apps.json` into
+  `%LOCALAPPDATA%\Hey Harry\Backups\heyharry-<date>.zip`. It also takes `%LOCALAPPDATA%\Hey Harry\voice\` and
   `decider\`, once they exist.
   - SQLite files are copied with Hermes' safe copy helper (`backup_sqlite.py:31-82`, copied in).
   - `python backup.py --restore <zip>` puts everything back.
@@ -164,8 +164,8 @@ greeted you after the wipe. 222 tests pass.
   - **A bare "yes"** (about 0.4 s) is too short to check. If she's waiting for a yes to something risky, a short yes
     waits; "yes, send it" or right Alt works.
   - **Hold right Alt and dictation:** not checked. The key press proves it's you.
-- **Enrolment:** 10 sentences, most starting with "Hey Jev", through the same speech-mode mic. They are stored in
-  `%LOCALAPPDATA%\Hey Jev\voice\`, never sent anywhere. After that her picture of your voice slowly grows from turns
+- **Enrolment:** 10 sentences, most starting with "Hey Harry", through the same speech-mode mic. They are stored in
+  `%LOCALAPPDATA%\Hey Harry\voice\`, never sent anywhere. After that her picture of your voice slowly grows from turns
   she's very sure were you, up to about 40, with a guard against drift (Apple's "Hey Siri" approach).
 - **Threshold:** set from your own clips (each sentence cut to 1–2 s and scored against the other nine), not
   sherpa's demo 0.6. The decision has three zones: accept, unsure, reject. Then **2–3 days of shadow mode**: every
@@ -304,12 +304,12 @@ That is 54 errors, against 22 wrong actions or replies (13 + 9).
   - Runs on onnxruntime, tokenizers and numpy, all already installed.
   - 3–10 ms a decision, 60–100 MB, 2 threads so it doesn't slow speech-to-text.
   - Lighter option: `minishlab/potion-base-8M` (30.2 MB, MIT, under 1 ms), but it's weaker on "don't" and word order.
-- **Heads:** small logistic regressions in numpy (about 30 lines). The input is the sentence plus what Jev already
+- **Heads:** small logistic regressions in numpy (about 30 lines). The input is the sentence plus what Harry already
   tracks: the kind of turn, time since her last reply, whether she just asked something, media playing,
   speech-to-text confidence, name found, and recent room talk.
 - **Answers in the same shape as Jev/Laya's `/v1/systemone`.** The parser is reused from this repo's own first
   version, which called TypeSafe's Jev just as the Mac Hey Jev does (`git show 5d9bbc0:siri.py`, `jev()` at line
-  73). It's a few lines. Laya, Julia-1 or the hosted Jev can then be swapped in later without changing callers.
+  73). It's a few lines. Laya, Julia-1 or the hosted Harry can then be swapped in later without changing callers.
 - **What it decides:**
   1. `for_me` (open mic and the follow-up window). A confident "not for her" saves the model call. A confident "for
      her" only means the model is called.
@@ -355,7 +355,7 @@ finds the right moment in past chats.
   - A dev-only `sync_hermes.py` copies the file bodies unchanged and rewrites a fixed set of imports.
   - It prints what changed upstream since the last pin, so updates are a reviewed step, not a surprise.
   - A ~60-line `_compat.py` supplies the few helpers the copied code expects.
-  - Total ~1.4–1.9k lines of plain Python (Jev has ~1,040 today), with no new packages and an import cost of tens
+  - Total ~1.4–1.9k lines of plain Python (Harry has ~1,040 today), with no new packages and an import cost of tens
     of ms.
 - **Memory:**
   - Re-copy `memory_store.py`, which is 4 upstream commits behind (5–6 Oct). The fixes: matching that copes with
@@ -363,7 +363,7 @@ finds the right moment in past chats.
     tab needs this), and clearer errors.
   - `threat_patterns.py` is already current.
   - Memory is capped at Hermes' limits (2,200 + 1,375 characters), about 970–1,410 tokens when full.
-- **Skills:** keep Jev's lighter `skills.py`, adding Hermes' rules:
+- **Skills:** keep Harry's lighter `skills.py`, adding Hermes' rules:
   - the 60-character description limit (`skill_utils.py:822`);
   - YAML-safe frontmatter (a bare "on" becomes a yes/no in Hermes' reader);
   - `platforms: [windows]`;
@@ -382,7 +382,7 @@ finds the right moment in past chats.
   - routines you taught her are never archived automatically.
 
   Hermes' optional model-based merging (50–100 calls) stays off.
-- **Learning review:** Hermes' review prompts and "what not to keep" rules, inside Jev's single review call
+- **Learning review:** Hermes' review prompts and "what not to keep" rules, inside Harry's single review call
   (~3–4.5k tokens a run, against Hermes' ~30k). Hermes' trigger counts apply: every 10 turns, reset whenever she
   saves something herself.
 - **Corrections at once:**
@@ -408,7 +408,7 @@ finds the right moment in past chats.
 
 ### Phase 5: Telegram (about 3–4 days)
 
-**Goal:** chat with Jev from your phone; only your account; risky steps get Yes/No buttons.
+**Goal:** chat with Harry from your phone; only your account; risky steps get Yes/No buttons.
 
 - **Reuses:**
   - **python-telegram-bot 22.8**, the version Hermes pins (769 KB, LGPL-3.0, supports Python 3.14). Its one
@@ -423,10 +423,10 @@ finds the right moment in past chats.
     - Hermes' pairing rules (pairing.py:29-37): 8-character codes, 1-hour expiry, lockout after 5 tries, stored
       hashed.
 
-    The question on the card is Jev's own `confirm_question`, plus Hermes' line that nothing happens if you don't
+    The question on the card is Harry's own `confirm_question`, plus Hermes' line that nothing happens if you don't
     answer.
 - **How it works:**
-  - It runs on its own thread inside Jev, because python-telegram-bot needs its own asyncio loop. It's imported
+  - It runs on its own thread inside Harry, because python-telegram-bot needs its own asyncio loop. It's imported
     only once a bot token is saved, so startup isn't slower. From then on it listens, paired or not, so `/start`
     always gets an answer (see the status above). It only works while the PC is on.
   - The thread starts inside `run_voice_assistant`, where the `busy` lock lives.
@@ -443,14 +443,14 @@ finds the right moment in past chats.
   - **Pairing once (your decision 6, recommended):**
     1. You open a 10-minute pairing window at the PC.
     2. You send `/start` to your bot, and it replies with a code.
-    3. Jev's window shows which Telegram account asked.
-    4. You type the code into Jev's window.
+    3. Harry's window shows which Telegram account asked.
+    4. You type the code into Harry's window.
 
     That proves you have both the phone and the PC.
   - The bot token lives in Windows Credential Manager, where Hermes keeps it in a plain `.env`.
   - Turn off "join groups" in BotFather.
   - `watch.py` ignores the bot's own messages, so her heads-ups don't announce her own replies.
-- **Yes/No buttons** sit on Jev's own rules, which are stricter than Hermes': Jev asks for anything not on a
+- **Yes/No buttons** sit on Harry's own rules, which are stricter than Hermes': Harry asks for anything not on a
   read-only list, approvals survive a restart, and an interrupted command asks again.
   - A tap resolves a waiting plan or a task (`TASK_STORE.approve/cancel`).
   - There is still one waiting plan (`PENDING` in siri.py), tagged with the place it was asked from, so a "yes" said
@@ -481,10 +481,10 @@ finds the right moment in past chats.
 **Goal:** longer jobs run in the background and report back when done.
 
 - **Reuses:**
-  - Jev's durable task queue (`tasks.py`), which already survives restarts.
+  - Harry's durable task queue (`tasks.py`), which already survives restarts.
   - The **OpenCode CLI already installed** (1.18.31, `~/.bun/bin/opencode`).
   - The stdio ACP client from Hermes' GitHub Copilot integration, about 120 lines (`copilot_acp_client.py:137-143,
-    227-276, 380-506`). Hermes answers every permission request with "cancelled"; **Jev turns each one into a Yes/No**
+    227-276, 380-506`). Hermes answers every permission request with "cancelled"; **Harry turns each one into a Yes/No**
     on the phone or by voice.
   - It was written for Copilot, so **day one is a short test that `opencode acp` on 1.18.31 talks to it**.
 - **Confined, because OpenCode allows edits and commands by default** (checked on opencode.ai/docs/permissions,
@@ -492,7 +492,7 @@ finds the right moment in past chats.
   - Start `opencode acp` with
     `OPENCODE_CONFIG_CONTENT={"permission":{"edit":"ask","bash":"ask","webfetch":"deny","external_directory":"deny"}}`.
     That setting outranks the project's own `opencode.json`, which the agent could otherwise edit.
-  - Every edit and command then becomes a permission request. Commands go through Jev's `tasks.command_policy`:
+  - Every edit and command then becomes a permission request. Commands go through Harry's `tasks.command_policy`:
     blocked ones are refused, read-only ones allowed, everything else a Yes/No.
   - A git snapshot of the folder is taken before the job starts.
   - `code` jobs join `CHANGES_PC`, so they never re-run by themselves after a restart.
@@ -502,7 +502,7 @@ finds the right moment in past chats.
   - It reports through `ANNOUNCE` and Telegram when done.
   - "Is it done" comes from exit codes and output first. The decider only shapes her spoken summary.
 - **Optional (your decision 9):** with one test call to OpenCode's free `jev-1.13-free`, coding jobs can ask the
-  hosted Jev quick typed questions ("is this step done?", "which file next?").
+  hosted Harry quick typed questions ("is this step done?", "which file next?").
   - Speed: TypeSafe says 70–500 ms (vendor figures, in the eesel and TrueFoundry write-ups). This repo's first
     Windows version measured 755 ms median and 1.49 s p90 from here.
   - It's never used on voice turns, and it's dropped when the free offer ends.
@@ -572,7 +572,7 @@ Today `say()` mutes the mic for her whole reply.
    - A turned-away named turn shows a small "didn't sound like you" in the popup only, no sound (recommended).
    - Keep the enrolment recordings on the PC so the model can be swapped without re-reading (recommended).
 6. **Telegram:**
-   - Pairing in a 10-minute window opened at the PC, typing the bot's code into Jev's window (recommended).
+   - Pairing in a 10-minute window opened at the PC, typing the bot's code into Harry's window (recommended).
    - Phone voice notes travel through Telegram's servers before being transcribed on the PC: OK?
 7. **Background memory changes:** an undo journal (recommended), or never remove anything.
 8. **Coding jobs:** which folder OpenCode may work in (recommended: one projects folder), and each edit or command
@@ -582,7 +582,7 @@ Today `say()` mutes the mic for her whole reply.
 10. **Late reminders:** said late (recommended) or dropped. Late commands, installs and code jobs never run by
     themselves either way.
 11. **Decider training data:** copy the 487 hand labels from the earlier session's temporary folder to
-    `%LOCALAPPDATA%\Hey Jev\decider\`, never into the repo (recommended yes, **soon**, before that folder is
+    `%LOCALAPPDATA%\Hey Harry\decider\`, never into the repo (recommended yes, **soon**, before that folder is
     cleaned up).
 
 ## Risks

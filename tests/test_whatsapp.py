@@ -368,7 +368,7 @@ class Sharing(unittest.TestCase):
     def setUp(self):
         from tests.support import siri
         self.siri, self.staged = siri, []
-        p = mock.patch.object(siri, "stage_files", lambda app, who, paths, caption="": self.staged.append(
+        p = mock.patch.object(siri, "stage_files", lambda app, who, paths, caption="", **kw: self.staged.append(
             (app, who, paths, caption)) or siri.make_plan(say="Send it?"))
         p.start()
         self.addCleanup(p.stop)

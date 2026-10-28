@@ -161,7 +161,7 @@ def _like(word):
 
 def _query(words, exts, folder, phone, top):
     """The index is asked for the longest word in the file's name; the rest may be in its folders too, which search
-    checks: "hey jev readme" is README.md in hey-jev. Only your own folders are looked in (scopes): leaving the
+    checks: "hey harry readme" is README.md in hey-harry. Only your own folders are looked in (scopes): leaving the
     others out in the query itself takes the index seconds."""
     def text(s):  # a value inside '...', as SQL has it: a quote in a folder name (O'Brien) doubled
         return str(s).replace("'", "''")

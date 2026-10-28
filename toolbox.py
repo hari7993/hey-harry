@@ -1,6 +1,6 @@
 """Every step she can take, in one registry: what each one is called, what it changes, whether it may run after
 reading a page, what words it needs said without her name, how she asks about it, when she speaks around it, and
-the code that does it. Hermes Agent's tools/registry.py, cut down to Jev's steps.
+the code that does it. Hermes Agent's tools/registry.py, cut down to Harry's steps.
 
 Until 27 October each step was defined by hand in nine places in siri.py: the prompt, KNOWN_STEPS, do_step's
 if-chain or run_info's, READ_SAFE, POWER_STEPS, ASKS_YES, ASKS_FOR, ROUTINE_STEPS, SPEAK_FIRST, SAY_AFTER and

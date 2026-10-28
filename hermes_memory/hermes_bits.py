@@ -2,7 +2,7 @@
 # https://github.com/NousResearch/hermes-agent, MIT License, see LICENSE in this folder.
 # Copied by sync_hermes.py; only the imports are changed, see UPSTREAM.json. Don't edit by hand.
 
-"""Pieces of Hermes Agent Hey Jev uses on their own: finding skills, the 60-character skill descriptions, its
+"""Pieces of Hermes Agent Hey Harry uses on their own: finding skills, the 60-character skill descriptions, its
 search query cleaner and its OR-relaxed retry (history.py), its learning review's rules (siri.LEARN)
 and its memory review (siri.MEMORY_REVIEW)."""
 

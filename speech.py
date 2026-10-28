@@ -1,4 +1,4 @@
-"""Hey Jev's ears, all on the CPU, working in small pieces while you talk:
+"""Hey Harry's ears, all on the CPU, working in small pieces while you talk:
 
 - Silero VAD hears where speech starts and stops, 32 ms at a time.
 - Smart Turn, Pipecat's turn-taking model, decides at each pause whether you've finished: from how you said it,
@@ -11,15 +11,15 @@ finished, and 0.65 s with Smart Turn ending a turn at the first pause. That was 
 after 0.22 s of quiet, and "Job open settings [pause] and Windows update" came as two. She waits like OpenLive's
 "Patient" now (Listener.WAITS): at least 0.7 s of quiet, longer when Smart Turn says you're not done.
 Nemotron, NVIDIA's streaming speech-to-text, is in Settings too: it writes the words
-as you say them, but in Hari's voice it wrote "Hey Jev" as "Hello", so with it a bare greeting gets the chime
+as you say them, but in Hari's voice it wrote "Hey Harry" as "Hello", so with it a bare greeting gets the chime
 (siri.GREETING_ONLY), and it costs more CPU (see STREAM_THREADS). Whisper small.en too.
 
-Every phrase is turned into text and checked for "Hey Jev". A dedicated wake word model was tried first
-(sherpa-onnx's 3.3M keyword spotter): it never caught the "Hey Jev" in this PC's own mic recordings, while
+Every phrase is turned into text and checked for "Hey Harry". A dedicated wake word model was tried first
+(sherpa-onnx's 3.3M keyword spotter): it never caught the "Hey Harry" in this PC's own mic recordings, while
 Parakeet wrote them as "Hey Joe" and "Hey Jim".
 
 sherpa-onnx runs the speech models and onnxruntime Smart Turn. The models download once on first use into
-HEYJEV_MODELS (D:\\HeyJev\\models on this PC, set in .env), or %LOCALAPPDATA%\\Hey Jev\\models.
+HEYHARRY_MODELS (D:\\HeyJev\\models on this PC, set in .env), or %LOCALAPPDATA%\\Hey Harry\\models.
 """
 import hashlib
 import os
@@ -90,11 +90,15 @@ def _env_file(name):
 
 
 def models_dir():
-    """Where the models live. HEYJEV_MODELS is also read from .env here, for a script that imports this without
+    """Where the models live. HEYHARRY_MODELS is also read from .env here, for a script that imports this without
     loading .env: one put a second 1.2 GB copy of the models on C: on 9 October, with C: nearly full. Not under the
-    tests (HEYJEV_TESTING), which must never find the real models."""
-    found = os.getenv("HEYJEV_MODELS") or (None if os.getenv("HEYJEV_TESTING") else _env_file("HEYJEV_MODELS"))
-    return found or os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Hey Jev", "models")
+    tests (HEYHARRY_TESTING), which must never find the real models."""
+    from winplatform import home
+    for name in ("HEYHARRY_MODELS", "HEYJEV_MODELS"):  # and Hey Jev's name for it, in a .env from before 28 October
+        found = os.getenv(name) or (None if os.getenv("HEYHARRY_TESTING") else _env_file(name))
+        if found:
+            return found
+    return os.path.join(home("LOCALAPPDATA"), "models")
 
 
 def _sha256(path):
@@ -140,7 +144,7 @@ PAUSE = 0.2  # seconds of quiet that make a pause, where Smart Turn is asked whe
 class Voice:
     """Silero VAD (v4, as sherpa-onnx ships it), run directly: the chance of speech in each 32 ms. Not through
     sherpa-onnx's detector, which waits a quarter of a second to be sure speech has started: in the middle of a turn
-    that made a pause look longer than it was, and "Hey Jev, [a breath] open Notepad" came out as two."""
+    that made a pause look longer than it was, and "Hey Harry, [a breath] open Notepad" came out as two."""
     WINDOW = 512
 
     def __init__(self, notify=None):
@@ -258,7 +262,7 @@ class Live:
     def finish(self, quiet=0.2):
         """(Heard, ms) once the last words are through. quiet: seconds since the speech stopped. The model often
         writes a word a piece after it hears it, and a piece only goes through once it's whole, so it gets quiet up
-        to the end of the piece after the one the speech ended in. With less, "Hey Jev" came out as "H"."""
+        to the end of the piece after the one the speech ended in. With less, "Hey Harry" came out as "H"."""
         t = time.time()
         fed = self.fed / RATE
         need = (int((fed - quiet) / self.CHUNK) + 1) * self.CHUNK + self.READS + 0.03
@@ -403,9 +407,9 @@ class Listener:
     """Mic audio in, 32 ms at a time, turns out, as on_phrase(audio, kind, text, ms). kind is one of:
 
     "dictation"  every turn while dictating
-    "armed"      a turn that starts soon after a bare "Hey Jev" (see arm)
+    "armed"      a turn that starts soon after a bare "Hey Harry" (see arm)
     "follow_up"  a turn that starts in the few seconds after she answered, no name needed
-    "other"      anything else, which only counts if it has "Hey Jev" in it
+    "other"      anything else, which only counts if it has "Hey Harry" in it
     A turn is everything someone says until they've finished: speech-to-text is fed as it comes (ears), and at
     each pause Smart Turn (turn) says whether that was the end. on_words(text, kind) gets the words so far while
     they talk, when the ears write as you go. ms: how long the words took after the pause.
@@ -420,7 +424,7 @@ class Listener:
     # A turn that's for her (after her name, in a follow-up window, or with her name in the words) may run longer: a
     # long instruction cut at 15 s came back as two turns, and the second, without her name, was ignored
     MAX_TURN_HERS = 40.0
-    SHORT = 1.0  # a turn with less speech than this, like a bare "Hey Jev" before the rest, never ends at the first pause
+    SHORT = 1.0  # a turn with less speech than this, like a bare "Hey Harry" before the rest, never ends at the first pause
     # How long she waits for you to finish, Settings > Wait before answering, from OpenLive's turn presets
     # (katipally/openlive, apps/web/src/lib/live/pipelineConfig.ts): QUIET, the quiet she always waits; FINISHED,
     # Smart Turn's chance that you're done for her to go then; MAYBE, the chance she goes on after SETTLE seconds of
@@ -466,7 +470,7 @@ class Listener:
         self.ended = (None, 0.0)
 
     def arm(self, secs):
-        """After a bare "Hey Jev": the next phrase is the command, if it starts within secs."""
+        """After a bare "Hey Harry": the next phrase is the command, if it starts within secs."""
         self.armed, self.window_end = True, self.pos + int(secs * RATE)
 
     def open(self, secs):
@@ -586,7 +590,7 @@ class Listener:
                 print(f"  smart turn failed: {exc!r}")
                 self.chance = None
             self.turn_ms = int((time.time() - t) * 1000)
-        # "Hello" and a pause is the start of "Hello [breath] Jev": ending there cut her name off, 3 times in 3 one
+        # "Hello" and a pause is the start of "Hello [breath] Harry": ending there cut her name off, 3 times in 3 one
         # evening, so with only a greeting written it waits the longest for the rest
         held = self.hold_for(self.words)
         done = self.chance is not None and self.chance >= self.FINISHED
@@ -594,7 +598,7 @@ class Listener:
                 done or (quiet >= self.SETTLE and (self.chance is None or self.chance >= self.MAYBE)))):
             if not self.session.live and spoke < self.SHORT and quiet < self.LONGEST:
                 # Parakeet and Whisper only write once you stop, so a short turn is written here, when it would end
-                # anyway, and waits the same if that's only a greeting: "Hello [700 ms] Jev" came out as "Hello." and
+                # anyway, and waits the same if that's only a greeting: "Hello [700 ms] Harry" came out as "Hello." and
                 # "Jeff". Anything else ends as soon as before, without being written twice
                 self.early = self.early or self.session.finish(quiet)
                 if self.hold_for(self.early[0]):

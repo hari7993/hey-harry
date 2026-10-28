@@ -1462,8 +1462,8 @@ class Safety(Live):
         """PyCharm paints its terminal itself and Zed shows only its window, so the focus read is the window, named
         after the file: "build my project in pycharm" still typed npm run build into its terminal and pressed Enter."""
         for exe in ("pycharm64.exe", "zed.exe"):
-            w = self.app.window(exe, exe, "hey-jev – app.py")
-            window = Control("hey-jev – app.py", "", value="")
+            w = self.app.window(exe, exe, "hey-harry – app.py")
+            window = Control("hey-harry – app.py", "", value="")
             window.CurrentClassName = "SunAwtFrame"
             w.controls = [window, Control("Search")]
             self.app.focus = window

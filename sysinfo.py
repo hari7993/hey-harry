@@ -13,7 +13,7 @@ import psutil
 GB = 1024 ** 3
 NAMES = {"msedge": "Edge", "code": "VS Code", "explorer": "File Explorer", "msmpeng": "Windows Defender",
          "svchost": "Windows services",
-         "pythonw": "Hey Jev", "python": "Hey Jev", "dwm": "the Windows desktop", "searchhost": "Windows Search",
+         "pythonw": "Hey Harry", "python": "Hey Harry", "dwm": "the Windows desktop", "searchhost": "Windows Search",
          "memory compression": "Windows memory compression", "system": "Windows", "vmmem": "WSL",
          "vmmemwsl": "WSL", "registry": "the Windows registry"}
 KINDS = ("disk", "battery", "cpu", "memory", "apps", "network", "uptime", "system")

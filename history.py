@@ -1,6 +1,6 @@
 """Everything you've asked her and what she did, kept on this PC, the way Hermes Agent keeps its sessions: a SQLite
 full-text index she can search ("what did we talk about yesterday?"), and one Markdown file a day you can read,
-in %APPDATA%\\Hey Jev\\memories\\days. Each turn also keeps where it came from (voice, phone or text) and how it
+in %APPDATA%\\Hey Harry\\memories\\days. Each turn also keeps where it came from (voice, phone or text) and how it
 reached her (by name, as a follow-up, or heard without her name), and, beside history.db in history-vectors.bin, what
 its words mean as the decider's 384 numbers, so a recall whose words match little finds "that printer thing" by
 meaning instead.
@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from hermes_memory.hermes_bits import _or_relaxed_query, _sanitize_fts5_query
+import identity
 from winplatform import APPDATA_DIR
 
 DB = os.path.join(APPDATA_DIR, "history.db")
@@ -22,7 +23,7 @@ DAYS_DIR = os.path.join(APPDATA_DIR, "memories", "days")
 VECTORS = "history-vectors.bin"  # beside DB, see add_meaning; backup.py's WIPE names it too
 STOP = set("a an and are as at be but by can could did do does for from had has have he her his how i if in into is "
            "it its me my of on or our she so that the their them then there these they this to up was we were what "
-           "when where which who why will with would you your about again just like okay ok yeah hey jev please "
+           "when where which who why will with would you your about again just like okay ok yeah hey harry please "
            # words that ask about the past rather than say what about: "what did we talk about today"
            "talk talked talking said say ask asked tell told today yesterday conversation conversations discuss "
            "discussed remember earlier".split())
@@ -104,8 +105,9 @@ def add(said, did="", reply="", plan="", origin="voice", gate="named"):
         new = not os.path.exists(path)
         with open(path, "a", encoding="utf-8") as f:
             if new:
-                f.write(time.strftime("# %A %d %B %Y\n\nWhat you asked Jev today and what she did.\n\n", time.localtime(ts)))
-            f.write(f"- **{_when(ts).split(', ')[1]}** You: {said}\n  Jev: {reply or '(nothing said)'}"
+                f.write(time.strftime(f"# %A %d %B %Y\n\nWhat you asked {identity.name()} today and what she did.\n\n",
+                                       time.localtime(ts)))
+            f.write(f"- **{_when(ts).split(', ')[1]}** You: {said}\n  {identity.name()}: {reply or '(nothing said)'}"
                     + (f"  _did: {did}_" if did else "") + "\n")
     return cur.lastrowid
 
@@ -145,7 +147,7 @@ def search(query="", day=None, limit=12, after=None, around=1, cold=False, encod
     encoder), then by meaning too (_similar). after: only since then ("7d", "24h", "2w" or a day). around: the turns
     either side of the best few hits, so a hit has what led to it. cold: turns heard without her name too, only when
     you ask about those (siri.run_info), each of them then marked "heard" (HEARD); her day's summary never reads them.
-    Returns [{"when", "you", "jev", "did", "heard"?, "near"?}]."""
+    Returns [{"when", "you", "harry", "did", "heard"?, "near"?}]."""
     words = [w for w in re.findall(r"\w+", (query or "").lower()) if w not in STOP and len(w) > 1]
     since = _since(after)
     keep = "" if cold else NOT_COLD
@@ -178,7 +180,7 @@ def search(query="", day=None, limit=12, after=None, around=1, cold=False, encod
                 [r[0] for r in rows])} if cold and rows else set()
             out = []
             for i, (rowid, ts, said, did, reply) in enumerate(rows):
-                hit = {"when": _when(float(ts)), "you": said, "jev": reply, "did": did}
+                hit = {"when": _when(float(ts)), "you": said, "harry": reply, "did": did}
                 if rowid in heard:
                     hit["heard"] = HEARD
                 if words and around and i < 3:
@@ -187,7 +189,7 @@ def search(query="", day=None, limit=12, after=None, around=1, cold=False, encod
                                        "AND abs(CAST(t.ts AS REAL) - ?) < 1800" + keep + " ORDER BY t.rowid",
                                        (rowid - around, rowid + around, rowid, float(ts))).fetchall()
                     if near:
-                        hit["near"] = [{"you": a[:120], "jev": (b or "")[:120], **({"heard": HEARD} if g == "cold"
+                        hit["near"] = [{"you": a[:120], "harry": (b or "")[:120], **({"heard": HEARD} if g == "cold"
                                                                                     else {})} for a, b, g in near]
                 out.append(hit)
             return out

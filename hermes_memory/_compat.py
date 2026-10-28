@@ -1,4 +1,4 @@
-"""What the Hermes Agent files in this folder take from the rest of Hermes, so they stand alone in Hey Jev: the home
+"""What the Hermes Agent files in this folder take from the rest of Hermes, so they stand alone in Hey Harry: the home
 folder, atomic writes, file locks, the few skill-folder helpers, utils.py's JSON and yes-or-no readers, and the
 subagent look-ups a finished-job notice makes. sync_hermes.py points their imports here."""
 import json
@@ -18,7 +18,7 @@ except ImportError:
     except ImportError:
         msvcrt = None
 
-HOME = Path.home() / ".hermes"  # Hey Jev sets %APPDATA%\Hey Jev with set_home(): skills\, memories\ under it
+HOME = Path.home() / ".hermes"  # Hey Harry sets %APPDATA%\Hey Harry with set_home(): skills\, memories\ under it
 MEMORY_DIR = HOME / "memories"
 
 
@@ -85,7 +85,7 @@ def atomic_json_write(path, data, *, indent=None, sort_keys=False, **_) -> None:
     atomic_write_text(path, json.dumps(data, indent=indent, sort_keys=sort_keys, ensure_ascii=False))
 
 
-# agent/skill_utils.py: Hey Jev's skills folder, then skills\imported, where the owner drops skills in by hand (27
+# agent/skill_utils.py: Hey Harry's skills folder, then skills\imported, where the owner drops skills in by hand (27
 # October). Hermes treats a folder after the first as external: its curator never archives, patches or consolidates
 # a skill there (skill_usage.is_curation_eligible, _scan_local_skills), which is what a hand-dropped skill needs.
 # Nothing disabled.
@@ -132,7 +132,7 @@ def safe_json_loads(text, default=None):
 
 
 # tools/process_registry_notifications.py: Hermes names the subagent that started a process, and warns when its
-# configured subagent model was refused. Hey Jev runs no Hermes subagents and has no such setting, so there's
+# configured subagent model was refused. Hey Harry runs no Hermes subagents and has no such setting, so there's
 # nobody to name and never that warning (Hermes' own import delegate_tool: 5,055 lines over 11 files, plus the
 # terminal tool).
 def get_subagent_attribution(task_id):

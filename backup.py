@@ -1,12 +1,12 @@
-"""Back up Hey Jev's data, put a backup back, or start her memory fresh. Close Hey Jev first.
+"""Back up Hey Harry's data, put a backup back, or start her memory fresh. Close Hey Harry first.
 
-    python backup.py                  zip her data to %LOCALAPPDATA%\\Hey Jev\\Backups
+    python backup.py                  zip her data to %LOCALAPPDATA%\\Hey Harry\\Backups
     python backup.py --restore FILE   put a backup back (what's there now is backed up first, so it can be undone)
     python backup.py --fresh          back up, then clear her memory, skills and old chats; she introduces herself
 
-The zip holds all of %APPDATA%\\Hey Jev (memory, skills, history.db and what its turns meant, settings, contacts,
+The zip holds all of %APPDATA%\\Hey Harry (memory, skills, history.db and what its turns meant, settings, contacts,
 tasks, personality), the Dictionary (vocabulary.json) and app list (apps.json) from this folder, and her voice
-profile and decider data from %LOCALAPPDATA%\\Hey Jev when they exist. The models and logs aren't in it: a fresh
+profile and decider data from %LOCALAPPDATA%\\Hey Harry when they exist. The models and logs aren't in it: a fresh
 start never touches them.
 """
 import argparse
@@ -24,14 +24,14 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Optional
 
-from winplatform import own_data
+from winplatform import LOCKS, home
 
 logger = logging.getLogger(__name__)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_FILES = ("vocabulary.json", "apps.json")  # the Dictionary and the app list live next to the code
-LOCAL_DIRS = ("voice", "decider")  # in %LOCALAPPDATA%\Hey Jev: her picture of your voice, the decider's data
-# What --fresh clears in %APPDATA%\Hey Jev: what she knows about you, her notes and day files (memories), the skills
+LOCAL_DIRS = ("voice", "decider")  # in %LOCALAPPDATA%\Hey Harry: her picture of your voice, the decider's data
+# What --fresh clears in %APPDATA%\Hey Harry: what she knows about you, her notes and day files (memories), the skills
 # she learned, and old chats with what their words meant (history.VECTORS, beside history.db: left behind, an old
 # turn's meaning would wait for the new turn that gets its id). Settings, contacts, tasks, SOUL.md, the Dictionary
 # and the app list stay.
@@ -40,30 +40,32 @@ SIDE_FILES = (".db-wal", ".db-shm", ".db-journal")  # SQLite's own; the backup c
 
 
 def appdata():
-    return own_data(os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Hey Jev"))
+    return home("APPDATA")
 
 
 def localdata():
-    return own_data(os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Hey Jev"))
+    return home("LOCALAPPDATA")
 
 
 def running():
-    """True while Hey Jev is open: she holds this mutex for as long as she runs (winplatform.single_instance)."""
+    """True while Hey Harry or Hey Jev is open: each holds its mutex for as long as it runs (winplatform.LOCKS)."""
     if os.name != "nt":
         return False
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.OpenMutexW.restype = ctypes.c_void_p
     kernel32.OpenMutexW.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_wchar_p)
     kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
-    handle = kernel32.OpenMutexW(0x00100000, False, "Local\\HeyJevSingleInstance")  # SYNCHRONIZE
-    if handle:
-        kernel32.CloseHandle(handle)
-    return bool(handle)
+    for name in LOCKS:
+        handle = kernel32.OpenMutexW(0x00100000, False, f"Local\\{name}")  # SYNCHRONIZE
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+    return False
 
 
 def _closed():
     if running():
-        raise SystemExit("Hey Jev is running. Quit her first (right-click her taskbar icon), then run this again.")
+        raise SystemExit("Hey Harry is running. Quit her first (right-click her taskbar icon), then run this again.")
 
 
 # --- Hermes Agent, hermes_cli/backup_sqlite.py:21-82 (MIT, commit 3569fba6): a consistent copy of a live database ---
@@ -145,11 +147,11 @@ def backup(folder=None):
     _closed()
     folder = folder or os.path.join(localdata(), "Backups")
     os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, time.strftime("heyjev-%Y-%m-%d_%H-%M-%S.zip"))
+    path = os.path.join(folder, time.strftime("heyharry-%Y-%m-%d_%H-%M-%S.zip"))
     n = 1
     while os.path.exists(path):  # two in the same second, the restore's own safety backup right after one
         n += 1
-        path = os.path.join(folder, time.strftime(f"heyjev-%Y-%m-%d_%H-%M-%S-{n}.zip"))
+        path = os.path.join(folder, time.strftime(f"heyharry-%Y-%m-%d_%H-%M-%S-{n}.zip"))
     partial = path + ".partial"
     items = list(_files(appdata(), "appdata/"))
     items += [(os.path.join(HERE, name), "repo/" + name) for name in REPO_FILES
@@ -203,7 +205,7 @@ def restore(path):
     with zipfile.ZipFile(path) as z:
         names = z.namelist()
         if "manifest.json" not in names:
-            raise SystemExit(f"{path} isn't a Hey Jev backup.")
+            raise SystemExit(f"{path} isn't a Hey Harry backup.")
         bad = z.testzip()
         if bad:
             raise SystemExit(f"{path} is damaged ({bad}), nothing was changed.")
@@ -253,7 +255,7 @@ def fresh():
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Back up Hey Jev's data, put a backup back, or start fresh.")
+    parser = argparse.ArgumentParser(description="Back up Hey Harry's data, put a backup back, or start fresh.")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--restore", metavar="ZIP", help="put this backup back")
     group.add_argument("--fresh", action="store_true", help="back up, then clear her memory, skills and old chats")

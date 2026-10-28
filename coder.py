@@ -33,8 +33,8 @@ CONFINE = {"permission": {"edit": "ask", "bash": "ask", "webfetch": "deny", "ext
 MODEL = "opencode/big-pickle"  # free on OpenCode Zen (opencode.FREE_EXTRA); any free one it offers will do
 TIMEOUT = 30 * 60
 INITIALIZE = {"protocolVersion": 1, "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}},
-              "clientInfo": {"name": "hey-jev", "title": "Hey Jev", "version": "1"}}
-GUIDE = ("You're working for the user of Hey Jev, a voice assistant, in the project folder {folder}. Do this:\n{task}\n\n"
+              "clientInfo": {"name": "hey-harry", "title": "Hey Harry", "version": "1"}}
+GUIDE = ("You're working for the user of Hey Harry, a voice assistant, in the project folder {folder}. Do this:\n{task}\n\n"
          "Work only in this folder and keep the change small. Don't install anything or touch git history. When you're "
          "done, say in one or two plain sentences what you changed and whether the tests passed, for it to be read "
          "out loud.")
@@ -71,7 +71,7 @@ def check_folder(folder):
 
 # New files bigger than this in all, or more of them, aren't copied into .git for a job's way back: a venv or a
 # data folder nobody put in .gitignore took 6 s on Linux, past git's 30 s on a PC with Defender scanning, and stayed
-# in .git for good on a disk with a few GB free. Only the last KEEP_SNAPSHOTS ways back are kept under refs/heyjev
+# in .git for good on a disk with a few GB free. Only the last KEEP_SNAPSHOTS ways back are kept under refs/heyharry
 SNAPSHOT_MAX_BYTES, SNAPSHOT_MAX_FILES, KEEP_SNAPSHOTS = 50 * 1024 * 1024, 5000, 20
 
 
@@ -79,7 +79,7 @@ def snapshot(folder):
     """The folder as it is now, changing none of its files: "stash:<commit>" of its uncommitted work (git stash
     create); "files:<commit>" of everything when it has new files git doesn't track yet, made with a spare index, as
     stash create leaves those out and a job that overwrote your notes.md left no copy of them, or when there's no
-    commit yet; or "head:<commit>" if there's nothing uncommitted. Kept under refs/heyjev, the last KEEP_SNAPSHOTS of
+    commit yet; or "head:<commit>" if there's nothing uncommitted. Kept under refs/heyharry, the last KEEP_SNAPSHOTS of
     them, so git's clean-up never throws it away. Raises if git fails, or the new files can't be kept, or are too big
     to, rather than start a job that could overwrite them."""
     def run(*args, env=None):  # what git printed, or None if it failed; raises if it took too long
@@ -108,10 +108,10 @@ def snapshot(folder):
             biggest = max(sizes, key=sizes.get) if sizes else new[0]
             raise RuntimeError(f"The folder has too many new files for me to keep a copy first, most of them in "
                                f"{biggest}. Add it to .gitignore, or commit them, and ask again")
-        spare = tempfile.mkdtemp(prefix="heyjev-snap-")
-        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(spare, "index"), GIT_AUTHOR_NAME="Hey Jev",
-                   GIT_AUTHOR_EMAIL="hey-jev@localhost", GIT_COMMITTER_NAME="Hey Jev",
-                   GIT_COMMITTER_EMAIL="hey-jev@localhost")
+        spare = tempfile.mkdtemp(prefix="heyharry-snap-")
+        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(spare, "index"), GIT_AUTHOR_NAME="Hey Harry",
+                   GIT_AUTHOR_EMAIL="hey-harry@localhost", GIT_COMMITTER_NAME="Hey Harry",
+                   GIT_COMMITTER_EMAIL="hey-harry@localhost")
         try:  # every step, or half the folder kept would be "undone" to, your own changes lost
             # a copy of the real index, so only files changed since are read again: read-tree HEAD had none of its
             # file times, and every tracked file was hashed afresh
@@ -128,7 +128,7 @@ def snapshot(folder):
                     run("add", "-A", env=env) is not None:
                 tree = run("write-tree", env=env)
                 commit = tree and run("commit-tree", tree, *(["-p", head] if head else []), "-m",
-                                      "Hey Jev: the folder before a coding job", env=env)
+                                      "Hey Harry: the folder before a coding job", env=env)
         finally:
             shutil.rmtree(spare, ignore_errors=True)
         if not commit:
@@ -142,9 +142,9 @@ def snapshot(folder):
                            "git is busy in that folder, finish that, or delete .git/index.lock, and ask again")
     if not commit:
         return f"head:{head}"
-    run("update-ref", f"refs/heyjev/{time.strftime('%Y%m%d-%H%M%S')}-{commit[:7]}", commit)
+    run("update-ref", f"refs/heyharry/{time.strftime('%Y%m%d-%H%M%S')}-{commit[:7]}", commit)
     try:  # tidying old ways back: a slow git here leaves them for next time, this one is already kept
-        for old in (run("for-each-ref", "--sort=-refname", "--format=%(refname)", "refs/heyjev") or "").split()[
+        for old in (run("for-each-ref", "--sort=-refname", "--format=%(refname)", "refs/heyharry") or "").split()[
                 KEEP_SNAPSHOTS:]:
             run("update-ref", "-d", old)
     except RuntimeError:
@@ -282,7 +282,7 @@ class Job:
                     send(_jsonrpc_result(message.get("id"), {"outcome": {"outcome": "selected", "optionId": option}}
                                          if option else {"outcome": {"outcome": "cancelled"}}))
                 elif method_in:  # files are OpenCode's own business here, and nothing else is offered
-                    send(_jsonrpc_error(message.get("id"), -32601, f"Hey Jev doesn't offer {method_in}"))
+                    send(_jsonrpc_error(message.get("id"), -32601, f"Hey Harry doesn't offer {method_in}"))
                 elif message.get("id") == rid:
                     if "error" in message:
                         raise RuntimeError(f"OpenCode {method}: {(message['error'] or {}).get('message')}")
@@ -294,7 +294,7 @@ class Job:
             session = request("session/new", {"cwd": self.folder, "mcpServers": []})
             model = free_model(session)
             if not model:
-                raise RuntimeError("OpenCode offered no free model, and Hey Jev only uses free ones")
+                raise RuntimeError("OpenCode offered no free model, and Hey Harry only uses free ones")
             selection = _model_selection_request(session, model)
             if selection:
                 request(*selection)

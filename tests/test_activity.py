@@ -164,7 +164,7 @@ class Background(Case):
 
     def setUp(self):
         super().setUp()
-        folder = tempfile.mkdtemp(prefix="heyjev-activity-")
+        folder = tempfile.mkdtemp(prefix="heyharry-activity-")
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         self.folder = folder
         self.store = StopsWorker(os.path.join(folder, "tasks.db"))

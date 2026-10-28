@@ -1,6 +1,6 @@
 """Checks only-your-voice with the real model, by hand: python checks\\voice_id.py
 
-Scores your voice (the sentences you read for "learn my voice", in %LOCALAPPDATA%\\Hey Jev\\voice\\clips) against
+Scores your voice (the sentences you read for "learn my voice", in %LOCALAPPDATA%\\Hey Harry\\voice\\clips) against
 Windows' own voices saying commands, and times each voice print. Your clips are scored against the others, one left
 out at a time. Nothing leaves the PC; Windows' voices are made into WAV files in a temp folder and deleted. Your clips
 and levels are read from a copy of her data (checks/sandbox.py); with --real-data from her own."""
@@ -24,7 +24,7 @@ sandbox.use()
 import speech  # noqa: E402
 import voiceid  # noqa: E402
 
-LINES = ("Hey Jev, open Chrome and play some music.", "What is the weather like today?",
+LINES = ("Hey Harry, open Chrome and play some music.", "What is the weather like today?",
          "Set a timer for five minutes.", "Turn the volume down a little.", "Pause the video, please.")
 
 
@@ -44,7 +44,7 @@ def windows_voices(folder):
 def main():
     clips = sorted(glob.glob(os.path.join(voiceid.folder(), "clips", "*.wav")))
     if len(clips) < 3:
-        sys.exit("Say “Hey Jev, learn my voice” first: your sentences are what this checks against.")
+        sys.exit("Say “Hey Harry, learn my voice” first: your sentences are what this checks against.")
     speaker = speech.Speaker()
     yours, ms = [], []
     for path in clips:

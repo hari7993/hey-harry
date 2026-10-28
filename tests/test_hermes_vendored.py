@@ -58,14 +58,14 @@ class Synced(unittest.TestCase):
 
     def test_the_new_pieces_need_nothing_but_the_standard_library(self):
         """Each is imported in a process of its own, so nothing the suite loaded first can hide a missing import, and
-        nothing named agent, tools or utils (Hermes' own packages, or Hey Jev's agent.py) comes along."""
+        nothing named agent, tools or utils (Hermes' own packages, or Hey Harry's agent.py) comes along."""
         code = STANDALONE.format(root=ROOT, mods=", ".join(f"hermes_memory.{m}" for m in NEW))
         out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual(out.stdout.strip(), "[]")
 
     def test_no_new_piece_reaches_for_the_rest_of_hermes(self):
-        """A lazy `from tools...` inside a function would import nothing today and Hey Jev's agent.py tomorrow (an
+        """A lazy `from tools...` inside a function would import nothing today and Hey Harry's agent.py tomorrow (an
         `agent.` import finds it first): every one is pointed at _compat.py or a sibling instead."""
         for name in NEW:
             with self.subTest(name=name), open(os.path.join(ROOT, "hermes_memory", name + ".py"),
@@ -153,19 +153,19 @@ class Interrupts(unittest.TestCase):
 
 class DaemonPool(unittest.TestCase):
     """tools/daemon_pool.py: worker threads that never hold Python open at exit, each job in the context it was handed
-    in with. Its own copy of CPython's thread start, so it's checked on the Python Jev runs (3.14)."""
+    in with. Its own copy of CPython's thread start, so it's checked on the Python Harry runs (3.14)."""
 
     def test_a_job_runs_on_a_daemon_thread_and_its_answer_comes_back(self):
-        with daemon_pool.DaemonThreadPoolExecutor(max_workers=2, thread_name_prefix="heyjev-test") as pool:
+        with daemon_pool.DaemonThreadPoolExecutor(max_workers=2, thread_name_prefix="heyharry-test") as pool:
             daemon, name = pool.submit(lambda: (threading.current_thread().daemon,
                                                 threading.current_thread().name)).result(5)
             with self.assertRaises(ZeroDivisionError):
                 pool.submit(lambda: 1 / 0).result(5)
         self.assertTrue(daemon)
-        self.assertTrue(name.startswith("heyjev-test"))
+        self.assertTrue(name.startswith("heyharry-test"))
 
     def test_each_job_keeps_the_context_it_was_handed_in_with(self):
-        var = contextvars.ContextVar("heyjev_test_job", default="none")
+        var = contextvars.ContextVar("heyharry_test_job", default="none")
         with daemon_pool.DaemonThreadPoolExecutor(max_workers=1) as pool:  # one worker, reused for both
             token = var.set("job 1")
             first = pool.submit(var.get)
@@ -228,7 +228,7 @@ class SkillScan(unittest.TestCase):
     and run, on macOS a script piped into bash."""
 
     def setUp(self):
-        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="heyjev-tests-skills-"))
+        self.dir = pathlib.Path(tempfile.mkdtemp(prefix="heyharry-tests-skills-"))
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
 
     def skill(self, name, body, **files):
@@ -560,7 +560,7 @@ class ReplaceSoon(unittest.TestCase):
 
     def test_a_busy_file_is_tried_again_and_written(self):
         from hermes_memory import _compat
-        folder = tempfile.mkdtemp(prefix="heyjev-replace-")
+        folder = tempfile.mkdtemp(prefix="heyharry-replace-")
         path = os.path.join(folder, "usage.json")
         busy = [PermissionError(13, "in use")] * 3
         real = os.replace
@@ -576,7 +576,7 @@ class ReplaceSoon(unittest.TestCase):
 
     def test_one_that_stays_busy_still_fails(self):
         from hermes_memory import _compat
-        folder = tempfile.mkdtemp(prefix="heyjev-replace-")
+        folder = tempfile.mkdtemp(prefix="heyharry-replace-")
         with mock.patch.object(_compat.os, "replace", mock.Mock(side_effect=PermissionError(13, "in use"))), \
                 mock.patch.object(_compat, "REPLACE_PAUSE", 0), self.assertRaises(PermissionError):
             _compat.atomic_write_text(os.path.join(folder, "usage.json"), "{}")

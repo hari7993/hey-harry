@@ -87,7 +87,7 @@
   },
   {
    "to": "hermes_bits.py",
-   "doc": "Pieces of Hermes Agent Hey Jev uses on their own: finding skills, the 60-character skill descriptions, its\nsearch query cleaner and its OR-relaxed retry (history.py), its learning review's rules (siri.LEARN)\nand its memory review (siri.MEMORY_REVIEW).",
+   "doc": "Pieces of Hermes Agent Hey Harry uses on their own: finding skills, the 60-character skill descriptions, its\nsearch query cleaner and its OR-relaxed retry (history.py), its learning review's rules (siri.LEARN)\nand its memory review (siri.MEMORY_REVIEW).",
    "imports": "import os\nimport re\nfrom pathlib import Path, PurePath\nfrom typing import Any, Dict, List, Optional, Tuple\n\nfrom ._compat import get_all_skills_dirs, get_disabled_skill_names, is_external_skill_path  # noqa: F401, skill_usage.py imports them from here",
    "extract": [
     {
@@ -148,7 +148,7 @@
   },
   {
    "to": "gateway_bits.py",
-   "doc": "Pieces of Hermes Agent's messaging gateway Hey Jev uses for Telegram (telegram_bot.py): its pairing rules and\ncode hashing (gateway/pairing.py), and its long-message splitting that counts what Telegram counts and keeps code\nblocks whole (gateway/platforms/base.py, helpers.py).",
+   "doc": "Pieces of Hermes Agent's messaging gateway Hey Harry uses for Telegram (telegram_bot.py): its pairing rules and\ncode hashing (gateway/pairing.py), and its long-message splitting that counts what Telegram counts and keeps code\nblocks whole (gateway/platforms/base.py, helpers.py).",
    "imports": "import hashlib\nfrom typing import Callable, List, Optional",
    "extract": [
     {
@@ -180,7 +180,7 @@
   },
   {
    "to": "acp_bits.py",
-   "doc": "Pieces of Hermes Agent's ACP client (agent/acp_client.py) Hey Jev uses to drive the OpenCode CLI in\ncoder.py: its JSON-RPC replies, and picking the session's model from the ones it offers.",
+   "doc": "Pieces of Hermes Agent's ACP client (agent/acp_client.py) Hey Harry uses to drive the OpenCode CLI in\ncoder.py: its JSON-RPC replies, and picking the session's model from the ones it offers.",
    "imports": "from collections.abc import Callable\nfrom typing import Any",
    "extract": [
     {
@@ -200,7 +200,7 @@
   },
   {
    "to": "voice_bits.py",
-   "doc": "Pieces of Hermes Agent's voice mode Hey Jev uses while she talks (tools/voice_mode_transcript.py,\ntools/tts_streaming.py): whole-utterance stop phrases, her own words heard back (the TTS echo guard), and the\nnote that you cut her off.",
+   "doc": "Pieces of Hermes Agent's voice mode Hey Harry uses while she talks (tools/voice_mode_transcript.py,\ntools/tts_streaming.py): whole-utterance stop phrases, her own words heard back (the TTS echo guard), and the\nnote that you cut her off.",
    "imports": "import difflib\nimport re\nimport time\nfrom contextlib import suppress\nfrom typing import Optional",
    "extract": [
     {
@@ -275,7 +275,7 @@
   },
   {
    "to": "tool_bits.py",
-   "doc": "Pieces of Hermes Agent's tool calling for Hey Jev's agent: a tool's registry entry, its bounded JSON errors\nand results, and a call's arguments cut to what its handler takes (tools/registry.py); the tools safe to run\nside by side and the line asking a model to batch them (agent/tool_dispatch_helpers.py,\nagent/prompt_builder.py); and the wrapper that marks text from outside as data, never instructions\n(agent/tool_dispatch_helpers.py).",
+   "doc": "Pieces of Hermes Agent's tool calling for Hey Harry's agent: a tool's registry entry, its bounded JSON errors\nand results, and a call's arguments cut to what its handler takes (tools/registry.py); the tools safe to run\nside by side and the line asking a model to batch them (agent/tool_dispatch_helpers.py,\nagent/prompt_builder.py); and the wrapper that marks text from outside as data, never instructions\n(agent/tool_dispatch_helpers.py).",
    "imports": "import inspect\nimport json\nimport logging\nimport re\nfrom dataclasses import dataclass\nfrom typing import Any, Callable, Optional\n\nfrom .threat_patterns import scan_for_threats",
    "extract": [
     {

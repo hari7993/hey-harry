@@ -1,4 +1,4 @@
-"""Hey Jev's window on Windows: status on top, sidebar tabs for stats, the dictionary, apps, history, settings and keys."""
+"""Hey Harry's window on Windows: status on top, sidebar tabs for stats, the dictionary, apps, history, settings and keys."""
 import datetime
 import json
 import os
@@ -16,6 +16,7 @@ from tkinter import messagebox, ttk
 import activity
 import hermes_memory
 import history
+import identity
 import messaging
 import onboarding
 import opencode
@@ -29,11 +30,11 @@ from dictation import HISTORY, read_vocab, save_vocab
 from hermes_memory import skills
 from secrets_store import KEY_NAMES, OPTIONAL, get_secret, missing_secrets, save_secret
 
-TITLE = "Hey Jev"
+TITLE = "Hey Harry"
 HERE = os.path.dirname(os.path.abspath(__file__))
 ICON = os.path.join(HERE, "assets", "icon.ico")
 W, H, SIDEBAR = 1060, 700, 220
-HINTS = {"ptt": "Hold right Alt to talk", "wake": "Say \u201cHey Jev\u201d, \u201cHello Jev\u201d or just \u201cJev\u201d, "
+HINTS = {"ptt": "Hold right Alt to talk", "wake": "Say \u201cHey Harry\u201d, \u201cHello Harry\u201d or just \u201cHarry\u201d, "
                                                  "then what you want. Right after she answers, just keep talking. "
                                                  "Holding right Alt works too."}
 ENGINES = {"parakeet": "Parakeet (hears her name best)", "nemotron": "Nemotron (writes as you talk)",
@@ -41,7 +42,7 @@ ENGINES = {"parakeet": "Parakeet (hears her name best)", "nemotron": "Nemotron (
 WAITS = {"patient": "Patient (lets you pause)", "even": "Even", "quick": "Quick (can cut you off)"}  # speech.Listener
 SEP = "  \u00b7  "  # between a model's ID and what's known of it in the model list: "gpt-5.2  ·  400k"
 MODES = ("ptt", "wake")
-MODE_LABELS = {"ptt": "Hold Right Alt", "wake": "Hey Jev"}
+MODE_LABELS = {"ptt": "Hold Right Alt", "wake": "Hey Harry"}
 TABS = (("home", "Home"), ("todo", "To-do"), ("tasks", "Tasks"), ("contacts", "Contacts"), ("dict", "Dictionary"),
         ("apps", "Apps"), ("hist", "Dictation history"), ("mem", "Memory"), ("priv", "Privacy"),
         ("island", "Island"), ("settings", "Settings"), ("keys", "Keys"))
@@ -65,7 +66,7 @@ ENROL = {"Read this out loud": "read", "Once more": "again"}
 HOLD = {"error": 3000, "phone": 6000, "note": 2000}  # ms these stay up before fading, nothing replaces them
 READY_NEWS = ("That didn't sound like you", "Stopped learning your voice", "Didn't catch")  # why a popup went away
 PHONE_BAD = ("Add your", "That code", "Too many", "No code", "Telegram ", "Pairing was busy")  # siri's phone news that's a problem
-LOG_FILE = win.log_path("Hey Jev.log")
+LOG_FILE = win.log_path("Hey Harry.log")
 TYPING_WPM, SPEAKING_WPM = 40, 150  # average typing vs talking speed, for "time saved"
 ACTION_NAMES = {"open": "Open app", "close": "Close app", "minimise": "Minimise", "website": "Websites",
                 "youtube": "YouTube", "google": "Google", "media": "Play and pause", "volume": "Volume",
@@ -80,13 +81,13 @@ ACTION_NAMES = {"open": "Open app", "close": "Close app", "minimise": "Minimise"
                 "media_next": "Next track", "media_previous": "Previous track", "timer_set": "Timers",
                 "browser_open_site": "Websites", "browser_new_tab": "New tab"}
 APPS_FILE = os.path.join(HERE, "apps.json")
-MIC_SUB = "Switches straight away. Plugged in a new one? Restart Jev to see it here."
-HOW_TO = ("Say \u201cHey Jev\u201d and what you want: \u201cplay Arijit Singh songs\u201d, \u201copen Notepad and "
+MIC_SUB = "Switches straight away. Plugged in a new one? Restart Harry to see it here."
+HOW_TO = ("Say \u201cHey Harry\u201d and what you want: \u201cplay Arijit Singh songs\u201d, \u201copen Notepad and "
           "write a poem about rain\u201d, \u201cscroll down\u201d, \u201cwhat\u2019s the weather in Delhi\u201d, "
           "\u201cremind me in 10 minutes to call Mum\u201d. In Hold Right Alt mode, hold right Alt and just say it. "
-          "For a few seconds after she answers, keep talking without \u201cHey Jev\u201d. She hears you over YouTube "
+          "For a few seconds after she answers, keep talking without \u201cHey Harry\u201d. She hears you over YouTube "
           "and music, since Windows takes what the PC plays out of the mic (Settings, Echo cancelling). "
-          "\u201cHey Jev, transcribe\u201d starts dictating, and \u201cstop transcribing\u201d pastes it where your cursor is.\n"
+          "\u201cHey Harry, transcribe\u201d starts dictating, and \u201cstop transcribing\u201d pastes it where your cursor is.\n"
           "She remembers: \u201cremember that my website CareerID is careerid.in\u201d, then \u201copen CareerID\u201d. Ask "
           "\u201cwhat did we talk about yesterday?\u201d, or about the PC: \u201chow much space is on my C drive?\u201d, "
           "\u201cis my laptop charging?\u201d. Browser profiles work by name: \u201copen Gmail in my Work profile\u201d.\n"
@@ -107,13 +108,13 @@ HOW_TO = ("Say \u201cHey Jev\u201d and what you want: \u201cplay Arijit Singh so
           "Closing the window keeps her listening, quit from the sidebar or with Ctrl+Q.")
 PRIVACY = (
     ("Stays on your PC", "Everything the mic hears, and all your dictation. Speech is turned into text on this PC to "
-     "listen for \u201cHey Jev\u201d, and anything that isn't for her is thrown away, never sent. Simple commands like "
+     "listen for \u201cHey Harry\u201d, and anything that isn't for her is thrown away, never sent. Simple commands like "
      "\u201copen Notepad\u201d or \u201cpause\u201d are worked out here too, and so are questions about the PC like "
      "\u201chow much space is on my C drive\u201d. The log only keeps phrases that start with \u201chey\u201d, to check "
      "how her name was heard. Her memory, skills, notes, personality (SOUL.md) and your conversations with her are "
-     "kept in %APPDATA%\\Hey Jev, see the Memory tab. Your dictionary and apps stay in this folder, logs in "
-     "%LOCALAPPDATA%\\Hey Jev."),
-    ("Answer model on OpenCode Zen or Kilo  \u00b7  text", "What you ask her, as text: the words after \u201cHey Jev\u201d "
+     "kept in %APPDATA%\\Hey Harry, see the Memory tab. Your dictionary and apps stay in this folder, logs in "
+     "%LOCALAPPDATA%\\Hey Harry."),
+    ("Answer model on OpenCode Zen or Kilo  \u00b7  text", "What you ask her, as text: the words after \u201cHey Harry\u201d "
      "and what you say in the few seconds after she answers, with the name of the app in front, what's playing, the "
      "time, her personality, what she remembers about you, her skills, your last half hour with her and the names of "
      "your browser profiles, to work out what to do. With Answer without her name on in Settings, also anything said "
@@ -126,16 +127,16 @@ PRIVACY = (
      "stay on Haiku, never a free model. Free models may use what you send to improve the model: "
      "opencode.ai/docs/zen lists which on OpenCode, and Kilo says some of its free ones log what they're sent."),
     ("Messaging  ·  stays on this PC", "Who you can message and their number or username are kept in "
-     "%APPDATA%\\Hey Jev\\contacts.json, on this PC. The chat is opened with WhatsApp's or Telegram's own link, so "
+     "%APPDATA%\\Hey Harry\\contacts.json, on this PC. The chat is opened with WhatsApp's or Telegram's own link, so "
      "the message goes to that app and nowhere else, and nothing is sent until you say yes. In an app with no link "
      "of its own she types the name into that app's search instead, which she can't read back, so your yes is "
-     "confirming the chat as well; what worked is kept in %APPDATA%\\Hey Jev\\recipes.json. She never reads your "
+     "confirming the chat as well; what worked is kept in %APPDATA%\\Hey Harry\\recipes.json. She never reads your "
      "chats, and no screenshot of a chat is taken. The words you dictate reach the answer model only when it had to "
      "work out the request, the same as anything else you say."),
     ("Background tasks  ·  stays on this PC", "Tasks, schedules, command text, working folders, status and command "
-     "output are kept in %APPDATA%\\Hey Jev\\tasks.db. Command output is never sent to the answer model or spoken; "
-     "the Tasks tab shows it. Jev only says whether it finished."),
-    ("To-do list and your files  \u00b7  kept on this PC", "Your to-do list is kept in %APPDATA%\\Hey Jev\\todo.json, "
+     "output are kept in %APPDATA%\\Hey Harry\\tasks.db. Command output is never sent to the answer model or spoken; "
+     "the Tasks tab shows it. Harry only says whether it finished."),
+    ("To-do list and your files  \u00b7  kept on this PC", "Your to-do list is kept in %APPDATA%\\Hey Harry\\todo.json, "
      "and goes to the answer model with what you ask, as text, so \u201cwhat\u2019s left?\u201d makes sense. To find a "
      "file she asks Windows Search\u2019s index on this PC, by name only, never what\u2019s inside it, and your "
      "phone\u2019s files only when you say \u201con my phone\u201d. The names, folders and dates of the files she found "
@@ -174,7 +175,7 @@ KEY_ROWS = (
     ("Fish Audio", "FISH_AUDIO_API_KEY", "Her voice, on Fish's free model", "https://fish.audio/?fpr=henryk"),
     ("Kilo", "KILO_API_KEY", "More free models, like Nemotron 3 Ultra, Haiku's second try when it's slow",
      "https://kilo.ai/docs/gateway/authentication"),
-    ("Telegram bot", "TELEGRAM_BOT_TOKEN", "Jev on your phone: make a bot with @BotFather, then Settings > Phone > "
+    ("Telegram bot", "TELEGRAM_BOT_TOKEN", "Harry on your phone: make a bot with @BotFather, then Settings > Phone > "
      "Pair", "https://core.telegram.org/bots/tutorial#obtain-your-bot-token"),
 )
 # the other answer model providers (providers.py), all optional: their models are picked in Settings > Answer model
@@ -209,7 +210,7 @@ STATUS_COLORS = {
 
 
 def app_key(name):
-    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")  # "Claude Code" -> claude_code, what Jev matches on
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")  # "Claude Code" -> claude_code, what Harry matches on
 
 
 def split_list(text):
@@ -545,6 +546,7 @@ class AssistantWindow:
         self.s = root.winfo_fpixels("1i") / 96  # Windows display scaling, 1.0 at 100%
         self._anims = {}  # what's moving: key -> its next frame
         self.walkthrough = None  # her setup window while it's open (onboarding.py)
+        self.named = []  # (label, its words as written): her name in them, said again with a new one (_renamed)
         self._setup_root()
         self._setup_styles()
         self.bubble = Bubble(root)
@@ -559,6 +561,7 @@ class AssistantWindow:
         self.root.after(300, self._slide_nav_bar)  # where the tabs are once the window's on screen
         if not settings.get("onboarded"):  # the first time: her walkthrough, over the window
             self.root.after(700, self.open_walkthrough)
+        identity.on_rename(self._renamed)
         self.root.after(50, self._drain)
         self.root.after(500, self._tick)
         self.root.after(150, self.root.focus_force)
@@ -573,7 +576,7 @@ class AssistantWindow:
     # ------------------------------------------------------------------ window
     def _setup_root(self):
         root = self.root
-        root.title(TITLE)
+        root.title(identity.hey())
         root.configure(bg=BG)
         if os.path.exists(ICON):
             root.iconbitmap(default=ICON)
@@ -644,7 +647,30 @@ class AssistantWindow:
 
     def _label(self, parent, text="", font=None, fg=TEXT, bg=BG, **kw):
         anchor = "nw" if "wraplength" in kw else "w"  # if a long text runs out of room, lose the end, not the start
-        return tk.Label(parent, text=text, font=font or self.f_body, fg=fg, bg=bg, anchor=anchor, justify="left", **kw)
+        label = tk.Label(parent, text=identity.named(text), font=font or self.f_body, fg=fg, bg=bg, anchor=anchor,
+                         justify="left", **kw)
+        if "Harry" in str(text):  # with the name she has now, and again if she gets another (_renamed)
+            self.named.append((label, text))
+        return label
+
+    def _renamed(self, old=None, new=None):
+        """Her new name (identity.rename, from the voice thread or Settings) all over the window, in Tk's thread: its
+        title, her name at the top of the sidebar, the hints and every label written with her name in it."""
+        if threading.current_thread() is not threading.main_thread():
+            self.events.put(("renamed",))
+            return
+        self.root.title(identity.hey())
+        live = [(label, text) for label, text in self.named if label.winfo_exists()]
+        self.named[:] = live
+        for label, text in live:
+            label.configure(text=identity.named(text))
+        self.hint.configure(text=identity.named(HINTS[self.mode]))
+        self._build_mode_switch()
+        box = getattr(self, "nick_box", None)
+        if box is not None and box.get() != identity.name():
+            box._hide_hint()
+            box.delete(0, "end")
+            box.insert(0, identity.name())
 
     def _link(self, parent, text, url, bg=BG):
         link = tk.Label(parent, text=text, font=("Segoe UI", 9, "underline"), fg=ACCENT, bg=bg, cursor="hand2")
@@ -658,11 +684,12 @@ class AssistantWindow:
         side.pack_propagate(False)
         brand = tk.Frame(side, bg=NAV)
         brand.pack(fill="x", padx=self.px(20), pady=(self.px(22), self.px(18)))
-        self.logo = tk.Canvas(brand, width=self.px(30), height=self.px(24), bg=NAV, highlightthickness=0)
+        self.logo_photo, self.logo_off = tk.PhotoImage(master=self.root), False
+        self.logo = tk.Label(brand, image=self.logo_photo, bg=NAV, bd=0)
         self.logo.pack(side="left")
         self._draw_logo(1.0)
         self.root.after(2500, self._blink)
-        self._label(brand, "Hey Jev", self.f_brand, "#ffffff", NAV).pack(side="left", padx=(self.px(10), 0))
+        self._label(brand, "Hey Harry", self.f_brand, "#ffffff", NAV).pack(side="left", padx=(self.px(10), 0))
         self.nav = tk.Frame(side, bg=NAV)
         self.nav.pack(fill="x", padx=self.px(10))
         self.tab_buttons = {}
@@ -695,19 +722,28 @@ class AssistantWindow:
         self.hint = self._label(bottom, HINTS[self.mode], self.f_small, NAV_MUTED, NAV,
                                 wraplength=self.px(SIDEBAR - 40))
         self.hint.pack(fill="x", pady=(self.px(8), self.px(8)))
-        tk.Button(bottom, text="\u23fb  Quit Hey Jev", relief="flat", bd=0, bg=NAV, fg=NAV_MUTED, font=self.f_small,
-                  activebackground=NAV_HOVER, activeforeground="#ffffff", cursor="hand2", anchor="w",
-                  highlightthickness=1, highlightbackground=NAV, highlightcolor=GLOW, command=self.quit).pack(fill="x")
+        leave = tk.Button(bottom, text=identity.named("\u23fb  Quit Hey Harry"), relief="flat", bd=0, bg=NAV,
+                          fg=NAV_MUTED, font=self.f_small, activebackground=NAV_HOVER, activeforeground="#ffffff",
+                          cursor="hand2", anchor="w", highlightthickness=1, highlightbackground=NAV,
+                          highlightcolor=GLOW, command=self.quit)
+        leave.pack(fill="x")
+        self.named.append((leave, "\u23fb  Quit Hey Harry"))  # "Quit Hey Friday" once she's Friday (_renamed)
 
     def _draw_logo(self, open_):
-        """Her eyes, as on her island: two glowing pills, open_ 1 open and 0 shut."""
-        c, px = self.logo, self.px
-        c.delete("all")
-        for x in (px(9), px(21)):
-            h = max(px(2), px(16) * open_)
-            for grow, colour in ((px(3), mix(NAV, GLOW, 0.18)), (px(1.5), mix(NAV, GLOW, 0.45)), (0, GLOW)):
-                c.create_polygon(rounded(x - px(4) - grow, px(12) - h / 2 - grow, x + px(4) + grow,
-                                         px(12) + h / 2 + grow, px(4) + grow), smooth=True, fill=colour, outline="")
+        """Her island as it floats at the top of the screen with nothing on, the glass capsule with her glowing eyes
+        (28 October 2026, the owner's ask), drawn by the island's own code (island.logo): open_ 1 open and 0 shut."""
+        if self.logo_off:
+            return
+        try:
+            import island
+            rgb = island.logo(self.px(24), open_, back=tuple(int(NAV[i:i + 2], 16) / 255 for i in (1, 3, 5)))
+        except Exception as exc:  # never in the window's way: the name beside it is still there
+            print(f"  couldn't draw her logo: {exc!r}")
+            self.logo_off = True
+            return
+        h, w = rgb.shape[:2]
+        pixels = (rgb * 255 + 0.5).astype("uint8").tobytes()
+        self.logo_photo.configure(data=b"P6 %d %d 255 " % (w, h) + pixels, format="ppm")
 
     def _blink(self):
         self.animate("blink", 220, lambda t: self._draw_logo(abs(1 - 2 * t)),
@@ -785,7 +821,7 @@ class AssistantWindow:
         if on:
             ok = messagebox.askyesno(
                 "Turn on Full access?",
-                "Jev will send the messages you ask for and install the apps you ask for without asking first.\n\n"
+                "Harry will send the messages you ask for and install the apps you ask for without asking first.\n\n"
                 "She'll still ask before deleting, paying or buying, and she never types passwords.\n\n"
                 "Only for what you say with her name.", parent=self.root)
             if not ok:
@@ -824,13 +860,15 @@ class AssistantWindow:
         self.dot_job = self.root.after(33, self._pulse)
 
     def _build_mode_switch(self):
-        """Hold Right Alt and Hey Jev as one pill, the one on in a thumb that slides across."""
+        """Hold Right Alt and Hey Harry as one pill, the one on in a thumb that slides across. Drawn again with a new
+        name of hers (_renamed)."""
         c, px = self.mode_switch, self.px
+        c.delete("all")
         measure = tkfont.Font(root=self.root, font=self.f_bold).measure
         pad, h, x = px(3), px(32), px(3)
         self.mode_spans = {}
         for mode in MODES:
-            w = measure(MODE_LABELS[mode]) + px(28)
+            w = measure(identity.named(MODE_LABELS[mode])) + px(28)
             self.mode_spans[mode] = (x, x + w)
             x += w
         c.configure(width=x + pad, height=h)
@@ -838,7 +876,7 @@ class AssistantWindow:
         a, b = self.mode_spans[self.mode]
         self.mode_thumb = c.create_polygon(rounded(a, pad, b, h - pad, (h - 2 * pad) / 2), smooth=True,
                                            fill=ACCENT, outline="")
-        self.mode_texts = {m: c.create_text((a + b) / 2, h / 2, text=MODE_LABELS[m], font=self.f_bold)
+        self.mode_texts = {m: c.create_text((a + b) / 2, h / 2, text=identity.named(MODE_LABELS[m]), font=self.f_bold)
                            for m, (a, b) in self.mode_spans.items()}
         c.bind("<Button-1>", lambda e: self.set_mode(next((m for m, (a, b) in self.mode_spans.items()
                                                            if a <= e.x < b), self.mode)))
@@ -966,7 +1004,7 @@ class AssistantWindow:
                 entry[1] = value
             elif ident == "exe":
                 entry[4] = split_list(value)
-            self._save_apps("Saved, restart Jev to use it")
+            self._save_apps("Saved, restart Harry to use it")
         elif tree is getattr(self, "contacts_table", None):
             key, entry = self.contacts[row]
 
@@ -976,7 +1014,7 @@ class AssistantWindow:
                     if app != "name" and handle:
                         messaging.save_contact(name, app, handle)
             if ident == "other":
-                self._load_contacts("Jev learns those herself, so there's nothing to edit here")
+                self._load_contacts("Harry learns those herself, so there's nothing to edit here")
                 return
             try:
                 if ident == "name" and value:
@@ -1014,11 +1052,11 @@ class AssistantWindow:
 
     # ------------------------------------------------------------------ home
     def _build_home(self):
-        page = self._page("Your Jev stats", "Everything since you started using Jev. Refreshes each time you open this tab.",
+        page = self._page("Your Harry stats", "Everything since you started using Harry. Refreshes each time you open this tab.",
                           scroll=True)
         ask = tk.Frame(page, bg=BG)  # typing to her instead of talking (28 October 2026, as Atticus's box has it)
         ask.pack(fill="x", pady=(0, self.px(16)))
-        self.ask_box = HintEntry(ask, "Type to Jev instead of talking (or tap right Alt twice, anywhere)", width=64)
+        self.ask_box = HintEntry(ask, "Type to Harry instead of talking (or tap right Alt twice, anywhere)", width=64)
         self.ask_box.pack(side="left", fill="x", expand=True, ipady=self.px(3))
         self.ask_box.bind("<Return>", lambda e: self.ask_typed())
         ttk.Button(ask, text="Send", command=self.ask_typed).pack(side="left", padx=(self.px(8), 0))
@@ -1119,7 +1157,7 @@ class AssistantWindow:
             (f"{dictations:,}", "Dictations", f"{dictations_today:,} today"),
             (f"{sum(actions.values()):,}", "Commands done", f"from {heard:,} things she heard"),
             (fav_name if len(fav_name) <= 14 else fav_name[:13] + "\u2026", "Most opened app",
-             f"opened {opened[fav]} times" if fav else "Say \u201cHey Jev, open Spotify\u201d"),
+             f"opened {opened[fav]} times" if fav else "Say \u201cHey Harry, open Spotify\u201d"),
             (f"{answered:,}", "Questions answered", "by free models, $0" if opencode.is_free(
                 settings.get("llm_model")) else f"now on {providers.split(settings.get('llm_model'))[0].name}"),
         )
@@ -1133,11 +1171,11 @@ class AssistantWindow:
             merged[label] = merged.get(label, 0) + n
         top = sorted(merged.items(), key=lambda kv: -kv[1])[:6]
         self.top_actions.configure(text="   \u00b7   ".join(f"{label}  {n}" for label, n in top)
-                                   or "Nothing yet. Say \u201cHey Jev\u201d and a command to get started.")
+                                   or "Nothing yet. Say \u201cHey Harry\u201d and a command to get started.")
 
     # ------------------------------------------------------------------ contacts
     def _build_contacts(self):
-        page = self._page("Contacts", "Who Jev can message, and how. She asks once, then remembers. Nothing is ever "
+        page = self._page("Contacts", "Who Harry can message, and how. She asks once, then remembers. Nothing is ever "
                           "sent until you say yes. Double-click a cell to fix it.")
         frame, self.contacts_table = self._table(page, (("name", "Name you say", 150),
                                                         ("whatsapp", "WhatsApp number", 170),
@@ -1174,7 +1212,7 @@ class AssistantWindow:
 
     # ------------------------------------------------------------------ to-do
     def _build_todo(self):
-        page = self._page("To-do", "Say \u201cHey Jev, add milk to my to-do list\u201d, \u201cwhat\u2019s on my to-do "
+        page = self._page("To-do", "Say \u201cHey Harry, add milk to my to-do list\u201d, \u201cwhat\u2019s on my to-do "
                           "list?\u201d or \u201ccross off milk\u201d. It stays on this PC. Things you tick off stay here a "
                           "week, in grey, so one ticked by mistake can be put back. Double-click one to fix it.")
         top = tk.Frame(page, bg=BG)
@@ -1384,8 +1422,8 @@ class AssistantWindow:
 
     # ------------------------------------------------------------------ apps
     def _build_apps(self):
-        page = self._page("Apps", "What Jev can open, quit, minimise or switch to. App is its name in the Start menu. Program is "
-                                  "the .exe, only needed if quit or switch can't find it. Restart Jev after changes.")
+        page = self._page("Apps", "What Harry can open, quit, minimise or switch to. App is its name in the Start menu. Program is "
+                                  "the .exe, only needed if quit or switch can't find it. Restart Harry after changes.")
         top = tk.Frame(page, bg=BG)
         top.pack(fill="x", pady=(0, self.px(10)))
         self.new_say = HintEntry(top, "Name you say", width=16)
@@ -1455,7 +1493,7 @@ class AssistantWindow:
         for field in (self.new_say, self.new_app, self.new_heard):
             field.clear()
         note = "" if found else f", but there's no \u201c{app}\u201d in the Start menu"
-        self._save_apps(f"Added {say}{note}. Restart Jev to use it")
+        self._save_apps(f"Added {say}{note}. Restart Harry to use it")
         self.new_say.focus_set()
 
     def remove_app(self):
@@ -1464,7 +1502,7 @@ class AssistantWindow:
             self.apps_message.configure(text="Pick an app in the list first", fg=ERROR)
             return
         name = self.apps.pop(int(sel[0]))[0].replace("_", " ")
-        self._save_apps(f"Removed {name}, restart Jev to finish")
+        self._save_apps(f"Removed {name}, restart Harry to finish")
 
     # ------------------------------------------------------------------ history
     def _build_history(self):
@@ -1490,7 +1528,7 @@ class AssistantWindow:
         self.hist_table.delete(*self.hist_table.get_children())
         for row, item in enumerate(self.history):
             self.hist_table.insert("", "end", iid=str(row), values=(item["time"], item["text"].replace("\n", " ")))
-        self.hist_message.configure(text="" if self.history else "Nothing yet. Say \u201cHey Jev, transcribe\u201d to start.", fg=MUTED)
+        self.hist_message.configure(text="" if self.history else "Nothing yet. Say \u201cHey Harry, transcribe\u201d to start.", fg=MUTED)
 
     def copy_history(self):
         sel = self.hist_table.selection()
@@ -1506,7 +1544,7 @@ class AssistantWindow:
     # ------------------------------------------------------------------ memory
     def _build_memory(self):
         page = self._page("Memory", "What she knows about you, read into everything you ask, her own notes and the "
-                                    "skills she\u2019s learned. Say \u201cHey Jev, remember that \u2026\u201d, \u201cforget "
+                                    "skills she\u2019s learned. Say \u201cHey Harry, remember that \u2026\u201d, \u201cforget "
                                     "that \u2026\u201d, or teach her: \u201cwhen I say \u2026, do \u2026\u201d. Kept on this "
                                     "PC, the way Hermes Agent keeps its memory.")
         frame, self.mem_table = self._table(page, (("about", "About", 110), ("text", "What she remembers", 540)),
@@ -1546,7 +1584,7 @@ class AssistantWindow:
         except Exception:
             turns = 0
         kept = f"She keeps what you say to her ({turns:,} so far) and can look back through it." if turns else ""
-        empty = "" if self.memories else "Nothing yet. Say \u201cHey Jev, remember that \u2026\u201d. "
+        empty = "" if self.memories else "Nothing yet. Say \u201cHey Harry, remember that \u2026\u201d. "
         self.mem_message.configure(text=message or (empty + kept), fg=MUTED)
 
     def forget_memory(self):
@@ -1596,7 +1634,7 @@ class AssistantWindow:
 
     # ------------------------------------------------------------------ privacy
     def _build_privacy(self):
-        page = self._page("Privacy", "In Hey Jev mode the mic is always on, but it\u2019s heard on your PC first. Only this ever leaves it.",
+        page = self._page("Privacy", "In Hey Harry mode the mic is always on, but it\u2019s heard on your PC first. Only this ever leaves it.",
                           scroll=True)
         for title, body in PRIVACY:
             self._label(page, title, self.f_h2).pack(fill="x", pady=(self.px(4), 0))
@@ -1663,6 +1701,9 @@ class AssistantWindow:
         combo(row("Style", "The answer card is the glass capsule, but when you talk to her it opens into a box: "
                            "your words, her answer, how long it took and Try again. The black pill sits at the top, "
                            "as it was."), "island_style", ISLAND_STYLES)
+        check(row("Drop", "Hangs from the top of the screen like a notch, its corners curving into the "
+                          "edge, with no gap above it. Off, it floats a little under the top."), "island_drop",
+              "Hang it from the top")
         combo(row("Face", "Her eyes blink, look about and react: hearts when you say thanks, glasses while she reads "
                           "the screen, headphones while music plays. Or the orb, a ring that ripples with a voice, or "
                           "the Siri wave on the pill."),
@@ -1673,7 +1714,8 @@ class AssistantWindow:
               "Show a border")
         combo(row("Where", "Along the top of the screen you're working on."), "island_align", ISLAND_ALIGN)
         slider(row("Across", "Moves it left or right from there."), "island_x", -400, 400, " px")
-        slider(row("Down", "How far it sits from the top of the screen."), "island_y", 0, 80, " px")
+        slider(row("Down", "How far it sits from the top of the screen, when it doesn't hang from it."), "island_y",
+               0, 80, " px")
         slider(row("Size", "Bigger or smaller, eyes, words and all."), "island_scale", 70, 150, "%")
         slider(row("Corners", "How round its corners are."), "island_radius", 6, 40, " px")
         check(row("Always there", "Her eyes stay up while nothing's going on, and look at the mouse when you point "
@@ -1808,14 +1850,30 @@ class AssistantWindow:
 
     # ------------------------------------------------------------------ settings
     def _build_settings(self):
-        page = self._page("Settings", "The microphone Jev listens with, the models she uses, and the window.", scroll=True)
+        page = self._page("Settings", "The microphone Harry listens with, the models she uses, and the window.", scroll=True)
+        # her name (identity.py, 28 October 2026), under Full access at the top: the one she answers to and calls
+        # herself, yours to change
+        mine = tk.Frame(page, bg=BG)
+        mine.grid_columnconfigure(0, weight=1)
+        self._label(mine, "Her name", self.f_h2).grid(row=0, column=0, sticky="w", pady=(self.px(14), 0))
+        self._label(mine, "She answers to it and calls herself by it: \u201cHey Harry\u201d. Give her one of your "
+                    "own here, or say \u201ccall yourself Friday\u201d. Jarvis works too.", self.f_small, MUTED,
+                    wraplength=self.px(310)).grid(row=1, column=0, sticky="w")
+        nick = tk.Frame(mine, bg=BG)
+        nick.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.nick_box = HintEntry(nick, identity.DEFAULT, width=16)
+        self.nick_box._hide_hint()
+        self.nick_box.insert(0, identity.name())
+        self.nick_box.pack(side="left")
+        self.nick_box.bind("<Return>", lambda e: self.nickname_changed(self.nick_box.get()), add="+")
+        ttk.Button(nick, text="Save", command=lambda: self.nickname_changed(self.nick_box.get())).pack(
+            side="left", padx=(self.px(8), 0))
         form = tk.Frame(page, bg=BG)
         form.pack(fill="x")
         form.grid_columnconfigure(0, weight=1)
 
         def row(r, title, sub):
-            if r:  # a thin line between rows
-                tk.Frame(form, bg=LINE, height=1).grid(row=r * 2, column=0, columnspan=2, sticky="new")
+            tk.Frame(form, bg=LINE, height=1).grid(row=r * 2, column=0, columnspan=2, sticky="new")  # a thin line above
             self._label(form, title, self.f_h2).grid(row=r * 2, column=0, sticky="w", pady=(self.px(14), 0))
             label = self._label(form, sub, self.f_small, MUTED, wraplength=self.px(310))
             label.grid(row=r * 2 + 1, column=0, sticky="w")
@@ -1841,7 +1899,7 @@ class AssistantWindow:
         self._show_models()
 
         row(2, "Speech to text", "Turns what you say into text, on this PC. Nemotron shows your words as you talk, "
-                                 "but it lost \u201cHey Jev\u201d in a real voice. Takes effect when Hey Jev next starts.")
+                                 "but it lost \u201cHey Harry\u201d in a real voice. Takes effect when Hey Harry next starts.")
         self.stt_menu = ttk.Combobox(form, state="readonly", width=38, values=list(ENGINES.values()))
         self.stt_menu.set(ENGINES.get(settings.get("stt_engine"), ENGINES["parakeet"]))
         self.stt_menu.grid(row=4, column=1, rowspan=2, sticky="e")
@@ -1865,13 +1923,13 @@ class AssistantWindow:
         ttk.Checkbutton(form, text="Show the popup", variable=self.popup_var,
                         command=self.popup_changed).grid(row=10, column=1, rowspan=2, sticky="e")
 
-        row(6, "Start with Windows", "Opens Hey Jev, minimised, when you sign in.")
+        row(6, "Start with Windows", "Opens Hey Harry, minimised, when you sign in.")
         self.startup_var = tk.BooleanVar(value=win.starts_with_windows())
         ttk.Checkbutton(form, text="Start when I sign in", variable=self.startup_var,
                         command=self.startup_changed).grid(row=12, column=1, rowspan=2, sticky="e")
 
         row(7, "Welcome", "When you sign in or come back to the laptop she says hello, by this name, and asks what "
-                          "she can do. Just answer, no \u201cHey Jev\u201d needed.")
+                          "she can do. Just answer, no \u201cHey Harry\u201d needed.")
         welcome = tk.Frame(form, bg=BG)
         welcome.grid(row=14, column=1, rowspan=2, sticky="e")
         name_box = HintEntry(welcome, "Your name", width=16)
@@ -1886,7 +1944,7 @@ class AssistantWindow:
                         command=lambda: settings.put("welcome", self.welcome_var.get())).pack(side="left",
                                                                                               padx=(self.px(8), 0))
 
-        row(8, "Voice", "Her voice, on Fish Audio\u2019s free model until 30 November, then made on this PC (Jev on "
+        row(8, "Voice", "Her voice, on Fish Audio\u2019s free model until 30 November, then made on this PC (Harry on "
                         "this PC). Try it plays a line. To use any other Fish voice, paste its link from fish.audio.")
         voice = tk.Frame(form, bg=BG)
         voice.grid(row=16, column=1, rowspan=2, sticky="e")
@@ -1914,11 +1972,11 @@ class AssistantWindow:
                             ).pack(anchor="e")
         self.switches = {}
         for r, (key, title, sub, text) in enumerate((
-                ("no_name", "Without her name", "No \u201cHey Jev\u201d needed: she listens all the time, and the "
+                ("no_name", "Without her name", "No \u201cHey Harry\u201d needed: she listens all the time, and the "
                  "answer model works out whether you were talking to her or to someone else. What\u2019s said that "
                  "could be a request goes to it as text.", "Answer without her name"),
                 ("call_aware", "During calls", "When WhatsApp, Teams, Zoom, Discord or a browser call has the mic, "
-                 "unnamed speech is for the call. Say Jev or Jarvis to talk to her.", "Require her name on calls"),
+                 "unnamed speech is for the call. Say Harry or Jarvis to talk to her.", "Require her name on calls"),
                 ("heads_ups", "Heads-ups", "She speaks up when something needs you: the battery at 20 and 10 "
                  "percent, the C drive nearly full, the PC flat out for a while, the internet going, a new message. "
                  "Quiet from 11 at night to 7 in the morning, except a nearly flat battery.", "Tell me"),
@@ -1933,7 +1991,7 @@ class AssistantWindow:
             ttk.Checkbutton(form, text=text, variable=var, command=lambda k=key, v=var: settings.put(k, v.get())
                             ).grid(row=r * 2, column=1, rowspan=2, sticky="e")
         row(15, "Your voice", "She answers only you, not other people, the TV or a video. Press Learn, or say "
-                              "“Hey Jev, learn my voice”, and read her 20 short sentences. She learns your "
+                              "\u201cHey Harry, learn my voice\u201d, and read her 20 short sentences. She learns your "
                               "voice for a few days first. The recordings stay on this PC.")
         yours = tk.Frame(form, bg=BG)
         yours.grid(row=30, column=1, rowspan=2, sticky="e")
@@ -1958,7 +2016,7 @@ class AssistantWindow:
         self._phone_status()
         row(18, "Wait before answering", "How long she waits once you stop talking. Patient lets you pause in the "
                                          "middle of a sentence; Quick answers soonest but can cut you off. Takes "
-                                         "effect when Hey Jev next starts.")
+                                         "effect when Hey Harry next starts.")
         self.wait_menu = ttk.Combobox(form, state="readonly", width=38, values=list(WAITS.values()))
         self.wait_menu.set(WAITS.get(settings.get("turn_wait"), WAITS["patient"]))
         self.wait_menu.grid(row=36, column=1, rowspan=2, sticky="e")
@@ -1967,6 +2025,7 @@ class AssistantWindow:
         # Safety, at the top: Full access, as Atticus has it, off unless turned on here
         safety = tk.Frame(page, bg=BG)
         safety.pack(fill="x", before=form)
+        mine.pack(fill="x", before=form)
         safety.grid_columnconfigure(0, weight=1)
         self._label(safety, "Full access", self.f_h2).grid(row=0, column=0, sticky="w", pady=(self.px(4), 0))
         self._label(safety, "She does what you clearly ask by name without asking first: sends the message, installs "
@@ -2002,7 +2061,7 @@ class AssistantWindow:
             self._mic_note()
         else:
             self.mic_menu.current(0)
-            self.mic_sub.configure(text=MIC_SUB, fg=MUTED)
+            self.mic_sub.configure(text=identity.named(MIC_SUB), fg=MUTED)
             gone = f"{self.mic} isn\u2019t plugged in, so " if self.mic else ""
             self._note(f"{gone}Microphone: {auto}. Automatic skips Stereo Mix, which only hears what the PC plays.")
 
@@ -2019,14 +2078,14 @@ class AssistantWindow:
             self.mic_sub.configure(text="Stereo Mix only hears what the PC plays, so she can\u2019t hear you. Pick "
                                         "Automatic or your microphone to talk to her.", fg=ERROR)
         else:
-            self.mic_sub.configure(text=MIC_SUB, fg=MUTED)
+            self.mic_sub.configure(text=identity.named(MIC_SUB), fg=MUTED)
 
     def echo_changed(self):
         on = self.echo_var.get()
         settings.put("echo_cancel", on)
         self.controls.put(("mic", self.mic))  # opens the mic again, the new way
         self._note("Echo cancelling on, she hears you over videos and music" if on else
-                   "Echo cancelling off. While a video plays, say \u201cHey Jev\u201d close to the mic, or hold right Alt")
+                   "Echo cancelling off. While a video plays, say \u201cHey Harry\u201d close to the mic, or hold right Alt")
 
     def pair_phone(self):
         """Pair with the code in the box, or open pairing to get one."""
@@ -2143,10 +2202,23 @@ class AssistantWindow:
         on = self.startup_var.get()
         try:
             win.set_start_with_windows(on)
-            self._note("Hey Jev starts when you sign in" if on else "Hey Jev won't start by itself any more")
+            self._note("Hey Harry starts when you sign in" if on else "Hey Harry won't start by itself any more")
         except OSError as exc:
             self.startup_var.set(win.starts_with_windows())
             self._note(f"Couldn't change that: {exc}", error=True)
+
+    def nickname_changed(self, text):
+        """Her name from Settings > Her name: hers at once (identity.rename, which redoes the window), or why not.
+        Emptied, she's Harry again."""
+        try:
+            new = identity.rename(" ".join(str(text or "").split()) or identity.DEFAULT)
+        except ValueError:
+            self._note("That can't be her name: one to three words, letters only, like Friday or Max.", error=True)
+            return
+        except OSError as exc:
+            self._note(f"Couldn't save her name: {exc}", error=True)
+            return
+        self._note(f"She\u2019s {new} now. Say \u201cHey {new}\u201d.")
 
     def name_changed(self, name):
         name = " ".join(name.split())
@@ -2165,12 +2237,12 @@ class AssistantWindow:
     def engine_changed(self):
         engine = list(ENGINES)[self.stt_menu.current()]
         settings.put("stt_engine", engine)
-        self._note(f"Saved. Quit Hey Jev and open it again to switch to {ENGINES[engine]}.")
+        self._note(f"Saved. Quit Hey Harry and open it again to switch to {ENGINES[engine]}.")
 
     def wait_changed(self):
         wait = list(WAITS)[self.wait_menu.current()]
         settings.put("turn_wait", wait)
-        self._note(f"Saved. Quit Hey Jev and open it again for {WAITS[wait].split(' (')[0]}.")
+        self._note(f"Saved. Quit Hey Harry and open it again for {WAITS[wait].split(' (')[0]}.")
 
     def open_model_picker(self):
         if self.picker is not None:
@@ -2223,7 +2295,7 @@ class AssistantWindow:
         self.root.after(providers.FRESH_FOR * 1000, self._auto_refresh)
 
     def _note(self, text, error=False):
-        self.settings_note.configure(text=text, fg=ERROR if error else MUTED)
+        self.settings_note.configure(text=identity.named(text), fg=ERROR if error else MUTED)
 
     def _show_models(self):
         """The answer model on its box, what's known of it under it, and the picker's lists if it's open."""
@@ -2373,6 +2445,8 @@ class AssistantWindow:
                     self.models_info.configure(text=event[1], fg=ERROR if event[2] else MUTED)
                 elif event[0] == "island_apps":
                     self._show_island_apps(event[1])
+                elif event[0] == "renamed":
+                    self._renamed()
         except queue.Empty:
             pass
         self.root.after(50, self._drain)
@@ -2424,7 +2498,7 @@ class AssistantWindow:
         if state == "Phone" and detail:  # next to the code box too, where you're looking
             self._phone_status(detail, error=detail.startswith(PHONE_BAD))
         pill, text = PILL.get(state) or enrol, detail
-        if enrol:  # the sentence to read, and how far along: "3/10  Hey Jev, set a timer for five minutes."
+        if enrol:  # the sentence to read, and how far along: "3/10  Hey Harry, set a timer for five minutes."
             n = re.search(r"(\d+) of (\d+)", state)
             text = f"{n[1]}/{n[2]}  {detail}" if n else detail
         elif state == "Ready" and detail and self.bubble.visible and \
@@ -2465,7 +2539,7 @@ class AssistantWindow:
             return  # on her break, picking the mode it's in ends it
         self.mode = mode
         settings.put("mode", mode)
-        self.hint.configure(text=HINTS[mode])
+        self.hint.configure(text=identity.named(HINTS[mode]))
         self._paint_mode()
         self.controls.put(("mode", mode))
 
@@ -2483,8 +2557,10 @@ class AssistantWindow:
 def run_app():
     win.prepare_gui()  # before Tk starts, so text is sharp on scaled screens
     if not win.single_instance():
-        win.show_existing(TITLE)  # already running with the window closed, bring it back
+        win.show_existing(identity.hey(), TITLE, win.OLD_NAME)  # already running with the window closed: back
         return
+    win.move_start_entry()  # Hey Jev's, if you had one: she starts when you sign in as before
+    identity.moved_on()  # the first start as Harry: her notes say her name where they said Jev
     root = tk.Tk()
     AssistantWindow(root)
     if "--startup" in sys.argv:  # started as you signed in: on the taskbar, she says hello and listens

@@ -65,7 +65,8 @@ class ShareWords(unittest.TestCase):
     def setUp(self):
         self.staged = []
         for target, name, value in (
-                (siri, "stage_files", lambda app, who, paths, caption="": self.staged.append(who) or siri.make_plan()),
+                (siri, "stage_files", lambda app, who, paths, caption="", **kw: self.staged.append(who) or
+                 siri.make_plan()),
                 (siri, "given_files", lambda: ["C:/x/photo.jpg"])):
             p = mock.patch.object(target, name, value)
             p.start()
@@ -83,10 +84,58 @@ class ShareWords(unittest.TestCase):
         siri.direct_share("send this to amma please")
         self.assertEqual(self.staged, ["amma"])
 
+    def test_copy_that_file_and_send_it(self):
+        """28 October 2026, the owner: "copy that file and send to Santhosh on WhatsApp", and as Parakeet writes it."""
+        for words in ("copy that file and send to Santhosh on WhatsApp", "Copy this file and send it to Santhosh.",
+                      "copy the photos, then share them with Santhosh", "send the file I copied to Santhosh"):
+            self.staged.clear()
+            self.assertIsNotNone(siri.direct_share(words), words)
+            self.assertEqual(self.staged, ["Santhosh"], words)
+
+    def test_copying_words_isnt_a_share(self):
+        for words in ("copy that link and send it to Mum", "copy this and send it to Mum"):
+            self.assertIsNone(siri.direct_share(words), words)  # a link or words: the model plans those
+
     def test_only_on_whatsapp(self):
         plan = siri.direct_share("send this to ravi on telegram")
         self.assertIn("only send files on WhatsApp", plan["say"])
         self.assertEqual(self.staged, [])
+
+
+class Copied(unittest.TestCase):
+    """28 October 2026: with none selected in File Explorer in front, the files you copied there (Ctrl+C) go, asked
+    about as the ones you copied, so one copied long ago never goes unawares. Still only after a yes."""
+
+    def setUp(self):
+        ready = {"app": "whatsapp", "say": "WhatsApp", "contact": "Santhosh", "to": "Santhosh", "text": ""}
+        for target, name, value in (
+                (siri, "given_files", lambda: []), (siri.win, "copied_files", lambda: ["C:/x/report.pdf"]),
+                (siri, "meant", lambda app, who: (app, who)), (siri, "window_to_put_back", lambda back=None: None),
+                (siri.messaging, "prepare_files", lambda app, who, paths, caption="": dict(ready, files=list(paths)))):
+            p = mock.patch.object(target, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.addCleanup(siri.STAGED.update, ready=None, until=0.0)
+
+    def test_the_file_you_copied_is_asked_about_as_that(self):
+        plan = siri.direct_share("copy that file and send to Santhosh on WhatsApp")
+        self.assertEqual(plan["say"], "Send the file you copied, report.pdf, to Santhosh on WhatsApp?")
+        self.assertEqual(plan["confirm"]["steps"], [{"do": "message_send"}])  # sent only after your yes
+        self.assertEqual(siri.STAGED["ready"]["files"], ["C:/x/report.pdf"])
+
+    def test_whats_selected_comes_first(self):
+        with mock.patch.object(siri, "given_files", lambda: ["C:/x/photo.jpg"]):
+            plan = siri.direct_share("send this to Santhosh")
+        self.assertEqual(plan["say"], "Send photo.jpg to Santhosh on WhatsApp?")
+
+    def test_nothing_selected_or_copied(self):
+        with mock.patch.object(siri.win, "copied_files", lambda: []):
+            self.assertIn("Select or copy it", siri.direct_share("send this to Santhosh")["say"])
+
+    def test_never_what_the_pc_copied_from_your_phone(self):
+        token = siri.REPLY_TO.set(object())  # asked from your phone: only what you sent her from it
+        self.addCleanup(siri.REPLY_TO.reset, token)
+        self.assertIn("Send it to me here first", siri.direct_share("send this to Santhosh")["say"])
 
 
 class Albums(unittest.TestCase):

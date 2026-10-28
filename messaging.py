@@ -1,8 +1,8 @@
-"""Hey Jev's messaging: open the chat with the text typed in, read it back, and send only after a yes.
+"""Hey Harry's messaging: open the chat with the text typed in, read it back, and send only after a yes.
 
 Two deliberate choices, both for safety:
 
-- The recipient comes from your own contacts book (%APPDATA%\\Hey Jev\\contacts.json), as a phone number or
+- The recipient comes from your own contacts book (%APPDATA%\\Hey Harry\\contacts.json), as a phone number or
   username, and the chat is opened with the app's own link (whatsapp://send, tg://resolve). Searching a chat list
   by a name she heard could land on the wrong person; a number cannot.
 - Nothing is ever sent until you say yes. The link only types the text into the compose box.
@@ -236,7 +236,7 @@ def known_for(app):
 # --------------------------------------------------------------------------- the people she's messaging for you
 # Everyone she sends a message or a file to for you, so a reply from them is told to you as theirs, on the PC and on
 # your phone, whenever it comes (asked for on 8 October: "all days, 24/7"; see watch.Watcher and siri.replied). Kept
-# in %APPDATA%\Hey Jev\follow_ups.json, on this PC only, until FOLLOW_MAX newer ones push it out.
+# in %APPDATA%\Hey Harry\follow_ups.json, on this PC only, until FOLLOW_MAX newer ones push it out.
 FOLLOW_PATH = os.path.join(win.APPDATA_DIR, "follow_ups.json")
 FOLLOW_MAX = 200
 

@@ -2,7 +2,7 @@
 # https://github.com/NousResearch/hermes-agent, MIT License, see LICENSE in this folder.
 # Copied by sync_hermes.py; only the imports are changed, see UPSTREAM.json. Don't edit by hand.
 
-"""Pieces of Hermes Agent's voice mode Hey Jev uses while she talks (tools/voice_mode_transcript.py,
+"""Pieces of Hermes Agent's voice mode Hey Harry uses while she talks (tools/voice_mode_transcript.py,
 tools/tts_streaming.py): whole-utterance stop phrases, her own words heard back (the TTS echo guard), and the
 note that you cut her off."""
 

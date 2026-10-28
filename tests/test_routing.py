@@ -101,11 +101,22 @@ class Play(Routing):
     (fast_intent's own table did that, until it moved into QUICK on 27 October)."""
 
     def test_what_siri_leaves_to_the_model_isnt_searched(self):
-        for words in ("play shape of you on Spotify", "play the second song", "play the same song again",
+        for words in ("play the second song", "play the same song again",
                       "play the top result", "play the second video", "play the third video"):
             with self.subTest(words=words):
                 self.assertIsNone(self.quick(words))
-                self.assertIsNone(self.quick(f"hey jev can you {words} please"))
+                self.assertIsNone(self.quick(f"hey harry can you {words} please"))
+
+    def test_spotify_is_played_on_spotify_never_searched_on_youtube(self):
+        """28 October 2026 (extras.py, after Atticus): "on Spotify" is Spotify's own search and its play button,
+        with no model, where it went to the model before."""
+        import spotify
+        from unittest import mock
+        with mock.patch.object(spotify, "installed", lambda: True):
+            for words in ("play shape of you on Spotify", "hey harry can you play shape of you on Spotify please"):
+                with self.subTest(words=words):
+                    self.assertEqual(self.quick(words)["steps"],
+                                     [{"do": "spotify", "query": "shape of you", "kind": ""}])
 
     def test_a_song_still_plays(self):
         self.assertEqual(self.steps("play Arijit Singh songs"),
@@ -449,7 +460,7 @@ class OneTable(Routing):
     def test_fast_intent_keeps_only_the_text_side(self):
         self.assertFalse(hasattr(fast_intent, "FastIntentMatcher"))
         self.assertFalse(hasattr(siri, "get_fast_matcher"))
-        self.assertEqual(fast_intent.clean_text("hey jev can you zoom in please"), "zoom in")
+        self.assertEqual(fast_intent.clean_text("hey harry can you zoom in please"), "zoom in")
 
     def test_what_only_the_second_table_had_is_planned_from_quick(self):
         for words, steps in (
@@ -563,7 +574,7 @@ class ParaphrasedRoutines(Routing):
 
     def setUp(self):
         super().setUp()
-        self.folder = tempfile.mkdtemp(prefix="heyjev-paraphrase-")
+        self.folder = tempfile.mkdtemp(prefix="heyharry-paraphrase-")
         self.encoder = FakeEncoder({"work mode": [1, 0, 0, 0], "start work mode": [0.95, 0.31, 0, 0],
                                     "what is work mode": [0.95, 0.31, 0, 0], "get ready for work": [0.6, 0.8, 0, 0],
                                     "can you start work mode please": [0.95, 0.31, 0, 0]})
@@ -641,11 +652,11 @@ if __name__ == "__main__":
 
 
 class HeardNames(unittest.TestCase):
-    def test_jet_and_jeth_are_her_name_after_hey(self):
-        """README Troubleshooting's own miss, "Hey Jet, open Spotify", and Parakeet's "Hey Jeth" in checks/listen.py."""
-        self.assertEqual(siri.find_name("Hey Jet open Spotify"), (True, "open Spotify"))
-        self.assertEqual(siri.find_name("Hey Jeth, check the space of the C drive")[0], True)
+    def test_hurry_and_hairy_are_her_name_after_hey(self):
+        """"Hey Harry" as speech-to-text may write it (identity.HARRY_WEAK), with or without a comma."""
+        self.assertEqual(siri.find_name("Hey Hurry open Spotify"), (True, "open Spotify"))
+        self.assertEqual(siri.find_name("Hey Hairy, check the space of the C drive")[0], True)
 
-    def test_a_jet_in_a_sentence_isnt_her(self):
-        for t in ("Jet lag is terrible", "I took a jet to Delhi", "The jet engine is loud"):
+    def test_a_hurry_in_a_sentence_isnt_her(self):
+        for t in ("I'm in a hurry", "Hurry up and eat", "Harry Potter is on tonight", "play Harry Styles"):
             self.assertIsNone(siri.find_name(t), t)

@@ -3,7 +3,7 @@
     from tests.support import siri, TRIPPED
 
 It points %APPDATA% and %LOCALAPPDATA% at an empty temp folder, so history, tasks, memory, contacts and logs never touch
-the real %APPDATA%\\Hey Jev, and replaces everything that acts on the PC or goes online with a tripwire that raises and
+the real %APPDATA%\\Hey Harry, and replaces everything that acts on the PC or goes online with a tripwire that raises and
 is recorded in TRIPPED. A test that needs one of them patches it itself (unittest.mock.patch.object)."""
 import os
 import sys
@@ -12,9 +12,9 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # First, before any project import: the real folders, which winplatform.own_data then refuses for the whole run
 # (on 8 Oct a run that imported siri before this file wrote its test turns into her real history)
-REAL = os.environ.setdefault("HEYJEV_TESTING", os.pathsep.join(
+REAL = os.environ.setdefault("HEYHARRY_TESTING", os.pathsep.join(
     (os.environ.get("APPDATA", ""), os.environ.get("LOCALAPPDATA", ""))))
-DATA = tempfile.mkdtemp(prefix="heyjev-tests-")
+DATA = tempfile.mkdtemp(prefix="heyharry-tests-")
 os.environ["APPDATA"] = DATA
 os.environ["LOCALAPPDATA"] = DATA
 if ROOT not in sys.path:
@@ -82,7 +82,7 @@ WIN_ACTIONS = (
     "window_image", "open_windows", "media_sessions",
     # and her look-ups of 27 October (siri.LOOK_STEPS): the files selected in the real File Explorer, and what's on
     # the real clipboard, which may be a password just pasted
-    "selected_files", "clipboard_text",
+    "selected_files", "clipboard_text", "copied_files",  # and the files copied there (28 October)
     # and what a job in the background reads (27 October): its own window, where it is, and how long since you typed
     "window_of", "window_rect", "idle_seconds",
     # and how it tells a control it may press with your window in front, and its own window's site, from UI Automation
@@ -112,9 +112,14 @@ for _name in ("speak", "fish", "fetch_tts", "warm_cache", "open_page", "see", "s
     if hasattr(siri, _name):
         ORIGINAL[_name] = getattr(siri, _name)
         setattr(siri, _name, tripwire(f"siri.{_name}"))
+# dream mode's window: a browser of its own started full screen, closed by its X, and what's left of it ended
+import dream  # noqa: E402
+for _name in ("_launch", "_close_windows", "_end_browser"):
+    ORIGINAL[f"dream.{_name}"] = getattr(dream, _name)
+    setattr(dream, _name, tripwire(f"dream.{_name}"))
 # what the planner is told is in the window in front reads the real window: nothing, unless a test gives it one;
 # and a page opened in the tab in front would press keys in the real browser: a new tab, as open_page's tripwire has it
-# and the decider's encoder for recall by meaning is the real MiniLM where .env names the models (HEYJEV_MODELS): no
+# and the decider's encoder for recall by meaning is the real MiniLM where .env names the models (HEYHARRY_MODELS): no
 # encoder, so no turn starts a thread that loads it, unless a test gives it one (FakeEncoder, tests/test_memory.py)
 for _name, _stub in (("screen_view", lambda: None), ("same_tab", lambda url: False), ("meaning", lambda: None)):
     ORIGINAL[_name] = getattr(siri, _name)

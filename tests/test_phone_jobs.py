@@ -139,7 +139,7 @@ class Documents(Case):
 
     def test_only_from_her_notes_folder(self):
         bot, fake = self.bot()
-        outside = tempfile.mkdtemp(prefix="heyjev-docs-")
+        outside = tempfile.mkdtemp(prefix="heyharry-docs-")
         self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
         elsewhere = os.path.join(outside, "secrets.md")
         with open(elsewhere, "w", encoding="utf-8") as f:
@@ -295,7 +295,7 @@ class JobQuestions(Clocked):
 
     def setUp(self):
         super().setUp()
-        folder = tempfile.mkdtemp(prefix="heyjev-jobs-")
+        folder = tempfile.mkdtemp(prefix="heyharry-jobs-")
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         self.store = tasks.Store(os.path.join(folder, "tasks.db"))
         self.said = queue.Queue()
@@ -486,7 +486,7 @@ class Reports(Clocked):
 
     def setUp(self):
         super().setUp()
-        folder = tempfile.mkdtemp(prefix="heyjev-reports-")
+        folder = tempfile.mkdtemp(prefix="heyharry-reports-")
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         self.folder = folder
 

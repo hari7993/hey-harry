@@ -29,7 +29,7 @@ def read(path):
 
 class Backup(unittest.TestCase):
     def setUp(self):
-        root = tempfile.mkdtemp(prefix="heyjev-backup-")
+        root = tempfile.mkdtemp(prefix="heyharry-backup-")
         self.repo = os.path.join(root, "repo")
         env = mock.patch.dict(os.environ, {"APPDATA": os.path.join(root, "roaming"),
                                            "LOCALAPPDATA": os.path.join(root, "local")})
@@ -54,7 +54,7 @@ class Backup(unittest.TestCase):
         write(os.path.join(self.repo, "vocabulary.json"), '["Zostel"]')
         write(os.path.join(self.repo, "apps.json"), '{"notepad": "notepad.exe"}')
         write(os.path.join(backup.localdata(), "voice", "owner.npy"), "voice")
-        write(os.path.join(backup.localdata(), "Logs", "Hey Jev.log"), "log")
+        write(os.path.join(backup.localdata(), "Logs", "Hey Harry.log"), "log")
 
     def turns(self):
         con = sqlite3.connect(os.path.join(self.data, "history.db"))
@@ -134,7 +134,7 @@ class Backup(unittest.TestCase):
 
 class FirstHello(unittest.TestCase):
     def test_she_introduces_herself_until_she_has_met_you(self):
-        self.assertEqual(siri.REPLIES["first_run"], ["Hey, I'm Jev, what can I do for you?"])
+        self.assertEqual(siri.REPLIES["first_run"], ["Hey, I'm Harry, what can I do for you?"])
         self.assertIs(settings.DEFAULTS["met"], False)
 
 
@@ -144,7 +144,7 @@ class CleanTestData(unittest.TestCase):
     T0 = 1_791_500_000.0  # inside the window passed below
 
     def setUp(self):
-        root = tempfile.mkdtemp(prefix="heyjev-clean-")
+        root = tempfile.mkdtemp(prefix="heyharry-clean-")
         env = mock.patch.dict(os.environ, {"APPDATA": os.path.join(root, "roaming"),
                                            "LOCALAPPDATA": os.path.join(root, "local")})
         env.start()
@@ -169,7 +169,7 @@ class CleanTestData(unittest.TestCase):
         for ts, said in turns:
             with mock.patch("time.time", return_value=ts):
                 history.add(said, reply="ok")
-        write(os.path.join(self.local, "Logs", "Hey Jev.log"),
+        write(os.path.join(self.local, "Logs", "Hey Harry.log"),
               "\n> heard: 'open notepad'  (stt 300ms, 95% sure)\n  quick: open\n> heard: \"what's the weather\"\n")
         agent = [{"at": int(self.T0 + 700 + i), "goal": "set a timer", "ms": 3} for i in range(3)]
         agent += [{"at": int(self.T0 + 2000), "goal": "turn on night light", "ms": 41000}]
@@ -235,7 +235,7 @@ class CleanTestData(unittest.TestCase):
         when = lambda ts: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
         dictated = [{"time": when(self.T0 + 2600), "text": "Set a timer."}]  # yours
         dictated += [{"time": when(self.T0 + 2700 + i), "text": "set a timer"} for i in range(3)]  # a test's
-        path = os.path.join(self.local, "Logs", "Hey Jev dictation.jsonl")
+        path = os.path.join(self.local, "Logs", "Hey Harry dictation.jsonl")
         write(path, "".join(json.dumps(d) + "\n" for d in dictated))
         found = clean_test_data.plans(self.window, tests=self.tests)
         clean_test_data.apply(found)
@@ -264,14 +264,14 @@ class CleanTestData(unittest.TestCase):
         text = read(self.day_file())
         self.assertEqual(history.summary(day), "You asked for a timer and Notepad.")
         self.assertEqual(text.count("You: set a timer"), 1)
-        self.assertIn("You: set a timer\n  Jev: Timer set for you", text)
+        self.assertIn("You: set a timer\n  Harry: Timer set for you", text)
         self.assertEqual(text.count("You: "), len([s for s in self.said() if s != "what's the weather"]))
 
     def test_a_day_file_it_cant_read_stops_nothing_and_loses_nothing(self):
         """A byte in the day file that isn't UTF-8: history.db has changed by the time the day file is read, so a
         crash there left the logs as they were, and writing it back read as text would have changed that byte."""
         with open(self.day_file(), "ab") as f:
-            f.write(b"- **11:59 PM** You: caf\xe9\n  Jev: (nothing said)\n")
+            f.write(b"- **11:59 PM** You: caf\xe9\n  Harry: (nothing said)\n")
         _, problems = clean_test_data.apply(clean_test_data.plans(self.window, tests=self.tests))
         self.assertEqual(problems, [])
         with open(self.day_file(), "rb") as f:
@@ -296,7 +296,7 @@ class CleanTestData(unittest.TestCase):
 
     def test_her_folder_can_have_a_hash_or_percent_in_its_path(self):
         """A Windows user name can have # or % in it: read as a bare file: URI, the path stopped at the #."""
-        odd = os.path.join(tempfile.mkdtemp(prefix="heyjev-clean-"), "Hari#1 100%", "Hey Jev")
+        odd = os.path.join(tempfile.mkdtemp(prefix="heyharry-clean-"), "Hari#1 100%", "Hey Harry")
         os.makedirs(odd)
         shutil.copy(os.path.join(self.data, "history.db"), odd)
         found = clean_test_data.plans(self.window, appdata=odd, local=self.local, tests=self.tests)
@@ -311,8 +311,8 @@ class CleanTestData(unittest.TestCase):
     def test_what_she_heard_counts_the_way_her_history_keeps_it(self):
         """Her log has what she heard, her name and all; her history keeps the words without it."""
         logs = os.path.join(self.local, "Other logs")
-        write(os.path.join(logs, "Hey Jev.log"), "\n> heard: 'Hey Jev, open Notepad.'  (stt 300ms, 95% sure)\n"
-                                                 "> heard: 'Jev set a timer'\n")
+        write(os.path.join(logs, "Hey Harry.log"), "\n> heard: 'Hey Harry, open Notepad.'  (stt 300ms, 95% sure)\n"
+                                                 "> heard: 'Harry set a timer'\n")
         heard = clean_test_data.heard_counts(logs)
         self.assertEqual(heard["open notepad"], 1)
         self.assertEqual(heard["set a timer"], 1)

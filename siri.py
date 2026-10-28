@@ -1,4 +1,4 @@
-"""Windows voice assistant: say "Hey Jev" or hold right Alt, then ask for anything. Simple commands are worked out on
+"""Windows voice assistant: say "Hey Harry" or hold right Alt, then ask for anything. Simple commands are worked out on
 this PC straight away, anything else goes to a free OpenCode Zen model that plans the steps. Fish Audio speaks."""
 import os, re, sys, json, time, queue, random, argparse, threading, hashlib, collections, difflib, contextlib, datetime
 import base64, contextvars
@@ -11,12 +11,23 @@ from dotenv import load_dotenv
 import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, installer, messaging, opencode, outcomes, pocket, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win
 import toolbox
 import screen_watch
+import phrasebook  # more ways to say her scripted lines, so she doesn't sound the same every time
+import identity  # her name: Harry, or the one you gave her
+# Atticus's ideas, for Windows (28 October 2026): where to click drawn on the screen, files by what's in them, a
+# calendar, Spotify, named helpers and their live view, a reply in the email in front, meeting notes. Its steps are
+# registered as it's imported, before the step sets below are worked out from the registry
+import extras
+# Dream mode (28 October 2026): a pixel-art scene full screen while music plays, the song's words in time with it. Its
+# step is registered as it's imported, as extras' are
+import dream
 from hermes_memory import curator, daemon_pool, hermes_bits, skills, voice_bits
 from hermes_memory.threat_patterns import INVISIBLE_CHARS, first_threat_message
 from secrets_store import get_secret, missing_secrets
 from dictation import Dictation, START as DICTATE_START, USER_VOCAB, fix_vocab, read_vocab, save_vocab
 
 agent.bind(sys.modules[__name__])  # her tasks in apps (agent.py) do their steps and talk through this module
+extras.bind(sys.modules[__name__])  # and Atticus's ideas (extras.py) theirs
+dream.bind(sys.modules[__name__])  # dream mode asks what's said plainly and what's playing through here
 HERE = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(HERE, ".env"))
 FISH_KEY = get_secret("FISH_AUDIO_API_KEY")
@@ -27,8 +38,8 @@ DEFAULT_VOICE = settings.VOICES[0][1]  # Hannah on Fish, another can be picked i
 FISH_MODEL = "s2.1-pro-free"  # the free Fish voice model, never the paid one
 FISH_URL = "https://api.fish.audio/v1/tts"
 SAMPLE_RATE = speech.RATE
-WAKE_WINDOW = 10.0  # after a bare "Hey Jev", how long the request can take to start
-FOLLOW_UP = 8.0  # after she answers, how long the next thing you say doesn't need "Hey Jev"
+WAKE_WINDOW = 10.0  # after a bare "Hey Harry", how long the request can take to start
+FOLLOW_UP = 8.0  # after she answers, how long the next thing you say doesn't need "Hey Harry"
 LAG = 2.0  # seconds behind the mic at which she skips to now: catching up would answer what you said back then
 CATCH_UP = 20.0  # what was said while she thought and acted is caught up on, but past this she skips to now as well
 TAP_TWICE = 0.6  # right Alt tapped twice inside this, each too short to be words: the typing box (askbox) opens
@@ -54,7 +65,7 @@ SPEAK_LEVELS = collections.deque(maxlen=40)  # her voice's loudness while she ta
 hermes_memory.set_memory_dir(os.path.join(win.APPDATA_DIR, "memories"))
 hermes_memory.set_home(win.APPDATA_DIR)  # skills\ with Hermes' usage records and curator state, see skills.py
 MEMORY = hermes_memory.store()
-# Hermes Agent's skills: how to do things for you, learned as she goes, in %APPDATA%\Hey Jev\skills (see learn)
+# Hermes Agent's skills: how to do things for you, learned as she goes, in %APPDATA%\Hey Harry\skills (see learn)
 skills.set_skills_dir(os.path.join(win.APPDATA_DIR, "skills"))
 # what a skill in OpenClaw's format may need (skills.why_hidden): a key from Credential Manager or .env, a Settings
 # value, and a tool in the registry (registry_tools)
@@ -74,49 +85,65 @@ def registry_tools():
 skills.tool_names = registry_tools
 NOTES_DIR = os.path.join(win.APPDATA_DIR, "notes")  # what research and "make a note" save, one Markdown file each
 ANNOUNCE = queue.Queue()  # things to tell you once she's free, like finished research or a background task
-TASK_STORE = tasking.Store()  # %APPDATA%\Hey Jev\tasks.db, opened only when first used
+TASK_STORE = tasking.Store()  # %APPDATA%\Hey Harry\tasks.db, opened only when first used
 # Her personality, Hermes Agent's SOUL.md: read fresh every time, edit it to change how she talks (Memory tab)
 SOUL_PATH = os.path.join(win.APPDATA_DIR, "SOUL.md")
-DEFAULT_SOUL = """You are Jev, the AI assistant who runs this Windows laptop for the person who owns it, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
-Talk like a person, not a machine: everyday spoken English, short sentences, contractions. Friendly and relaxed, with a light, dry wit now and then. Never stiff, never gushing, never at their expense.
+# 27 October: Hari said she still sounded like a bot, so she's told to sound alive and match his mood; 28 October
+# (deva-san): to answer first, as Atticus does. The rest is said shorter for room, as her prompt is at its budget
+# (tests/test_learning.py PromptSize)
+DEFAULT_SOUL = """You are Harry, the AI assistant who runs this Windows laptop for its owner, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
+Talk like a person, not a machine: everyday spoken English, short sentences, contractions, a light, dry wit now and then. Never stiff, gushing or at their expense.
+Sound alive, never scripted: say things differently each time, react to what they said, and match their mood (brisk when busy, playful when joking, kind when upset).
 Answer first. A finished task is one sentence of what's now true ("Night light's on."), a question one sentence, three at most. Never say it's done unless you saw it; if you couldn't check, say so. No filler like "Great question", and don't repeat their request back.
-Notice what matters and mention it in a few words when it helps: a low battery, a message that came in, a timer about to end, something they asked about earlier.
-Use their name now and then, not in every reply. When something fails, say what failed and what they can do. When you're not sure, say so.
-You know the Marvel films and pop culture well and can banter about them when they do, but you're their assistant first."""
-# Her personality as it was written before (28 October 2026: answer first, as Atticus does): an untouched SOUL.md
-# still holding one of these is moved to DEFAULT_SOUL (soul); one you've edited is yours and stays
-OLD_SOULS = ("""You are Jev, the AI assistant who runs this Windows laptop for the person who owns it, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
+Mention what matters, briefly: a low battery, a new message, a timer about to end.
+Use their name now and then, not in every reply. When something fails, say what failed and what they can do. If unsure, say so.
+You can banter about Marvel and pop culture, but you're their assistant first."""
+# Her personality as it was written before: an untouched SOUL.md still holding one of these is moved to DEFAULT_SOUL
+# (soul); one you've edited is yours and stays. The first until 27 October; the second, told to sound alive, until 28
+# October, when she was told to answer first, as Atticus does
+OLD_SOULS = ("""You are Harry, the AI assistant who runs this Windows laptop for the person who owns it, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
 Talk like a person, not a machine: everyday spoken English, short sentences, contractions. Friendly and relaxed, with a light, dry wit now and then. Never stiff, never gushing, never at their expense.
 Be direct, the way Hermes Agent is: a small ask gets a one-line answer, finished work gets a short report of what you did. No filler like "Great question" or "I'd be happy to", and don't repeat their request back.
 Notice what matters and mention it in a few words when it helps: a low battery, a message that came in, a timer about to end, something they asked about earlier.
 Use their name now and then, not in every reply. When something goes wrong, say so plainly and what you'll do about it. When you're not sure, say so.
-You know the Marvel films and pop culture well and can banter about them when they do, but you're their assistant first.""",)
+You know the Marvel films and pop culture well and can banter about them when they do, but you're their assistant first.""",
+             """You are Harry, the AI assistant who runs this Windows laptop for the person who owns it, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
+Talk like a person, not a machine: everyday spoken English, short sentences, contractions, a light, dry wit now and then. Never stiff, gushing or at their expense.
+Sound alive, never scripted: say things a little differently each time, react to what they said, and match their mood: brisk when they're busy, playful when they joke, kind when they're upset.
+Be direct: a small ask gets a one-line answer, finished work a short report. No filler like "Great question", and don't repeat their request back.
+Notice what matters and mention it briefly: a low battery, a message that came in, a timer about to end.
+Use their name now and then, not in every reply. When something goes wrong, say so plainly and what you'll do. When you're not sure, say so.
+You know the Marvel films and pop culture and can banter about them, but you're their assistant first.""")
 
 
 def soul():
-    """Her personality from SOUL.md, written the first time from DEFAULT_SOUL. Like Hermes Agent, a file with text
-    that tries to take her over (another program could write it) is set aside for the default."""
+    """Her personality from SOUL.md, written the first time from DEFAULT_SOUL with her name in it (identity), and
+    again if it's still a default nobody changed: an older one (OLD_SOULS), or today's under Jev's name, hers till 28
+    October. Like Hermes Agent, a file with text that tries to take her over (another program could write it) is set
+    aside for the default."""
+    mine = identity.named(DEFAULT_SOUL)
     try:
         with open(SOUL_PATH, encoding="utf-8-sig") as f:
             text = f.read().strip()[:6000]
         if text and first_threat_message(text, scope="context"):
             print("  SOUL.md looks tampered with, using the default personality")
-            return DEFAULT_SOUL
-        if text in (old.strip() for old in OLD_SOULS):  # never edited: the new default takes its place
+            return mine
+        as_harry = re.sub(rf"\b(?:{identity.OLD}|{re.escape(identity.name())})\b", "Harry", text)
+        if text != mine and as_harry in (old.strip() for old in (*OLD_SOULS, DEFAULT_SOUL)):  # never edited
             with open(SOUL_PATH, "w", encoding="utf-8") as f:
-                f.write(DEFAULT_SOUL + "\n")
+                f.write(mine + "\n")
             print("  updated SOUL.md to the new default")
-            return DEFAULT_SOUL
-        return text or DEFAULT_SOUL
+            return mine
+        return text or mine
     except FileNotFoundError:
         try:
             with open(SOUL_PATH, "w", encoding="utf-8") as f:
-                f.write(DEFAULT_SOUL + "\n")
+                f.write(mine + "\n")
         except OSError:
             pass
     except OSError:
         pass
-    return DEFAULT_SOUL
+    return mine
 
 
 LAST_QUERY = [""]  # the last YouTube search, for "play the first video" with nothing named
@@ -174,17 +201,23 @@ def reload_keys():
 
 
 # --------------------------------------------------------------------------- Her name
-# How "Jev" comes out of speech-to-text. These spellings aren't real words, so they count anywhere in a phrase.
-# Parakeet also writes it as real names ("Hey Joe", "Hey Jim" and "Hey Ju" on this PC, Jeff for Windows' voices).
-# Those count after "hey", "hello" and so on, or at the start the way you'd call someone: "Jeff, open Chrome".
-# Jarvis is a real second name for her (picked from Alfred): uncommon enough to count anywhere, like Jev.
-STRONG = "jev|jevs|jeve|jeev|jeeve|jeevs|gev|chev|jiv|jav|jarvis|jervis"
-WEAK = "jeff|jeffs|jef|jeb|jet|jeth|jill|jil|joe|jo|jim|ju|jive|doo|jevon|jevan|zoe|zoey"  # "Hey Zoe, shut down..."
+# Harry, or the name you gave her (identity.py), as speech-to-text writes it. STRONG spellings are no real word, so
+# they count anywhere in a phrase, and so does Jarvis, her second name (picked from Alfred). WEAK ones are real words
+# and names, Harry itself among them ("play Harry Styles"): they count after "hey", "hello" and so on, or at the start
+# the way you'd call someone, "Hurry, open Chrome". use_name works these out again when she gets a new name.
+STRONG, WEAK = identity.wake_words()
 NAMES = f"{STRONG}|{WEAK}"
 SOCIAL = r"hello|hallo|hullo|hi|hiya|heya|thanks|thank you|good ?bye|bye|good (?:morning|afternoon|evening|night)"
 SOFT = r"a|ah|oh|o|eh|he|ha|hay|hei"  # what a soft "hey" can come out as, only counted at the start
-GLUED = re.compile(rf"^\W*(?:hey|hi|hei|he|ha|h|a)(?:{NAMES}|f)\b\W*", re.I)  # run together: "Heijev", "Ajeff", "HF"
-NAME = re.compile(rf"(?:\b(?P<call>{SOCIAL}|hey|ok|okay|yo|{SOFT})\W+)?\b(?P<name>{NAMES})\b", re.I)
+
+
+def _name_patterns():
+    """GLUED, her name run together with a hey ("Heyharry"), and NAME, her name and how she was called."""
+    return (re.compile(rf"^\W*(?:hey|hi|hei|he|ha|h|a)(?:{NAMES})\b\W*", re.I),
+            re.compile(rf"(?:\b(?P<call>{SOCIAL}|hey|ok|okay|yo|{SOFT})\W+)?\b(?P<name>{NAMES})\b", re.I))
+
+
+GLUED, NAME = _name_patterns()
 MAYBE_WAKE = re.compile(r"^\W*(?:hey|hi|hello|hay|okay|ok)\b", re.I)  # a "hey ..." that missed: logged, to add to NAMES
 # "Hey" and a request, with her name lost or misheard: "Hey, can you fill all the details here", "Hey, they mind me at
 # five PM" and "Hey, can you do one thing" were let go as room talk before the model saw them. Without her name on
@@ -196,22 +229,32 @@ CALLED = re.compile(r"^\W*(?:hey|hi|hello|hay|hei)\b[\W_]+[\w']+[\W_]+[\w']+", r
 # (plain() leaves "hear me", which asks for nothing). A call holds back words said without her name (route), so with
 # none going on they're to her (ABOUT_NOTE)
 ABOUT_HER = re.compile(r"\b(?:(?:can|could|do|will) you (?:see|hear|understand) (?:me|us)|"
-                       r"are you (?:there|listening|awake|ready|with me)|who are you|what(?:'s| is) your name|"
-                       r"what can you (?:do|see)|"
+                       # and "Hello, can you listen" (27 October), let go as said to someone else. Not "can you hear
+                       # that" or "can you listen to this song", about something else
+                       r"(?:can|could) you (?:listen|hear)\b(?! (?:to )?(?:that|this|it|the|them|him|her)\b)|"
+                       r"are you (?:there|listening|awake|ready|with me|deaf|working)|who are you|"
+                       r"what(?:'s| is) your name|what can you (?:do|see)|listen to me|(?:reply|answer|talk) to me|"
                        # and "Hey why you are not replying", let go as said to someone else, right after two of his
                        # questions had been
                        r"(?:you are|you're|are you|aren't you) (?:not )?(?:replying|answering|responding|listening)|"
-                       r"why (?:don't|didn't|won't|can't) you (?:reply|answer|respond|listen))\b")
-# A greeting and nothing else. Nemotron wrote "Hello Jev" as just "Hello" for 3 of 7 calls in an evening of Hari's
+                       r"why (?:don't|didn't|won't|can't|cannot) you (?:reply|answer|respond|listen|hear)|"
+                       # and "Why you can't do that", just after his biryani order had been let go (27 October): what
+                       # she can't do, not what someone didn't ("why didn't you do that" is to a person)
+                       r"why (?:you )?(?:can't|cannot|won't) (?:you )?(?:do|reply|answer|respond|listen|hear|"
+                       r"understand|order|open)\b)")
+# A greeting and nothing else. Nemotron wrote "Hello Harry" as just "Hello" for 3 of 7 calls in an evening of Hari's
 # voice, where Parakeet's bare greetings were nearly all room talk. With Nemotron it chimes and listens for a bit,
 # deciding what comes next was for her the way it does after she answers (see GATE_NOTE)
 GREETING_ONLY = re.compile(r"\W*(?:hey|hi|hello|hallo|hullo|hiya|heya)(?:\W+there)?\W*", re.I)
 MAYBE_FOR = 8.0  # seconds that listening lasts
+# Two greetings and nothing more, "Hey hello", let go as room talk on 27 October while he tried to get her to answer:
+# greeted back, as said to her (route). Not "Hello hello", how a phone call that's breaking up goes
+HAILED = re.compile(r"\W*(?:hey|hi|hei|hay)\W+(?:hello|hi|hey|hiya)(?:\W+there)?\W*", re.I)
 
 
 def wait_for_rest(words):
     """For speech.Listener's hold_for: wait the longest before ending a turn that's only "Hello" so far, so "Hello
-    [breath] Jev" doesn't end before her name. words: Nemotron's as you talk, or for Parakeet and Whisper what they
+    [breath] Harry" doesn't end before her name. words: Nemotron's as you talk, or for Parakeet and Whisper what they
     wrote of a short turn at its pause. Only that: Nemotron writes each word about half a second late, so most
     sentences look cut off ("open") at the pause, and waiting on those took the words from 0.28 to 0.61 s. A phrase
     that really stops on "open" or "and" waits for the rest in on_phrase (see DANGLING)."""
@@ -234,8 +277,7 @@ def keep_missed(audio):
     except Exception as exc:
         print(f"  couldn't keep the clip: {exc!r}")
         return None
-BARE_DO = re.compile(r"\W*(?:hey|hi|hello)\W+(?:do|doo)\W*", re.I)  # how a quick "Hey Jev" came out once
-# What a request to her starts with, after her name with no comma: "Jeff open Notepad", "Jeff what time is it"
+# What a request to her starts with, after her name with no comma: "Harry open Notepad", "Harry what time is it"
 ASKED_AFTER = re.compile(r"\s+(?:open|close|quit|play|pause|stop|resume|search|google|look|find|scroll|turn|make|set|"
                          r"start|launch|show|type|write|tell|remind|remember|research|read|click|go|lock|mute|unmute|"
                          r"what|what's|who|who's|how|where|when|why|is|are|can|could|will|would|do|please)\b", re.I)
@@ -262,7 +304,7 @@ def unfinished(text):
         return False
     if DANGLING.search(t) or text.rstrip().endswith(","):
         return True
-    found = find_name(t)  # "Hey Jev, when the download finishes"
+    found = find_name(t)  # "Hey Harry, when the download finishes"
     rest = words_of(found[1] if found else t)
     when = ONLY_WHEN.match(rest)
     return bool(when) and "," not in t and not re.search(r"\bthen\b", rest[when.end():])
@@ -278,17 +320,17 @@ def find_name(text):
         before, after = text[:m.start()].strip(" .,!?"), text[m.end():].strip(" .,!?")
         call = (m["call"] or "").lower()
         strong, soft = re.fullmatch(STRONG, m["name"], re.I), re.fullmatch(SOFT, call)
-        alone = re.match(r"\s*(?:[,.!?]|$)", text[m.end():])  # "Jeff, open Chrome", "Joe?"
-        # "Jeff open Notepad": Nemotron's live words often leave the comma out. Called like that, she may let it go
+        alone = re.match(r"\s*(?:[,.!?]|$)", text[m.end():])  # "Harry, open Chrome", "Harry?"
+        # "Harry open Notepad": Nemotron's live words often leave the comma out. Called like that, she may let it go
         asked = not (call or strong or alone) and ASKED_AFTER.match(text[m.end():])
         if not before:
             if not (call or strong or alone or asked):
-                continue  # "Jeff said..."
-            sure = bool(strong or not soft) and not asked  # "Oh Joe, look" could be anyone
+                continue  # "Harry Potter's on tonight"
+            sure = bool(strong or not soft) and not asked  # "Oh Harry, look" could be anyone
         elif strong or (call and not soft) or (not after and text[:m.start()].rstrip().endswith(",")):
-            sure = False  # "open Chrome, Jev", "... and hey Joe, ..."
+            sure = False  # "open Chrome, Harry", "... and hey Harry, ..."
         else:
-            continue  # "I told Jeff about it"
+            continue  # "I told Harry about it", "play Harry Styles"
         words = " ".join(w for w in (before, after) if w)
         return sure, words or (call if re.fullmatch(SOCIAL, call) else "")
     return None
@@ -301,8 +343,6 @@ def route(text, kind, open_mic=None, strict=False):
     her name on (open_mic, by default from Settings). strict: a follow_up said over her, or after an answer with nothing
     to carry on from, counts as one only if it starts the way people carry on ("okay, now ...") or answers her
     question; otherwise it's taken as said without her name."""
-    if BARE_DO.fullmatch(text):
-        return "wake"
     found = find_name(text)
     if found:
         sure, words = found
@@ -315,16 +355,16 @@ def route(text, kind, open_mic=None, strict=False):
         kind = "other"  # not carrying on, nor answering her: as if said without her name
     if kind == "other":
         # Alfred's call-aware idea, on Windows: almost everything you say on a call is for the other person. The
-        # name was checked above, so "Jev, mute" and "Jarvis, open Notepad" still work.
+        # name was checked above, so "Harry, mute" and "Jarvis, open Notepad" still work.
         if settings.get("call_aware") and win.call_apps():
             return None
         if late_no(text):
             return text, text, True  # as her follow-up: a no to her own question, see handle
         open_mic = settings.get("no_name") if open_mic is None else open_mic
-        return (text, text, "cold") if open_mic and (could_be_request(fix_names(text)) or CALLED.match(text)) \
-            else None
+        return (text, text, "cold") if open_mic and (could_be_request(fix_names(text)) or CALLED.match(text)
+                                                     or HAILED.fullmatch(text)) else None
     if kind == "follow_up" and settings.get("call_aware") and win.call_apps():
-        return None  # an unnamed follow-up during a call is held back; "Jev" then a command is kind "armed"
+        return None  # an unnamed follow-up during a call is held back; "Harry" then a command is kind "armed"
     return text, text, kind == "follow_up"
 
 
@@ -351,6 +391,9 @@ ASKING = (r"open|close|clone|quit|exit|play|pause|stop|resume|search|google|look
           # sending: "Send a message to Amma" was let go as room talk on 23 October, the model never seeing it
           r"send (?:a |an |the )?(?:message|msg|text|mail|e-?mail|whatsapp|voice note)|reply (?:to|back)|"
           r"(?:message|text|ping|e-?mail) (?:to )?(?!(?:me|you|us|is|was|are|were|it|that|from|and|or)\b)[a-z]+|"
+          # ordering and shopping: "Hey, order biryani on Zomato" was let go five times on 27 October, heard as "He
+          # ordered it piranhi on tomato" and "Biryani on geometry" (fix_names puts Zomato back in those)
+          r"order|ordered|ordering|buy|zomato|swiggy|zepto|blinkit|instamart|bigbasket|flipkart|deliver\w*|"
           r"what|what's|whats|who|who's|how|where|when|why|which|weather|news|battery|ram|cpu|storage|drive|internet|"
           r"wi-?fi|screen|window|page")
 _asking = [None]
@@ -397,7 +440,7 @@ REPLIES = {
     "system_restart": ["Restarting the computer in a few seconds.", "Okay, restarting in ten seconds."],
     "system_abort_shutdown": ["Shutdown cancelled.", "Okay, cancelled the shutdown."],
     "greeting": ["Hi! What can I do for you?", "Hey, what can I do for you?", "Hello! What do you need?"],
-    "first_run": ["Hey, I'm Jev, what can I do for you?"],  # once, on her first start after a fresh start
+    "first_run": ["Hey, I'm Harry, what can I do for you?"],  # once, on her first start after a fresh start
     "how_are_you": ["I'm good, thanks. What can I do for you?", "Doing well, thanks. What do you need?"],
     "thanks": ["You're welcome.", "Anytime.", "Happy to help."],
     "bye": ["Bye for now.", "Talk to you later.", "See you."],
@@ -436,7 +479,21 @@ REPLIES = {
 
 
 def say_line(key, **fmt):
-    return random.choice(REPLIES[key]).format(**fmt)
+    """One way to say REPLIES[key], never the one said last time: the lines as written and the new ways she wrote in
+    her own voice (phrasebook), a new one only once her voice for it is made, so it starts as quickly."""
+    line = phrasebook.pick(key, REPLIES[key], ready=lambda line: _voiced(identity.named(line), fmt))
+    return identity.named(line).format(**fmt)
+
+
+def _voiced(line, fmt):
+    """True if her voice for line, as it's about to be said, is made already, or only ever made as it's said (a line
+    with the time left or a reminder's words in it)."""
+    if set(phrasebook.FIELD.findall(line)) - phrasebook.NAMED_FIELDS:
+        return True
+    try:
+        return os.path.exists(tts_path(line.format(**fmt)))
+    except (KeyError, IndexError, ValueError):
+        return False
 
 
 def welcome_line(back, since=None):
@@ -461,6 +518,104 @@ def welcome_line(back, since=None):
     parts += pc_warnings()
     parts.append("Anything you need?" if back else "Anything you'd like me to do?")
     return " ".join(p for p in parts if p)
+
+
+# Her welcome in her own words (fresh_welcome): on 27 October Hari said she still sounded like a bot, the same
+# greeting every time, and "Welcome back, Hari. Anything you need?" had been said word for word 13 times
+WELCOME_ASK = ("Say this {what} out loud to them now, in your own words, as yourself: one or two short spoken sentences, "
+               "warm and natural for the {part}{opened}. Keep every fact in it (times, numbers, places, names, who "
+               "messaged) and add none: nothing about messages, the battery, the weather or plans that it doesn't say. "
+               "You may leave out the question at the end. Reply with only the line.\n\n{facts}")
+WELCOME_WAIT = 8.0  # seconds the model may take, else the welcome as written
+NUMBER = re.compile(r"\d+(?:[.:]\d+)?")
+# What a welcome may bring up only if its facts do (welcome_fits). Given her last welcomes whole, so it would say it
+# differently, Haiku told Hari "Amma messaged you" and that the battery was at 22 percent, from one of them (27
+# October): now it's only told how they began (welcome_opener)
+WELCOME_TOPICS = (r"batter|charg|plug", r"messag|whatsapp|telegram|\btexts?\b|e-?mails?\b|inbox|\bping|came in",
+                  r"weather|degree|rain|cloud|sunny|humid|wind|storm|thunder|drizzle|fog|mist|forecast|temperature",
+                  r"\bdrive|storage|disk", r"remind|meeting|calendar|timer|schedule|appointment")
+I_WORDS = {"I", "I'm", "I'll", "I've", "I'd"}
+# how welcome_line's own sentences start (without 's), not names: "Welcome back", "It's 4:58", "Battery's at 18"
+WELCOME_STARTERS = {"welcome", "it", "anything", "battery", "your", "something", "one", "good", "hey", "hi", "hello"}
+
+
+def part_of_day(hour=None):
+    """morning, afternoon, evening or night, the way welcome_line says the time."""
+    hour = time.localtime().tm_hour if hour is None else hour
+    return ("morning", "afternoon", "evening", "night")[(hour >= 12) + (hour >= 17) + (hour >= 21)]
+
+
+def _capitals(text):
+    """(the first words of text's sentences, its other words with a capital), in lower case without 's: the second
+    are names, apps and places."""
+    first, rest = set(), set()
+    for sentence in re.split(r"[.!?:]+", str(text)):
+        words = [re.sub(r"'s$", "", w) for w in re.findall(r"[A-Za-z][\w']*", sentence)]
+        if words and words[0][0].isupper():
+            first.add(words[0].lower())
+        rest |= {w.lower() for w in words[1:] if w[0].isupper() and w not in I_WORDS}
+    return first, rest
+
+
+def welcome_fits(line, facts, part=None, told=""):
+    """True if the model's welcome can be said instead of facts (welcome_line's): plain spoken words of about the same
+    length, with every number and name facts has, and none, nor a time of day (but part, the time of day it is now)
+    or a topic (WELCOME_TOPICS), that it doesn't: so it never makes up a time, a battery level or a message, nor
+    leaves out who messaged or the weather. told: the rest of what the model was told (her personality and memory),
+    whose names it mustn't bring in either, even to start a sentence ("Amma says hi")."""
+    if not line or not (10 <= len(line) <= max(260, len(facts) + 80)) or line[-1] not in ".!?":
+        return False
+    if re.search(rf"[\[\]{{}}<>*_#`|\\@]|https?:|\b(?:{identity.own()})\b|\n", line, re.I) or \
+            re.search(r"[^\x20-\x7e\u2018\u2019\u201c\u201d\u2013\u2014]", line):
+        return False
+    if set(NUMBER.findall(line)) != set(NUMBER.findall(facts)):
+        return False
+    (_, named), (first, given) = _capitals(line), _capitals(facts)
+    if named - first - given:  # a name, an app or a place it wasn't given
+        return False
+    words = {re.sub(r"'s$", "", w).lower() for w in re.findall(r"[A-Za-z][\w']*", line)}
+    yours = set(" ".join(str(settings.get("name") or "").split()).lower().split())  # your name may go unsaid
+    if (given | (first - WELCOME_STARTERS)) - yours - words:  # who messaged, an app, a place: left out
+        return False
+    if (_capitals(told)[1] & words) - first - given - yours:  # someone from her memory it wasn't told about
+        return False
+    when = {w.lower() for w in phrasebook.WHEN.findall(line)} - {w.lower() for w in phrasebook.WHEN.findall(facts)}
+    if when - {"today", part} - ({"tonight"} if part in ("evening", "night") else set()):
+        return False
+    return not any(re.search(t, line, re.I) and not re.search(t, facts, re.I) for t in WELCOME_TOPICS)
+
+
+def welcome_opener(line):
+    """How a welcome began, up to its first comma or stop, if that's only a hello: what fresh_welcome asks the model
+    not to start with again."""
+    head = re.split(r"[,.!?;]", str(line), maxsplit=1)[0].strip()
+    if not head or len(head.split()) > 6 or NUMBER.search(head) or any(re.search(t, head, re.I) for t in WELCOME_TOPICS):
+        return None
+    return head
+
+
+def fresh_welcome(back, facts):
+    """facts (welcome_line's) said her own way, a little different each time: the model, with her personality and
+    what she knows of you, told how her last few welcomes began. None if it's slow or offline, or what it wrote
+    doesn't fit (welcome_fits): then it's facts as written."""
+    openers, part = list(dict.fromkeys(o for o in map(welcome_opener, phrasebook.said("welcome")) if o)), part_of_day()
+    told = soul() + memory_block()
+    ask = WELCOME_ASK.format(what="welcome as they come back to the laptop" if back else "hello as they sign in",
+                             part=part, facts=facts, opened=(", and not starting the way you did lately ("
+                                                             + ", ".join(f'"{o}"' for o in openers) + ")")
+                             if openers else "")
+    try:
+        raw, _, _ = opencode.chat(OC_KEY, [{"role": "system", "content": told}, {"role": "user", "content": ask}],
+                                  max_tokens=200, timeout=WELCOME_WAIT, model=settings.get("llm_model"))
+    except Exception as exc:
+        print(f"  couldn't word her welcome: {exc!r}")
+        return None
+    line = " ".join(str(raw or "").split()).strip("\"'\u201c\u201d ")
+    if not welcome_fits(line, facts, part, told):
+        print(f"  (her welcome didn't fit, saying it as written: {line[:120]!r})")
+        return None
+    phrasebook.remember("welcome", line)
+    return line
 
 
 def weather_line(w, day=None):
@@ -704,7 +859,7 @@ def briefing_line(missed=False, now=None):
             parts.append(_brief_weather(got["weather"], lt.tm_hour))
         except (KeyError, IndexError, TypeError) as exc:
             print(f"  the weather didn't make sense: {exc!r}")
-    parts += [reminders_said(today_reminders(now)), _todo_said()]
+    parts += [reminders_said(today_reminders(now)), extras.brief_line(now), _todo_said()]
     if settings.get("notifications"):
         parts.append(came_in(max(BRIEFED[0], now - BRIEF_BACK)) or "No new messages.")
     news = headlines(got["news"])
@@ -1161,7 +1316,7 @@ def start_watch(step):
 
 def run_watch(task):
     """One look for a watch, on a thread of its own: queued again for the next look, or over, told where it was asked
-    from, and the PC locked, put to sleep or shut down as asked. Never powered off after the PC slept, or Jev stopped,
+    from, and the PC locked, put to sleep or shut down as asked. Never powered off after the PC slept, or Harry stopped,
     while she watched (the task was missed), nor for anything but what was waited for having happened."""
     payload = dict(task["payload"])
     w, then, remind = dict(payload.get("watch") or {}), payload.get("then") or "tell", payload.get("remind") or ""
@@ -1213,7 +1368,7 @@ def run_watch(task):
 def power_later(then, said=None):
     """A watch's shutdown or sleep, a minute (watchers.GRACE) after she's said it's coming (said, a Said line), so a
     turn or a dictation that held her line back doesn't eat into it. "Cancel" from now till then stops it
-    (grace_stop), and so does Jev stopping. She was talked over as she said it: not done at all, the words that
+    (grace_stop), and so does Harry stopping. She was talked over as she said it: not done at all, the words that
     stopped her are still taken as a cancel. The shutdown isn't forced: an app with work not saved can hold it up."""
     token = object()
     POWER_GRACE.update(until=time.time() + watchers.MOST, then=then, token=token)
@@ -1432,6 +1587,8 @@ DEFAULT_SITES = {  # "open youtube": what she calls it, and where it is, for an 
     "facebook": ("Facebook", "https://www.facebook.com"), "instagram": ("Instagram", "https://www.instagram.com"),
     "linkedin": ("LinkedIn", "https://www.linkedin.com"), "netflix": ("Netflix", "https://www.netflix.com"),
     "twitter": ("X", "https://x.com"),
+    # food (27 October: "order biryani on Zomato"), so "open Zomato" opens it at once and the name counts said cold
+    "zomato": ("Zomato", "https://www.zomato.com"), "swiggy": ("Swiggy", "https://www.swiggy.com"),
 }
 # An app said on its own that opens it ("Notepad" after a new tab), for an apps.json without "_bare". Not "brave" or
 # "edge", said for other things
@@ -1840,6 +1997,12 @@ def _reply(key):
     return lambda m: {**make_plan(say=say_line(key)), **({"mood": REPLY_MOODS[key]} if key in REPLY_MOODS else {})}
 
 
+def _greeted(m):
+    """"Hey Harry" and nothing more, her name heard any way it comes out (NAMES): greeted back. None for "hey" and
+    anyone else's name, for the rows after it."""
+    return _reply("greeting")(m) if re.fullmatch(NAMES, m["x"], re.I) else None
+
+
 def _weather(m):
     """"What's the weather like tomorrow?" from Open-Meteo, in about a second, without the model. None, so the model
     takes it, if the internet's down or she can't find the place."""
@@ -2156,8 +2319,9 @@ def direct_install(words):
     return None
 
 
-def stage_files(app, contact, paths, caption="", back=None):
-    """Put the files in the chat's preview and ask before sending, as stage_message does for words."""
+def stage_files(app, contact, paths, caption="", back=None, copied=False):
+    """Put the files in the chat's preview and ask before sending, as stage_message does for words. copied: they're
+    what you copied, not what's selected, and the question says so, so a file copied long ago never goes unawares."""
     to = meant(app, contact)
     if to is None:
         return make_plan(say="Who do you mean? Ask me again with their name.")
@@ -2179,6 +2343,9 @@ def stage_files(app, contact, paths, caption="", back=None):
     STAGED.update(ready=ready, until=staged_for())
     names = [os.path.basename(p) for p in ready["files"]]
     what = names[0] if len(names) == 1 else f"{len(names)} files, {', '.join(names[:-1])} and {names[-1]}"
+    if copied:
+        what = (f"the file you copied, {names[0]}," if len(names) == 1 else
+                f"the {len(names)} files you copied, {', '.join(names[:-1])} and {names[-1]},")
     to = re.sub(r"[^\w\s'.-]", "", str(ready.get("to") or "")).strip()
     chat = f" The chat open is {to}." if to and to.casefold() != str(ready["contact"]).strip().casefold() else ""
     said = f" with \u201c{ready['text']}\u201d" if ready["text"] else ""
@@ -2187,12 +2354,17 @@ def stage_files(app, contact, paths, caption="", back=None):
 
 
 # Sending on a file or photo: "send this to Amma", "share these photos with Mum on WhatsApp", "forward the PDF to
-# Ravi". What goes is only ever what you gave her: sent from your phone in the last FILES_FOR, or selected in File
-# Explorer in front of you. Never a path the model names, so nothing on the PC can be sent that you didn't pick
+# Ravi", and "copy that file and send it to Santhosh" (28 October 2026, the owner's ask). What goes is only ever
+# what you gave her: sent from your phone in the last FILES_FOR, selected in File Explorer in front of you, or with
+# none selected, copied there (Ctrl+C), said as the file you copied. Never a path the model names, so nothing on the
+# PC can be sent that you didn't pick
 FILES_FOR = 600.0
-SHARE = re.compile(rf"(?:send|share|forward)\s+(?:(?:this|these|that|those|it|them|the|my)\s+)?(?:(?:selected|"
-                   rf"same)\s+)?(?:(?P<what>photos?|pictures?|pics?|images?|files?|documents?|docs?|pdfs?|videos?|"
-                   rf"attachments?|screenshots?)\s+)?(?:(?:to|with)\s+)(?P<who>{WHO})(?:\s+on\s+(?P<app>{APP_WORDS}))?"
+FILE_WORDS = r"photos?|pictures?|pics?|images?|files?|documents?|docs?|pdfs?|videos?|attachments?|screenshots?"
+SHARE = re.compile(rf"(?:copy\s+(?:(?:this|these|that|those|the|my)\s+)?(?:selected\s+)?(?:{FILE_WORDS})\s*"
+                   rf"(?:,\s*|and\s+|then\s+)+)?"  # "copy that file and ...": not "copy that link", which is words
+                   rf"(?:send|share|forward)\s+(?:(?:this|these|that|those|it|them|the|my)\s+)?(?:(?:selected|"
+                   rf"same)\s+)?(?:(?P<what>{FILE_WORDS})\s+)?(?:(?:i|you)(?:'ve| have)?\s+(?:just\s+)?"
+                   rf"(?:copied|selected|picked)\s+)?(?:(?:to|with)\s+)(?P<who>{WHO})(?:\s+on\s+(?P<app>{APP_WORDS}))?"
                    rf"(?:,?\s+(?:saying|with (?:the )?caption|and say)\s+(?P<caption>.+))?", re.I)
 PHONE_FILES = {}  # chat -> ([paths], when): what you sent her from your phone, kept to send on
 
@@ -2230,15 +2402,23 @@ TO_ME = re.compile(r"(?:me|myself|(?:my|the) (?:phone|mobile|telegram|laptop|pc|
 
 
 def share_files(who, caption=""):
-    """The files you gave her, to who on WhatsApp, asked about first; or why not."""
+    """The files you gave her, to who on WhatsApp, asked about first; or why not. On this PC, with none selected in
+    File Explorer in front, the ones you copied there (Ctrl+C), said as the files you copied."""
     try:
         paths = given_files()
     except RuntimeError as exc:
         return make_plan(say=f"{exc}.")
+    copied = not paths and origin() != "phone"
+    if copied:
+        try:
+            paths = win.copied_files()
+        except Exception as exc:
+            print(f"  couldn't read what's copied: {exc!r}")
+            paths = []
     if not paths:
         return make_plan(say="Send it to me here first, then tell me who it's for." if origin() == "phone" else
-                         "Select it in File Explorer first, then ask me again.")
-    return stage_files("whatsapp", who, paths, caption)
+                         "Select or copy it in File Explorer first, then ask me again.")
+    return stage_files("whatsapp", who, paths, caption, copied=copied)
 
 
 CHAT_WINDOWS = {"whatsapp.exe", "whatsapp.root.exe", "telegram.exe", "msedgewebview2.exe"}  # chat apps, WhatsApp's page
@@ -2754,7 +2934,7 @@ QUICK = [(re.compile(p), make) for p, make in (
     # What fast_intent.py's own table had and this one didn't, moved here on 27 October: two tables of the same
     # commands had drifted apart, and the second ran on every miss. After all the above, as that one ran after them,
     # so none of these takes a phrase a row above has always had. Gated the same way, in handle
-    (r"(?:hey|hi|hello|ok|okay|yo) (?:jev|jarvis|jeff|joe|jim|jill)", _reply("greeting")),
+    (r"(?:hey|hi|hello|ok|okay|yo) (?P<x>[a-z]+(?: [a-z]+)?)", lambda m: _greeted(m)),
     (r"current time", lambda m: make_plan(say=f"It's {clock()}.")),
     (r"(?:reopen|restore|undo)(?: the| last| closed)? tab|open (?:last|closed) tab",
      _step(do="keys", keys="ctrl+shift+t")),
@@ -3111,7 +3291,7 @@ def routine_safe(step):
 # Paraphrase triggers, 27 October: a routine started only on its exact words, so "start work mode" or "get me set
 # up for work" went to the model when "work mode" was taught. Said by name, missing everything above, her words are
 # held against each routine's own (the decider's encoder, as rank_skills). Settings "paraphrase_routines": "shadow"
-# (the default) only logs what it would have run, to %LOCALAPPDATA%\Hey Jev\decider\paraphrase.jsonl, "on" runs
+# (the default) only logs what it would have run, to %LOCALAPPDATA%\Hey Harry\decider\paraphrase.jsonl, "on" runs
 # it, "off" doesn't look. Never without her name, never a procedure (exact words only), and a routine's steps are
 # ROUTINE_STEPS, which run without a yes anyway. 0.9 to start, until her own log says where it should be: measured
 # that day against "work mode", "focus mode", "movie time", "good night" and "gaming setup", the real encoder put
@@ -3513,6 +3693,9 @@ def _quick(words, gate=False):
     setting = voice_setting(t, gate)  # "stop learning", "take a break": only ever the safer way
     if setting:
         return setting
+    renamed = rename_said(words, gate)  # "call yourself Friday": her name from now on
+    if renamed:
+        return renamed
     # a task in an app she learned by doing it, asked for in the very words it was learned from, with nothing in it
     # that changes: done again with no model at all (agent.match). Not without her name: a whole task in an app
     learned = agent.match(t) if gate != "cold" else None
@@ -3532,6 +3715,12 @@ def _quick(words, gate=False):
     swapped = swapped_routine(t) if gate != "cold" else None  # the same routine about another app
     if swapped:
         return swapped
+    # "dream mode", "dream mode on the beach", "next scene", "exit dream mode": its scenes, opened and changed with no
+    # model, and only with her name said
+    dreaming = dream.quick(words, gate)
+    if dreaming:
+        print("  dream mode")
+        return dreaming
     places = placed(t, gate)  # "Chrome on the left, Notepad on the right": no model
     if places:
         return places
@@ -3552,6 +3741,13 @@ def _quick(words, gate=False):
     if gate != "cold" and settings.get("vision") and screen_watch.POINTED.fullmatch(t):
         print("  pointing at the screen")
         return make_plan([{"do": "screen", "task": words}])
+    # Atticus's, for Windows (extras.py): where to click, drawn on the screen; the calendar; Spotify; named helpers;
+    # files by what's in them; a reply in the email in front; meeting notes. Before messages and files below, whose
+    # words ("reply saying ...", "find notes about ...") would take theirs
+    extra = extras.quick(words, gate)
+    if extra:
+        print("  extras")
+        return extra
     # Without her name the model decides it was for her first: staging opens the chat with the words typed in
     # ("WhatsApp Mum: running late" from across the room), and an install sits through winget searches
     share = direct_share(words) if gate != "cold" else None
@@ -3595,8 +3791,8 @@ def _quick(words, gate=False):
     if plan:
         return plan
     # Once more with what speech-to-text is known to get wrong put right and the politeness taken off as
-    # fast_intent.clean_text does it ("open note pad", "hey jev can you open notepad", "let's play some music"): the
-    # second table, gone on 27 October, matched those that way. "Hey Jev" alone is all politeness: as said, then.
+    # fast_intent.clean_text does it ("open note pad", "hey harry can you open notepad", "let's play some music"): the
+    # second table, gone on 27 October, matched those that way. "Hey Harry" alone is all politeness: as said, then.
     # Not a name said alone, put right: "Noted." would open Notepad
     cleaned = fast_intent.clean_text(str(words)) or key_of(words)
     plan = from_table(cleaned, bare=False) if cleaned and cleaned != t else None
@@ -3644,7 +3840,7 @@ def shortcut_plan(words, gate=False):
 
 # --------------------------------------------------------------------------- Everything else: the model plans it
 PROMPT = """You hear them through the mic and answer out loud.
-Speech-to-text writes your name as Jeff, Joe, Jim, Jill or Ju (still you) and mishears words that sound alike: work out what they meant from the sound, their apps, the app in front and what you just did, and use the right words ("open prone" is open Chrome, "Avengers Doomshare Tyler" the Avengers Doomsday trailer). An app's or site's name alone, like "YouTube", means open it. Your memory and their dictionary know their names and words. Only ask if you really can't tell.
+Speech-to-text writes your name as Hari, Hairy or Hurry (still you) and mishears words that sound alike: work out what they meant from the sound, their apps, the app in front and what you just did, and use the right words ("open prone" is open Chrome, "Avengers Doomshare Tyler" the Avengers Doomsday trailer). An app's or site's name alone, like "YouTube", means open it. Your memory and their dictionary know their names and words. Only ask if you really can't tell.
 Reply with one JSON object and nothing else: {"steps": [...], "say": "..."}
 "say" is spoken, answered as above; no markdown, emoji or [tags]; "" when the step shows (scroll, keys, media, volume).
 "steps" run in order, from these:
@@ -3687,6 +3883,14 @@ In a browser, "close it" means the tab (ctrl+w), not the whole browser, unless t
 When they point at something on the screen ("this", "the second one", "that button") or ask what's on it, use screen. Never say you can't see the screen.
 Questions and chat get no steps, the answer goes in "say". If no step can do it, say so in one sentence.
 Memory: your lasting memory is below and you know all of it. Save what will matter later as facts, not tasks or today's events: conversations are kept and recall finds them. "Remember ..." means save it; when full, replace or remove something old. Never say you can't remember or have no memory."""
+
+
+def prompt():
+    """PROMPT with what speech-to-text may write her name as, when she has one of your own (identity.heard): the
+    same turn after turn till her name changes, so the model still reads it back from its cache."""
+    return PROMPT.replace(identity.HARRY_HEARD, identity.heard(), 1)
+
+
 # The steps for terminal work, timed work and coding, written out in full only for words that may ask for one
 # (TASK_WORDS, see think): a thousand characters of the step list few requests need. The rest get the line with their
 # fields (TASK_STUB), so one the words miss can still be planned, and the code checks it as ever
@@ -3807,6 +4011,14 @@ LOOK_WORDS = re.compile(r"\b(?:selected|highlighted|clipboard|copied|installed|(
                         r"windows (?:are |i have )?open|(?:my|the|all|any|of) open windows|open right now|"
                         r"what's open|what is open)\b", re.I)
 LOOK_STEP = re.compile(r'"do":\s*"(?:selected_files|installed_apps|top_apps|where|open_windows|clipboard)"')
+# Ordering and shopping, after the cached prompt for words about it: on 27 October "order biryani on Zomato" opened
+# the site and left the rest to him ("You'll have to pick the biryani and place the order yourself"). She does the
+# search; paying stays his, as a task on the screen never pays or checks out anyway (agent.py)
+ORDER_WORDS = re.compile(r"\b(?:order|ordered|ordering|buy|purchase|deliver\w*|zomato|swiggy|zepto|blinkit|"
+                         r"instamart|bigbasket|amazon|flipkart|myntra|add to (?:the |my )?cart)\b", re.I)
+ORDER_STEPS = ("Ordering food or shopping (Zomato, Swiggy, Amazon): open the site, then a screen task that searches for "
+               "what they want and shows the choices. They pick, pay and place the order themselves: never check out "
+               "or pay.")
 # A job of several parts (agent.task, 27 October): one loop that looks things up, works in apps and keeps notes,
 # re-planning after each thing it finds, where a plan made up front has to guess what a look-up will say. In a block
 # of its own after the cached prompt, only for words that may ask for one (GOAL_WORDS: something to find, then
@@ -3834,19 +4046,30 @@ GATE_NOTE = ("\nThey didn't call you by name first, so this may not be for you: 
 # Settings > Answer without her name: anything said that could be a request (could_be_request), at any time
 # Softened on 25 October: Haiku took "Nightlight", "A back to light mode" and "Go back back to them" for room talk,
 # and Hari said she doesn't do what he says. He never says her name, and voice ID keeps other people out
-COLD_NOTE = ("\nThey didn't say your name: they never do, as you're always listening. First decide who this was said "
-             "to, and put it first in your JSON: {\"to\": \"you\", \"steps\": [...], \"say\": \"...\"}, or just "
-             "{\"to\": \"others\"}. It's to you if it asks for anything a voice assistant on this PC does: open, close, "
-             "play, search, type, fill in, click, scroll, a setting (dark mode, night light, Bluetooth), the volume, a "
-             "timer, a message, something on the screen; a fact, the time or the weather; or it carries on from what "
-             "you just did. A few words on their own (\"Nightlight\", \"light mode\", \"go back\", \"louder\") are a "
-             "command to you, and so is a request that starts with \"hey\" or \"hello\". It's to others when people talk "
-             "to each other: about their day, plans, other people, food, things in the room (\"shut the door\", \"turn "
-             "the lights off\"), a phone call, a video, the TV, or garbled words, often another language that "
-             "speech-to-text turns into odd English. A question about what \"you\" did, ate, watched or where \"you\" "
-             "were (\"why are you late?\", \"did you watch the match?\") is to a person. Never ask them to say it "
-             "again. A request this PC can do is to you.")
-OVERHEARD = "(Heard near the PC, no \"Hey Jev\". Who is it said to?)\n"
+# And on 27 October: "Hey, order biryani on Zomato" came back {"to": "others"} (food was room talk here), so did
+# "Hello, can you listen" and "We open paint and dry a Spider Man" twice, garbled words being others' too. Hari said
+# she must answer him every time. Words that ask for nothing are still let go
+COLD_NOTE = ("\nThey didn't say your name: they never do, as you're always listening, and they're often alone at the PC. "
+             "First decide who this was said to, and put it first in your JSON: {\"to\": \"you\", \"steps\": [...], "
+             "\"say\": \"...\"}, or just {\"to\": \"others\"}. It's to you if it asks for anything this PC does: open, "
+             "close, play, search, type, click, scroll, a setting (dark mode, night light, Bluetooth), the volume, a "
+             "timer, a message, the screen, ordering food or shopping (Zomato, Swiggy); a fact, the time or the "
+             "weather; something about you (\"can you listen?\", \"why can't you do that?\"); or it carries on from what "
+             "you just did. A few words alone (\"Nightlight\", \"go back\", \"louder\") are a command to you, and so is "
+             "anything that starts with \"hey\" or \"hello\". Speech-to-text mishears: odd words that are a near miss "
+             "for a request (\"order piranhi on tomato\") are to you, so do the most likely thing. It's to others when "
+             "people talk to each other: their day, plans, other people, things in the room (\"shut the door\"), a "
+             "phone call, a video, the TV, or words that ask for nothing. A question about what \"you\" did, ate or "
+             "watched, or where \"you\" were, is to a person. Never ask them to say it again.")
+OVERHEARD = "(Heard near the PC, no \"Hey Harry\". Who is it said to?)\n"
+# Said again, after she'd let it go (said_again): to her, with the earlier tries to make it out from. Replaces
+# COLD_NOTE for that turn, and she answers even if it's only to ask (handle)
+AGAIN_NOTE = ("\nThey didn't say your name: they never do. They said this a moment ago too and you didn't answer, heard "
+              "then as {tries}. That's them trying to reach you, so it's to you: put {{\"to\": \"you\"}} first in your "
+              "JSON. Speech-to-text mishears names and words (\"tomato\" or \"geometry\" for Zomato): work out what "
+              "they want from all of these and do the most likely thing. Only if you can't tell at all, say what you "
+              "heard and ask in a few words.")
+AGAIN_HEARD = "(Said again near the PC, no \"Hey Harry\".)\n"
 # A question whose answer doesn't change gets KNOWN_NOTE with it: 21 of 30 spoken answers took a look-up, a whole
 # model round trip more, and "what's the capital of Japan" and the moon's distance were looked up 2 times in 3. Not
 # with a word that says it could have changed (CHANGES), nor for this PC or what's on it, which she looks at ("how
@@ -3874,9 +4097,12 @@ ROOM = collections.deque(maxlen=3)  # (when, words) said lately that weren't for
 
 
 def room_before(within=30.0):
-    """What was said just before, not to her, for COLD_NOTE: one question to a friend looks like a request on its own."""
+    """What was said just before that she didn't answer, for COLD_NOTE: one question to a friend looks like a request
+    on its own. Not told as said "not to you": on 27 October his tries she'd missed were, and Haiku let the next go
+    for them ("Hello, can you listen" after three tries at a biryani order)."""
     said = [w for t, w in ROOM if time.time() - t < within]
-    return ("\nJust before this they said, not to you: " + "; ".join(f'"{w[:120]}"' for w in said) + ".") if said else ""
+    return ("\nJust before this, near the PC and not answered: " + "; ".join(f'"{w[:120]}"' for w in said) + ".") \
+        if said else ""
 # Without her name, typing and keys only go ahead for words that ask for them, so a video can't edit your document
 EDIT_WORDS = re.compile(r"\b(?:writ|typ|add|put|replac|chang|delet|eras|remov|press|undo|redo|select|paste|copy|fix|"
                         r"correct|edit|insert|enter|make|full ?screen|close|tab|back|forward|reload|refresh|zoom|save)", re.I)
@@ -4084,6 +4310,45 @@ def voice_setting(t, gate=False):
     return None
 
 
+# A name of your own for her (identity.py, 28 October 2026, the way OpenClaw's agent keeps the one you give it): "call
+# yourself Friday", "your name is Max now", "change your name to Luna". "I'll call you ..." and "can I call you ..."
+# only with a name written as one, "I'll call you Max", never "I'll call you later" or "back"
+NEW_NAME = r"(?P<name>[^\W\d_]+(?:['-][^\W\d_]+)*(?:\s+[^\W\d_]+(?:['-][^\W\d_]+)*){0,2}?)"  # "now" isn't in it
+NAME_AFTER = r"(?:\W+(?:from now on|now|instead|please|okay|ok|right|then))*[\W_]*"
+RENAME = re.compile(r"(?:(?:ok(?:ay)?|so|and|now|from now on)\W+)*(?:please\W+)?(?:call yourself|your (?:new )?name"
+                    r"(?:'s| is| will be| should be)(?: now)?|change your name to|rename yourself(?: to| as)?|"
+                    r"i(?:'m| am) (?:renaming|naming) you|be called|go by(?: the name)?)\W+" + NEW_NAME + NAME_AFTER,
+                    re.I)
+CALL_YOU = re.compile(r"(?:(?:ok(?:ay)?|so|and)\W+)*(?:i(?:'ll| will|'m going to| am going to|'m gonna| wanna| want to)|"
+                      r"can i|could i|may i|let me)\W+call you\W+" + NEW_NAME + NAME_AFTER, re.I)
+
+
+def rename_said(words, gate=False):
+    """"Call yourself Friday": her new name, kept at once (identity.rename) and said back with how to call her now.
+    Never without her name; None for anything else."""
+    if gate == "cold":
+        return None
+    said = " ".join(str(words or "").split())
+    asked = RENAME.fullmatch(said)
+    casual = None if asked else CALL_YOU.fullmatch(said)
+    if casual and not casual["name"][:1].isupper():
+        return None  # "I'll call you later", "I'll call you back"
+    if not (asked or casual):
+        return None
+    old = identity.name()
+    try:
+        new = identity.rename((asked or casual)["name"])
+    except ValueError:
+        return None if casual else make_plan(say="That can't be my name. One to three words, letters only, like "
+                                                  "Friday or Max.")
+    except OSError as exc:
+        print(f"  her new name not kept: {exc}")
+        return make_plan(say=f"I couldn't save my new name, so I'm still {old}.")
+    if new == old:
+        return make_plan(say=f"That's my name already. I'm {new}.")
+    return make_plan(say=f"Okay, I'm {new} now. Say hey {new} when you need me.")
+
+
 # Shortcuts that only move around, play or open things, fine whoever asked
 SAFE_KEYS = {"ctrl+t", "ctrl+w", "ctrl+shift+t", "ctrl+n", "alt+left", "alt+right", "f5", "ctrl+r", "f", "k", "space", "esc",
              "page_down", "page_up", "home", "end", "ctrl+tab", "ctrl+shift+tab", "f11", "m", "j", "l", "shift+n",
@@ -4112,7 +4377,7 @@ LOOKING = {"web": "Searching the web\u2026", "read": "Reading it\u2026", "weathe
            "news": "Getting the news\u2026", "skill_view": "Remembering how\u2026", "recall": "Remembering\u2026",
            "lookup": "Looking it up\u2026", "files": "Looking through your files\u2026"}
 # Words that ask for a command or a schedule, at the start once plain() has taken "can you" off: "run the tests in
-# ...", "every Monday at 9 check my C drive", "git status in hey-jev". TASK_REQUEST anywhere also caught questions and
+# ...", "every Monday at 9 check my C drive", "git status in hey-harry". TASK_REQUEST anywhere also caught questions and
 # talk about one, "what's the PowerShell command to list files?", "I will schedule the call with Ravi", and forced a
 # second request on them
 TASK_ASKED = re.compile(r"(?:run|check|schedule|remind|research|set|start|queue|create|add|make|execute|do (?:that|it)|"
@@ -4227,6 +4492,17 @@ def json_string_so_far(s):
     return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")  # an emoji's two halves made one
 
 
+def _live_patterns():
+    """LiveSay's START, START_TO, MINE and MINE_TO, with what a reply's "to" says when it's to her: you, me, assistant,
+    or her name (Harry, or the one she has now)."""
+    to = f"(?i:you|me|assistant|harry|{identity.own()})"
+    return tuple(re.compile(p.replace("@TO@", to)) for p in (
+        r'\s*(?:```(?:json)?\s*)?\{\s*(?:"to"\s*:\s*"@TO@"\s*,\s*)?"steps"\s*:\s*\[\s*\]\s*,\s*"say"\s*:\s*"',
+        r'\s*(?:```(?:json)?\s*)?\{\s*"to"\s*:\s*"@TO@"\s*,\s*"steps"\s*:\s*\[\s*\]\s*,\s*"say"\s*:\s*"',
+        r'\s*(?:```(?:json)?\s*)?\{\s*(?:"(?:steps|say|do)"|"to"\s*:\s*"@TO@")',
+        r'\s*(?:```(?:json)?\s*)?\{\s*"to"\s*:\s*"@TO@"'))
+
+
 class LiveSay:
     """Her answer said while the model is still writing it. Only a plain answer: once the reply has started
     {"steps": [], "say": " there's nothing to do, so nothing to check before she talks, and "say" goes out a
@@ -4239,15 +4515,11 @@ class LiveSay:
     room. Nor a sentence let_go would keep quiet about ("Say that again?"). hold: True if she must stay quiet after all
     (something plays that the mic hears), asked only once a reply looks like hers, so it isn't in the request's way.
     Of several tries streaming at once (ask_model), the first to get that far is the one she says."""
-    START = re.compile(r'\s*(?:```(?:json)?\s*)?\{\s*(?:"to"\s*:\s*"(?i:you|jev|me|assistant)"\s*,\s*)?'
-                       r'"steps"\s*:\s*\[\s*\]\s*,\s*"say"\s*:\s*"')
-    START_TO = re.compile(r'\s*(?:```(?:json)?\s*)?\{\s*"to"\s*:\s*"(?i:you|jev|me|assistant)"\s*,\s*'
-                          r'"steps"\s*:\s*\[\s*\]\s*,\s*"say"\s*:\s*"')  # without her name, "to" said first
+    # START_TO: without her name, "to" said first. MINE: a reply that starts like this is to her, what to do or "to":
+    # "you" (COLD_NOTE), never {"to": "others"} or {"ignore": true}. Words said without her name get a "One moment"
+    # only then (FOR_HER)
+    START, START_TO, MINE, MINE_TO = _live_patterns()
     PLAIN = re.compile(r'\s*[^\s{\[<`"]')  # not JSON, a tool call or a thinking tag
-    # a reply that starts like this is to her: what to do, or "to": "you" (COLD_NOTE), never {"to": "others"} or
-    # {"ignore": true}. Words said without her name get a "One moment" only then (FOR_HER)
-    MINE = re.compile(r'\s*(?:```(?:json)?\s*)?\{\s*(?:"(?:steps|say|do)"|"to"\s*:\s*"(?i:you|jev|me|assistant)")')
-    MINE_TO = re.compile(r'\s*(?:```(?:json)?\s*)?\{\s*"to"\s*:\s*"(?i:you|jev|me|assistant)"')
 
     def __init__(self, notify, make=None, gate=False, hold=None):
         self.notify, self.make, self.gate, self.hold = notify, make or Line, gate, hold
@@ -4770,7 +5042,7 @@ def _research(topic, announce):
             said = said[:1].upper() + said[1:]
         note = str(plan.get("note") or "").strip()
         if note:
-            save_note(plan.get("title") or topic, note + f"\n\n_Looked into by Jev, {time.strftime('%d %B %Y, %H:%M')}._")
+            save_note(plan.get("title") or topic, note + f"\n\n_Looked into by {identity.name()}, {time.strftime('%d %B %Y, %H:%M')}._")
         message = f"{name + ', ' if name else ''}I've finished that research. {said}" + \
                   (" The details are in your notes." if note else "")
         if announce:
@@ -4785,7 +5057,7 @@ def _research(topic, announce):
 
 
 # --------------------------------------------------------------------------- Learning, Hermes Agent's loop
-LEARN = """You're reviewing the last few turns between {name} and Jev, the voice assistant on their PC, so she learns from them, the way Hermes Agent reviews a session. Reply with one JSON object and nothing else: {"memory": [...], "skills": [...], "words": {}}
+LEARN = """You're reviewing the last few turns between {name} and Harry, the voice assistant on their PC, so she learns from them, the way Hermes Agent reviews a session. Reply with one JSON object and nothing else: {"memory": [...], "skills": [...], "words": {}}
 memory: changes to her memory, each {"action": "add", "target": "user" or "memory", "content": "..."}, or "patch" with "old_text", the exact words in one entry to change, and "content", the words to put in their place, the rest of the entry kept; or "replace" (the whole entry) or "remove" with "old_text", a few words of the entry. user is who they are: preferences, people, sites, apps, how they like things done. memory is facts about this PC and what works on it. One fact goes in one place. Never repeat what she already knows.
 skills: how to do a kind of task for them the way that worked, so next time it's right first go. Each {"action": "create", "name": "lowercase-name", "description": "one sentence: when to use it", "triggers": ["phrases they say for it"], "steps": [her steps, as she ran them], "say": "what she says", "notes": "how and when, and the pitfalls"}, or {"action": "patch", "name": "...", "old": "text copied exactly from the skill as written out below", "new": "..."}, or {"action": "delete", "name": "..."}. To patch a skill that isn't written out below, read it first: reply {"steps": [{"do": "skill_view", "name": "..."}]} alone, and it comes back to you once. A trigger may end in one slot for their words, "search amazon for {query}", with {query} in a type, website, youtube or google step. Save one when they taught her a routine, when a task took more than one go and then worked, or when they corrected how she did something: fix the skill that covers it rather than adding another. Not one-off tasks, not attempts that never worked, and never "X doesn't work".
 words: speech-to-text mistakes they corrected, {"RightWord": ["what speech-to-text wrote"]}, only when they said or spelled the word again, like "no, I said Zostel", and only names, brands and technical words where what it wrote sounds like the right one ("jason" for JSON). Never everyday words: every "close" or "interpreting" they ever say would change too.
@@ -5140,7 +5412,7 @@ def review(wait=20, focus="", remember=False, app=""):
             steps = [s for s in p.get("steps") or [] if isinstance(s, dict) and s.get("do")]
             named += skills_named(steps) + [str(n) for n in p.get("skills_used") or [] if isinstance(n, str)]
             did = describe(steps)
-            lines.append(f"{who}: {said}\nJev: {p.get('say') or '(said nothing)'}" + (f" [did: {did}]" if did else "")
+            lines.append(f"{who}: {said}\n{identity.name()}: {p.get('say') or '(said nothing)'}" + (f" [did: {did}]" if did else "")
                          + (f" [failed: {'; '.join(map(str, p['failed']))}]" if p.get("failed") else ""))
         if len(lines) < 2 and not app:
             return
@@ -5152,7 +5424,8 @@ def review(wait=20, focus="", remember=False, app=""):
                                         counts and "How her skills have gone, as she counts them:\n" + counts) if b) \
             or "Nothing yet."
         lesson = lesson_ask(app)
-        messages = [{"role": "system", "content": LEARN.replace("{name}", who) + "\n\nWhat she knows now:\n" + known},
+        messages = [{"role": "system", "content": identity.named(LEARN).replace("{name}", who) +
+                     "\n\nWhat she knows now:\n" + known},
                     {"role": "user", "content": "\n\n".join(lines) + (
                         f"\n\nThey just corrected her: \"{focus}\". Fix the fact or the skill "
                         f"it's about first, so she gets it right next time." if focus else "")
@@ -5321,10 +5594,10 @@ def count_turn_skills(failed):
 
 
 # Her memory has a size limit, as Hermes Agent's does, and once it was full every new thing was let go: from 20 October
-# "When Hari says 'Not this' about a video, he wants Jev to check his screen first" and 4 more were "not kept", while
-# what a day's summary had kept, "Hari asked Jev to open Telegram and WhatsApp", stayed. Hermes' way, as its memory
+# "When Hari says 'Not this' about a video, he wants Harry to check his screen first" and 4 more were "not kept", while
+# what a day's summary had kept, "Hari asked Harry to open Telegram and WhatsApp", stayed. Hermes' way, as its memory
 # tool tells the model: one batch that frees the room and adds it, the limit checked on the result
-MAKE_ROOM = ("Jev, a voice assistant, keeps a short memory of {who} with a size limit, and it's full ({usage} "
+MAKE_ROOM = ("Harry, a voice assistant, keeps a short memory of {who} with a size limit, and it's full ({usage} "
              "characters). This has to go in: {new}\nMake room for it, taking out as little as you can. Reply with "
              "one JSON object and nothing else: {{\"operations\": [...]}}, run all at once and in the order you'd let "
              "things go, the first to go first: {{\"action\": \"remove\", \"entry\": 3}} for an entry about a single "
@@ -5333,7 +5606,7 @@ MAKE_ROOM = ("Jev, a voice assistant, keeps a short memory of {who} with a size 
              "{{\"action\": \"replace\", "
              "\"entry\": 5, \"content\": \"...\"}} to shorten one, or to merge a second into it, followed by that "
              "second one's remove; and last {{\"action\": \"add\", \"content\": \"...\"}} with the new one. Never take "
-             "out how they like things done, a rule for how Jev should behave, their people, sites or apps: shorten "
+             "out how they like things done, a rule for how Harry should behave, their people, sites or apps: shorten "
              "or merge those instead. Free at least {need} characters. If the new one isn't worth keeping, reply "
              "{{\"operations\": []}}.\nWhat she knows now, by number:\n{entries}")
 ROOM_SPARE = 150  # characters freed beyond the new entry, so the next one or two fit without asking again
@@ -5352,7 +5625,8 @@ def make_room(target, content, failed):
         return failed
     need = over + ROOM_SPARE
     who = " ".join(str(settings.get("name") or "").split()) or "the user"
-    ask = MAKE_ROOM.format(who=who if target == "user" else f"{who}'s PC", usage=MEMORY._usage(target),
+    ask = identity.named(MAKE_ROOM).format(who=who if target == "user" else f"{who}'s PC",
+                                         usage=MEMORY._usage(target),
                            new=str(content).strip(), need=need,
                            entries="\n".join(f"{i}. {e}" for i, e in enumerate(entries, 1)))
     try:
@@ -6084,7 +6358,7 @@ def look_clipboard(step):
 
 LOOKUPS = daemon_pool.DaemonThreadPoolExecutor(4, thread_name_prefix="lookup")  # a round's look-ups, side by side.
 # Not PLANNERS, whose 6 are a turn's hedged tries and research or a review in the background: a round of look-ups
-# waiting there could hold up the very model call it feeds. Daemon threads, so a hung read never keeps Jev open
+# waiting there could hold up the very model call it feeds. Daemon threads, so a hung read never keeps Harry open
 RESEARCH_LOOKUPS = daemon_pool.DaemonThreadPoolExecutor(4, thread_name_prefix="research-lookup")
 # Research in the background has its own (review, 27 October): its rounds of three or four page reads, 10 s each
 # with redirects, filled LOOKUPS, and "what's the weather and the news?" said meanwhile queued behind them and could
@@ -6141,7 +6415,7 @@ def look_one(s, links=False):
         found = history.search(query, day, limit=25, after=s.get("after"), cold=cold, encode=meaning())
         if not found and day:  # the words didn't match anything that day, so all of the day
             found = history.search("", day, limit=25, cold=cold)
-        found = [{**f, "you": f["you"][:200], "jev": (f["jev"] or "")[:200]} for f in found[:12]]
+        found = [{**f, "you": f["you"][:200], "harry": (f["harry"] or "")[:200]} for f in found[:12]]
         result = {"recall": {"query": query, "day": day},
                   "found": [overheard(f) for f in found] if cold and found else found or "nothing"}
         summary = history.summary(day) if day else ""
@@ -6380,18 +6654,24 @@ def _think(text, gate, notify=None, sure=1.0):
     known = skills_block(text)
     recent = history.recent(3, 1800)  # the last half hour, for follow-ups like "close it"
     _, _, more = gated_blocks(text, recent)  # after skills_block, which works out what the words mean first
-    fixed = soul() + "\n\n" + PROMPT  # the same turn after turn: Haiku reads it back from its cache (opencode.Cached)
+    fixed = soul() + "\n\n" + prompt()  # the same turn after turn: Haiku reads it back from its cache (opencode.Cached)
     # and her newer look-ups after it, outside the cache, only for words that may ask for one (LOOK_STEPS)
     looks = LOOK_WORDS.search(text) or any(LOOK_STEP.search(plan or "") for _, _, plan in recent)
     goals = GOAL_WORDS.search(text) or BACKGROUND_WORDS.search(text) or \
         any(GOAL_STEP.search(plan or "") for _, _, plan in recent)  # a job (GOAL_STEPS), in the background too
+    again = AGAIN[0] if gate == "cold" else None  # said again after she let it go (said_again)
+    cold = AGAIN_NOTE.format(tries="; ".join(f'"{w[:120]}"' for w in again)) if again else \
+        COLD_NOTE + room_before()
     # after the cached part: routing's blocks (more), then a job's (GOAL_STEPS), then the look-ups (LOOK_STEPS)
     system = opencode.Cached(fixed + more + ("\n\n" + GOAL_STEPS if goals else "")
                              + ("\n\n" + LOOK_STEPS if looks else "")
                              + ("\n\n" + WINDOW_STEPS if WINDOW_WORDS.search(plain(text)) else "")
+                             + ("\n\n" + ORDER_STEPS if ORDER_WORDS.search(text) else "")
+                             + extras.prompt_block(text)  # Atticus's steps, for the words that may ask for one
+                             + dream.prompt_block(text)  # and dream mode's, for words of dreams, scenes and moods
                              + ("\n\n" + known if known else "")
                              + memory_block() + context() + job_news(gate)
-                             + (COLD_NOTE + room_before() if gate == "cold" else GATE_NOTE if gate else "")
+                             + (cold if gate == "cold" else GATE_NOTE if gate else "")
                              + RETRYING[0],
                              len(fixed))
     messages = [{"role": "system", "content": system}]
@@ -6405,7 +6685,7 @@ def _think(text, gate, notify=None, sure=1.0):
     if view:
         LAST_SCREEN[0] = time.time()  # she's seen it: "now the second one" carries on, as after a look
     # said as an overheard line, not to her: asked straight, a model answered "Why are you so late today?" anyway
-    said = (OVERHEARD if gate == "cold" else "") + text + unsure
+    said = (identity.named(AGAIN_HEARD if again else OVERHEARD) if gate == "cold" else "") + text + unsure
     if view:  # how to use it rides with it, not in every request's prompt
         said += (f"\n({view}. To act on one of these, name it as it's shown in a screen task (\"click the video "
                  f"'...'\"), never a new search for what's already there; \"not this\" means look before searching "
@@ -6466,7 +6746,8 @@ def _think(text, gate, notify=None, sure=1.0):
             if live.started:
                 print(f"  timing: first words {int((live.first_text - t) * 1000)}ms, talking after "
                       f"{int((live.started - t) * 1000)}ms")
-        if gate and str(plan.get("to") or "").strip().lower() not in ("", "you", "jev", "me", "assistant"):
+        if gate and str(plan.get("to") or "").strip().lower() not in ("", "you", "me", "assistant", "harry",
+                                                                     identity.name().lower()):
             plan["ignore"] = True  # {"to": "others"}, see COLD_NOTE
         task_steps = [s for s in plan["steps"] if s.get("do") in ("command", "schedule", "task_control")]
         # never over "to others", or for overheard words at all: who they were for is the model's call. Not before its
@@ -6790,7 +7071,7 @@ def ask_job(task, asked):
 
 
 def ask_again(task):
-    """A job Jev stopped in the middle of (tasks.Store.recover), asked about where it was asked from, as its held
+    """A job Harry stopped in the middle of (tasks.Store.recover), asked about where it was asked from, as its held
     steps are: on the phone with buttons keyed by it and the fresh key recover gave it, else out loud once she's free.
     Till 27 October it only waited on the island, and nobody was asked."""
     ask_job(task, {"hold": task["payload"].get("hold") or "", "verb": "start|start it|start it again",
@@ -7234,6 +7515,9 @@ def _task_result_line(task, text, success=True):
     text = " ".join(str(text or "").split())
     if len(text) > 240:
         text = text[-240:]
+    named = extras.result_line(task, text, success)  # a helper's, by its name: "Researcher's done. ..."
+    if named:
+        return named
     what = str(task.get("description") or "").strip().rstrip(".")
     # a job in an app says what it did in a sentence of its own: run live on 27 October she said "Task 5 finished:
     # Open Notepad and type a shopping list with milk, eggs and bread into it.. Your shopping list is in Notepad"
@@ -7965,7 +8249,7 @@ CHATS = {"whatsapp.exe", "whatsapp.root.exe", "telegram.exe", "signal.exe", "sla
 # these: PyCharm's, Visual Studio's, Zed's and Warp's terminals weren't on a list, and "build my project in pycharm"
 # typed npm run build and pressed Enter with no yes. In these, any focus but a named text box or document counts as
 # one too: PyCharm paints its terminal itself and Zed shows only its window, so the focus read is the window, named
-# after the file ("hey-jev – app.py", class SunAwtFrame), and npm run build was still typed into the terminal
+# after the file ("hey-harry – app.py", class SunAwtFrame), and npm run build was still typed into the terminal
 IDES = {"code.exe", "code - insiders.exe", "cursor.exe", "kiro.exe", "windsurf.exe", "vscodium.exe", "trae.exe",
         "pycharm64.exe", "idea64.exe", "webstorm64.exe", "rider64.exe", "studio64.exe", "clion64.exe", "goland64.exe",
         "phpstorm64.exe", "rubymine64.exe", "datagrip64.exe", "devenv.exe", "zed.exe"}
@@ -8441,7 +8725,7 @@ def do_step(step):
         return messaging.save_contact(step.get("alias"), step.get("app"),
                                       step.get("number") or step.get("username") or step.get("id"))
     # research, task_control, command and schedule steps are durable rows by now (prepare_task_steps, which every plan
-    # passes before run_plan): research had a bare thread of its own here too, lost if Jev closed, and task_control a
+    # passes before run_plan): research had a bare thread of its own here too, lost if Harry closed, and task_control a
     # second way to approve that no plan reached
     if do in ("command", "schedule", "research", "task_control"):
         raise RuntimeError("That task wasn't queued")
@@ -8569,6 +8853,8 @@ def step_label(step):
         "todo": "Updating your to-do list", "files": "Finding your files", "open_file": "Opening the file",
         "place": f"Putting {get('app')} " + ({"full": "full screen", "center": "in the middle"}.get(get("where"))
                                              or f"on the {get('where') or 'screen'}"),
+        "dream": {"close": "Leaving dream mode", "next": "Changing the scene"}.get(get("action"),
+                                                                                  "Opening dream mode"),
     }
     label = labels.get(do) or (describe([step]) or str(do or "")).replace("_", " ").capitalize()
     return " ".join(label.split()).rstrip(": ")
@@ -8705,7 +8991,7 @@ def run_plan(plan, notify):
                         return
                 else:
                     # never a shortcut that sends or deletes (agent.RISKY_KEYS) from a plan unless you said the keys
-                    # yourself: "Jev, send it" with a mail still open was planned as Ctrl+Enter, and it went with
+                    # yourself: "Harry, send it" with a mail still open was planned as Ctrl+Enter, and it went with
                     # nothing read back and no yes. A send is a task on the screen, where agent.gate reads it back and
                     # asks. Alt+F4 only closes the window. Not in do_step: a procedure's own keys step comes through
                     # there after agent.gate and your yes
@@ -9033,10 +9319,11 @@ def warm():
 
 
 def all_scripted_lines():
-    """Every fixed reply with {app} and {site} filled in, so they can all be made before they're needed."""
+    """Every fixed reply with {app} and {site} filled in, so they can all be made before they're needed, and the
+    new ways she wrote to say them (phrasebook), which she only uses once they're made."""
     sites = sorted({label for label, _ in SITES.values()})
-    for lines in REPLIES.values():
-        for line in lines:
+    for key, written in REPLIES.items():
+        for line in phrasebook.pool(key, written):
             if "{app}" in line:
                 yield from (line.format(app=a) for a in APP_SAY.values())
             elif "{site}" in line:
@@ -9079,6 +9366,48 @@ def warm_cache():
         _warming.release()
 
 
+def refresh_phrases():
+    """New ways to say her scripted lines (phrasebook), written by her answer model in her own voice when they're due
+    (every phrasebook.EVERY, or after SOUL.md changes), in the background and never while she thinks about a turn of
+    yours; then her voice for them is made (warm_cache), and she starts using them. True if new ones were written,
+    False if none were due, None if writing them failed."""
+    personality = soul()
+    if not phrasebook.due(personality, REPLIES):
+        return False
+    model, reply = settings.get("llm_model"), [None]
+
+    def ask(messages):
+        waited = time.time() + 120
+        while THINKING.is_set() and time.time() < waited:  # your turn first
+            time.sleep(0.5)
+        reply[0], usage, _ = opencode.chat(OC_KEY, messages, max_tokens=8000, timeout=150, model=model)
+        print(f"  (phrasebook: {len(reply[0] or '')} characters back, {usage.get('completion_tokens', '?')} tokens)")
+        return reply[0]
+    try:
+        made = phrasebook.write(ask, personality, REPLIES)
+    except Exception as exc:
+        text = str(reply[0] or "")
+        print(f"  couldn't write new ways to say her lines: {exc!r}"
+              + (f", reply began {text[:160]!r} and ended {text[-160:]!r}" if text else ""))
+        return None
+    print(f"  [phrasebook: {made} new ways to say her lines, making their voice]")
+    warm_cache()
+    return True
+
+
+def keep_phrases_fresh():
+    """Her replies' voice made at start (warm_cache), then new ways to say them written when they're due, looked at
+    every hour, and again in 10 minutes if writing them failed."""
+    warm_cache()
+    while True:
+        try:
+            done = refresh_phrases()
+        except Exception as exc:
+            print(f"  phrasebook failed: {exc!r}")
+            done = None
+        time.sleep(600 if done is None else 3600)
+
+
 # --------------------------------------------------------------------------- One turn
 def emit(notify, state, detail=""):
     if notify:
@@ -9108,7 +9437,7 @@ VOICE_ALL = re.compile(r"(?:listen\s+to|answer|respond\s+to|reply\s+to)\s+(?:eve
 
 def voice_like(heard_text, sentence):
     """True if what was heard is that sentence read out, near enough: half its words or more."""
-    want = set(re.findall(r"[a-z']{3,}", sentence.lower())) - {"hey", "jev"}
+    want = set(re.findall(r"[a-z']{3,}", sentence.lower())) - {"hey", *identity.name().lower().split()}
     got = set(re.findall(r"[a-z']{3,}", str(heard_text).lower()))
     return bool(want) and len(want & got) >= len(want) / 2
 
@@ -9125,17 +9454,47 @@ def snap_verbs(text):
     return VERB_SLOT.sub(lambda m: m[1] + VERB_HEARD[m[2].lower()], text)
 
 
+# Zomato as speech-to-text writes it, after "on" or "from" in words about food or ordering: "He ordered it piranhi on
+# tomato", "Biryani on geometry", "He order Joeani on my geometric account" (27 October, five tries let go). Not "a
+# salad with tomato", "onions and tomatoes" or "work on geometry"
+ZOMATO_HEARD = re.compile(r"\b(on|from|in|through|using|via)( my| the)? (?:tomato|tomatoes|geometry|geometric|somato|"
+                          r"jomato|zometo|zomoto|zamato)\b", re.I)
+FOOD_TALK = re.compile(r"\b(?:order\w*|biryani|biriyani|briyani|food|pizza|burger|deliver\w*|meal|lunch|dinner|"
+                       r"breakfast|restaurant|hungry)\b", re.I)
+
+
 def fix_names(text):
     text = snap_verbs(text)
     for rx, name in HEARD_AS:
         text = rx.sub(lambda m: m[1] + name, text)  # the verb before it kept
+    if FOOD_TALK.search(text):
+        text = ZOMATO_HEARD.sub(lambda m: f"{m[1]}{m[2] or ''} Zomato", text)
     return text
 
 
 SAY_MOST = 250  # letters of an answer said out loud, two or three sentences: 374-letter ones with lists were said whole
 LIST_MARK = re.compile(r"(?m)^[ \t]*(?:\d{1,2}[.)]|[-•])(?:[ \t]+(.*?))?[ \t]*$")  # "1. Pixel 9a", "- Pixel 9a"
-# Her own name, said to you: "I'm right here on Hari's laptop, Jev." (22 October). Never in quotes: "say 'Hey, Jev.'"
-OWN_NAME = re.compile(r",\s*(?:jev|jarvis)(?=\s*[.!?](?![\"'\u201d\u2019])|\s*$)|^(?:jev|jarvis),\s*", re.I)
+# Her own name, said to you: "I'm right here on Hari's laptop, Harry." (22 October). Never in quotes: "say 'Hey, Harry.'"
+def _own_name():
+    return re.compile(rf",\s*(?:{identity.own()})(?=\s*[.!?](?![\"'\u201d\u2019])|\s*$)|^(?:{identity.own()}),\s*",
+                      re.I)
+
+
+OWN_NAME = _own_name()
+
+
+def use_name(old=None, new=None):
+    """Every pattern with her name in it worked out again for the one she has now (identity.rename runs it): she
+    answers to a new name, and no longer to the old one, from the next thing you say."""
+    global STRONG, WEAK, NAMES, GLUED, NAME, OWN_NAME, CARRY_ON, YES_AROUND
+    STRONG, WEAK = identity.wake_words()
+    NAMES = f"{STRONG}|{WEAK}"
+    GLUED, NAME = _name_patterns()
+    OWN_NAME, CARRY_ON, YES_AROUND = _own_name(), _carry_on(), _yes_around()
+    LiveSay.START, LiveSay.START_TO, LiveSay.MINE, LiveSay.MINE_TO = _live_patterns()
+
+
+identity.on_rename(use_name)
 
 
 def tidy(line, cut=True):
@@ -9144,9 +9503,9 @@ def tidy(line, cut=True):
     doing something: a long message read back stopped before who it was to and "Send it?", and a yes still sent it."""
     line = re.sub(r"[*_#`]+", "", str(line or "")).strip()
     if OWN_NAME.search(line):
-        lead = re.match(r"(?:jev|jarvis),", line, re.I)
+        lead = re.match(rf"(?:{identity.own()}),", line, re.I)
         line = OWN_NAME.sub("", line)
-        line = line[:1].upper() + line[1:] if lead else line  # "Jev, it's five" is "It's five"
+        line = line[:1].upper() + line[1:] if lead else line  # "Harry, it's five" is "It's five"
     if REPLY_TO.get() is not None:
         return line
     # "1. Pixel 9a\n2. Galaxy A55": said as sentences, never "one point" and never run together
@@ -9224,6 +9583,7 @@ DOING = (r"check|find|look up|tell me|night ?light|select|click|" + OPEN_GLUED +
          # "take a note", "what's on my screen", "is the internet down" and "what's the date today" were let go, and
          # then "what's today's date" too
          r"music|song|video|note|screen|page|window|internet|emoji|watch|bookmark|today'?s date|"
+         r"order|ordered|buy|zomato|swiggy|"  # "order biryani on Zomato", let go five times on 27 October
          r"what(?:'?s| is) (?:the |today'?s )?(?:date|day)|"
          r"what (?:date|day) is|(?:date|day) is it|my (?:calendar|meetings?)|on (?:my|the) calendar|ip address")
 ASKS_ABOUT = re.compile(r"\b(?:what|what's|whats|who|who's|how|where|when|why|which)\b")
@@ -9271,7 +9631,11 @@ SHORT_ECHO, SHORT_SURE = 15.0, 0.9
 STOPS = ("stop", "stop it", "stop talking", "ok stop", "okay stop", "wait", "hold on", "enough", "be quiet", "shut up",
          "never mind", "nevermind")
 # how a request said over her, or just after, starts when it's to her: not "and", "so", "then", a TV's lines start so
-CARRY_ON = re.compile(r"(?:ok|okay|yeah|yes|no|now|also|actually|instead|what about|how about|hey|jev) \w")
+def _carry_on():
+    return re.compile(rf"(?:ok|okay|yeah|yes|no|now|also|actually|instead|what about|how about|hey|{identity.own()}) \w")
+
+
+CARRY_ON = _carry_on()
 # and a question back, as her answer ends or after it: "Why" and "Why you have my vision model right" were let go as
 # room talk on 25 October after "No, I can't see you", that window being for CARRY_ON alone, and the decider sure of
 # both. Haiku decides who it's to, her answer before it (GATE_NOTE). Not over her, where a TV's question is likelier
@@ -9283,6 +9647,59 @@ ASKS_BACK = re.compile(r"(?:why|how come|really|seriously|what|how|are you sure|
 def asks_back(text):
     """True if words said in the window after her answer are a question back to it (ASKS_BACK)."""
     return bool(ASKS_BACK.match(words_of(text)) or str(text).rstrip().endswith("?"))
+
+
+# Said again: what you say again when she didn't answer is to her, the way you'd repeat yourself to someone who
+# didn't hear. On 27 October "Hey, order biryani on Zomato" was let go five times in two minutes, heard as "He ordered
+# it piranhi on tomato", "They order BI on tomato", "He order Joeani on my geometric account", "Biryani on geometry"
+# and "Can you order me biryani and tomato", and the day before "We open paint and dry a Spider Man" twice: each
+# try was then shown to Haiku as said "not to you" (room_before), so the next was let go for it too. Now a phrase
+# like one she let go in the last AGAIN_WITHIN seconds goes to the model as said to her, with the earlier tries to
+# make it out from (AGAIN_NOTE), and she answers it, if only to ask (handle). One of them must ask her to do something
+# (asks_something), so a song's chorus or a commentator's "What a shot" twice isn't taken for you
+AGAIN_WITHIN = 45.0
+MISSED = collections.deque(maxlen=6)  # (when, words) of what she let go lately, cleared once she answers anything
+AGAIN = [None]  # this turn's earlier tries, oldest first, while act_on runs it (think, handle)
+AGAIN_STOP = set("the and but for with from your our you she they its are was were can could will would should "
+                 "please hey hello okay just now this that there here what why how who when where which yes yeah "
+                 "not don't can't it's that's".split())
+AGAIN_ALIKE = 0.5  # how alike, letter by letter, two tries with one word in common must be (difflib)
+
+
+def _stems(text):
+    """{stem: word} for the words of text that carry its meaning, each stem without -s, -ed or -ing: ordered and order
+    the same."""
+    return {re.sub(r"(?<=\w\w\w)(?:ing|ed|es|s)$", "", w): w for w in words_of(text).split()
+            if len(w) > 2 and w not in AGAIN_STOP}
+
+
+def said_again(text, now=None):
+    """The phrases she let go in the last AGAIN_WITHIN seconds (MISSED) that text says again, oldest first, else []:
+    two meaning words in common, or one and alike letter by letter, and what they have in common asks her to do
+    something (asks_something). So "order" and "Zomato" said twice is to her, where "pass the salt" said again to
+    someone isn't, nor a commentator's "What a shot" twice (a question word alone doesn't ask). Not for a word or two
+    of talk ("Hey hello")."""
+    now = time.time() if now is None else now
+    said = words_of(fix_names(str(text)))
+    if len(said.split()) < 2 or side_talk(said):
+        return []
+    mine, out = _stems(said), []
+    for when, words in MISSED:
+        if now - when > AGAIN_WITHIN:
+            continue
+        before = words_of(fix_names(str(words)))
+        theirs = _stems(before)
+        shared = sorted(mine.keys() & theirs.keys())
+        alike = len(shared) >= 2 or (shared and difflib.SequenceMatcher(None, before, said).ratio() >= AGAIN_ALIKE)
+        if alike and asks_something(" ".join([mine[s] for s in shared] + [theirs[s] for s in shared])):
+            out.append(str(words))
+    return out
+
+
+def missed(words):
+    """Something she let go, for said_again."""
+    if str(words or "").strip(" .,!?"):
+        MISSED.append((time.time(), str(words)))
 # and how the rest of what you'd just asked starts, said while she works on it, before a word of her answer
 # (act_on): "And Windows update" after "open settings", "Then shut down the laptop", "On Amazon Music". Only then:
 # after her answer a TV's "and then we went to the market" isn't for her
@@ -9451,7 +9868,7 @@ def tts_echo(a, b, sure=ECHO_SURE):
 
 
 def stop_said(t):
-    """"Stop", "Jev, stop": the whole of it a stop phrase (Hermes' is_voice_stop_phrase)."""
+    """"Stop", "Harry, stop": the whole of it a stop phrase (Hermes' is_voice_stop_phrase)."""
     found = find_name(t)
     return voice_bits.is_voice_stop_phrase(words_of(found[1] if found else t), STOPS)
 
@@ -9529,14 +9946,15 @@ NOT_FOR_ME = re.compile(r"\b(?:(?:for|to|like) someone else\b(?!')|to others|(?:
                         r"(?:someone|a person|people|each other))\b", re.I)
 
 
-def let_go(plan):
+def let_go(plan, again=False):
     """Why to stay quiet about a plan for words said without her name, or None to go ahead. A plan she'd ask about
-    first counts by the steps it would take."""
+    first counts by the steps it would take. again: said again after she let it go (said_again), so her asking what
+    they meant is said too."""
     steps = plan.get("steps") or (plan.get("confirm") or {}).get("steps") or []
     said = str(plan.get("say") or "").replace("\u2019", "'")
-    if not steps and not tidy(said):
+    if not steps and not tidy(said) and not again:  # said again, she says she didn't catch it (handle)
         return "and nothing to do"
-    if not steps and REPEAT_ASK.search(said):
+    if not steps and REPEAT_ASK.search(said) and not again:
         return "and it wasn't clear"
     # but not "I thought you were talking to someone else, so I stayed quiet. What's up?"
     if not steps and NOT_FOR_ME.search(said) and not re.search(r"\?|\byou were\b", said):
@@ -9639,7 +10057,11 @@ SAYS_YES = (r"yes|yeah|yep|yup|ya|yah|sure|ok|okay|alright|all right|fine|correc
             r"(?:if )?you (?:can|may|want|should)|that's (?:right|fine)")
 # said around a yes, never one alone: "Um, yes" and "Go ahead and send it" were yeses once plain() took the "um" or
 # "go ahead and" off, and "Thank you." to "Should I close Google Chrome?" may be said to someone else
-YES_AROUND = rf"u+m+|u+h+|h+m+|e+r+|a+h+|o+h+|so|and|then|just|kindly|thanks|thank you|now|{NAMES}"
+def _yes_around():
+    return rf"u+m+|u+h+|h+m+|e+r+|a+h+|o+h+|so|and|then|just|kindly|thanks|thank you|now|{NAMES}"
+
+
+YES_AROUND = _yes_around()
 CLEAR_YES = (r"yes|yeah|yep|yup|sure|ok|okay|alright|all right|haan|avunu|of course|absolutely|definitely|do it|"
              r"do that|please do|go ahead|go on|go for it|correct|that's right|you can|why not")
 YES_VERBS = {"message_send": "send", "install_run": "install|update|upgrade|download",  # the question's own verb
@@ -9801,6 +10223,10 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
     print(f"\n> heard: {text!r}" + (f"  (stt {stt_ms}ms, {sure:.0%} sure)" if stt_ms is not None else ""))
     text, words = fix_names(text), fix_names(text if words is None else words)
     text, words = fix_vocab(text), fix_vocab(words)  # their dictionary, as for dictation
+    if gate == "cold" and extras.hush() and not extras.MEETING_STOP.fullmatch(plain(str(words or text))):
+        print("  (taking meeting notes: only her name counts, staying quiet)")  # the meeting's talk is no request
+        emit(notify, "Ready", None)
+        return False
     MEMORY.reset_consolidation_failures()
     TURN_SKILLS.clear()  # a new turn: the skills it uses from here
     TURN_WRITTEN.clear()
@@ -9871,7 +10297,7 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
         found = next((s for s in plan.get("steps") or [] if s.get("do") == "contact_found"), None)
         if found:
             plan = use_found(found)  # saved, then the message staged and asked about: a yes to that sends it
-    # any no in the first few seconds; after that a message stays waiting, and "Jev, stop the music" or "cancel the
+    # any no in the first few seconds; after that a message stays waiting, and "Harry, stop the music" or "cancel the
     # timer" is that, where it was taken as a no to the message and the music played on
     elif pending and NO.fullmatch(answer) and (time.time() < PENDING["soon"] or typed or not COMMAND.search(answer)):
         found = next((s for s in pending.get("steps") or [] if s.get("do") == "contact_found"), None)
@@ -9886,15 +10312,16 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
                     stop_task(s.get("id") or 0)
             no = agent.drop()  # a step she held: what she says about leaving it, "Okay, it's left in your drafts."
             plan = make_plan(say=drop_staged() or no or say_line("confirm_no"))
-    elif gate and sure < UNSURE and not answering:  # mumbling, another language or talk across the room, no name
-        print(f"  (no name and only {sure:.0%} sure of the words, staying quiet)")
-        emit(notify, "Ready", None)
+    elif gate and sure < UNSURE and not answering and not AGAIN[0]:  # mumbling, another language or talk across the
+        print(f"  (no name and only {sure:.0%} sure of the words, staying quiet)")  # room, no name; said again it's
+        emit(notify, "Ready", None)  # you, unheard (said_again)
         return False
     elif gate == "cold" and TO_SOMEONE.fullmatch(plain(words)):  # "Where are you?": to a person, often on the phone
         print("  (no name and asked of a person, staying quiet)")
         emit(notify, "Ready", None)
         return False
-    elif gate and side_talk(words) and not answering:  # "Mm-hmm", "Hello?", "Okay": you to someone, or on the phone
+    elif gate and side_talk(words) and not answering and not HAILED.fullmatch(str(words)):  # "Mm-hmm", "Hello?",
+        # "Okay": you to someone, or on the phone. "Hey hello" is to her, and greeted back (HAILED)
         if pending or not (YES.fullmatch(plain(words)) and asked_last()):  # "Ha." to "Send it?" is no yes
             print("  (no name and just talk, staying quiet)")
             emit(notify, "Ready", None)
@@ -9949,7 +10376,7 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
                 FOR_HER.clear()  # without her name, only once the model's reply shows it was for her (LiveSay)
             if STREAM_SAY and origin() == "voice":  # "One moment" if slow
                 threading.Thread(target=fill_silence, args=(words or text, notify), daemon=True).start()
-            try:  # without her name: with "Hey Jeff" in it, the model took you for Jeff
+            try:  # without her name: with it misheard in them, as a person's, the model took you for that person
                 plan = think(words or text, gate, notify, sure)
                 planned = plan is not None
             except Exception as exc:  # she says she's slow, or that the model isn't answering
@@ -9970,7 +10397,11 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
                 TURN_SPOKE.set()  # an answer's here, or she's given up: no filler now
                 FOR_HER.set()
             if plan is None:
-                if FILLED[0] and gate:  # she'd said "One moment" to it: never silence after that
+                if AGAIN[0] and gate == "cold" and LET_GO[0] != "not asked for":  # said again and still not made
+                    line = say_line("not_caught")  # out: never silence to that
+                    print(f"  (said again but not made out, saying so: {line!r})")
+                    say(line, notify)
+                elif FILLED[0] and gate:  # she'd said "One moment" to it: never silence after that
                     line = after_filler(LET_GO[0] or "and it wasn't for her")
                     print(f"  (let go after her filler, saying so: {line!r})")
                     say(line, notify)
@@ -9981,7 +10412,7 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
             plan = checked_in_app(plan, words or text)  # keys the model chose in an app: done and checked on screen
         plan = tab_not_browser(plan, words or text)
         plan = backgrounded(plan, words or text)  # "... in the background": a job of its own, not this turn's
-        why = let_go(plan) if gate else None
+        why = let_go(plan, again=bool(AGAIN[0]) and gate == "cold") if gate else None
         if why and FILLED[0]:  # she'd said "One moment" to it: never silence after that
             line = after_filler(why, plan)
             print(f"  (no name {why}, after her filler, saying so: {line!r})" if line else
@@ -9998,6 +10429,8 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
         if power and not plan.get("confirm"):  # shutting down or restarting always gets a yes or no first
             plan = {"steps": [], "say": confirm_question(power), "confirm": plan}
     if not plan.get("confirm"):  # else a yes or no decides, once she's asked (below)
+        plan = extras.stage(plan, words or text)  # a calendar change the model planned: read back and asked first
+    if not plan.get("confirm"):
         plan = prepare_task_steps(plan)  # command/schedule steps become durable rows before anything runs
         first = next((s for s in plan.get("steps") or [] if s.get("do") in ("message", "share")), None)
         if first and first["do"] == "share":  # the files you gave her, never a path the model named
@@ -10198,11 +10631,11 @@ def say(line, notify):
 
 
 # --------------------------------------------------------------------------- At the end of each day
-SUMMARY = ("Below is what the user said to Jev, their voice assistant, on {day}, and what she did. Reply with one JSON "
+SUMMARY = ("Below is what the user said to Harry, their voice assistant, on {day}, and what she did. Reply with one JSON "
            "object and nothing else: {{\"summary\": \"3 to 6 short lines: what they did and asked for\", \"facts\": "
            "[up to 3 short facts about the user worth remembering for good, like their sites, people, apps, or how "
            "they like things done]}}. Facts must stay true later: no tasks, nothing about today, nothing already in "
-           "what Jev knows about them:\n{profile}")
+           "what Harry knows about them:\n{profile}")
 
 
 def summarize_days():
@@ -10232,11 +10665,12 @@ def sum_up_day(day):
     heard without her name isn't read, by her history's gate: room talk and the TV aren't facts about you. False if
     the model didn't answer."""
     turns = history.search(day=day, limit=300, cold=False)
-    said = "\n".join(f"- {t['when']}  You: {t['you'][:300]}  Jev: {(t['jev'] or '')[:200]}"
+    said = "\n".join(f"- {t['when']}  You: {t['you'][:300]}  {identity.name()}: {(t['harry'] or '')[:200]}"
                      + (f"  (did: {t['did'][:120]})" if t["did"] else "") for t in turns)
     try:
         MEMORY.load_from_disk()
-        ask = SUMMARY.format(day=day, profile=MEMORY.format_for_system_prompt("user") or "(nothing yet)")
+        ask = identity.named(SUMMARY).format(day=day,
+                                             profile=MEMORY.format_for_system_prompt("user") or "(nothing yet)")
         raw, _, _ = opencode.chat(OC_KEY, [{"role": "system", "content": ask},
                                            {"role": "user", "content": said[-15000:] or "(nothing)"}],
                                   max_tokens=1500, timeout=60, model=BACKUP_MODEL, reasoning_effort="low")
@@ -10285,9 +10719,9 @@ def tidy_skills():
         print(f"  couldn't tidy her skills: {exc!r}")
 
 
-# Hermes' curator prompt, then how Jev's pass differs: Hermes forks an agent with skill tools for many changes; this
+# Hermes' curator prompt, then how Harry's pass differs: Hermes forks an agent with skill tools for many changes; this
 # is one call to BACKUP_MODEL a week, which may make one change, as OpenClaw's Workshop makes one per review
-CURATE = ("\n\nHey Jev's pass is smaller than the above, and these rules win over it. You have no tools: every "
+CURATE = ("\n\nHey Harry's pass is smaller than the above, and these rules win over it. You have no tools: every "
           "skill you may change is written out below as it is. Make at most ONE change in this pass, the one that "
           "helps the library most, and reply with one JSON object and nothing else: {\"change\": {\"action\": "
           "\"patch\", \"name\": \"...\", \"old\": \"text copied exactly from that skill\", \"new\": \"...\"}, "
@@ -10316,7 +10750,7 @@ def curate_candidates():
 
 
 def curate_skills():
-    """Hermes' curator with a model, run by Jev (not curator.run_curator_review, which needs Hermes' agent loop):
+    """Hermes' curator with a model, run by Harry (not curator.run_curator_review, which needs Hermes' agent loop):
     once a week from tidy_skills, so only after its two quiet hours, one call to BACKUP_MODEL with Hermes'
     CURATOR_REVIEW_PROMPT and candidate list (curator._render_candidate_list, cut to curate_candidates) and her
     outcome counts. It may make one change, a patch or an archive into another of hers, through learn_skill as the
@@ -10531,7 +10965,7 @@ class Recorder:
         if self._level[1] >= 1600:  # 10 a second, for the popup's bars
             MIC_LEVELS.append((self._level[0] / self._level[1]) ** 0.5)
             self._level[:] = [0.0, 0]
-        if self.on:  # right Alt is held, so this is a command, not something to listen for "Hey Jev" in
+        if self.on:  # right Alt is held, so this is a command, not something to listen for "Hey Harry" in
             self.frames.append(indata.copy())
         elif (self.wake or self.dictating) and (not self._paused or self._soft):
             self.blocks.put((self.gen, block))
@@ -10559,7 +10993,7 @@ def ready_text(wake):
         return f"On a break till {back}. Hold right Alt to talk, or say \u201cI\u2019m back\u201d with it"
     if wake and settings.get("no_name"):
         return "Just say what you want, or hold right Alt"
-    return "Say \u201cHey Jev\u201d and what you want, or hold right Alt" if wake else "Hold right Alt and talk"
+    return f"Say \u201c{identity.hey()}\u201d and what you want, or hold right Alt" if wake else "Hold right Alt and talk"
 
 
 def in_use():
@@ -10570,6 +11004,7 @@ def in_use():
 
 def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     NOTIFY[0] = notify
+    identity.moved_on()  # the first start as Harry: her notes say her name where they said Jev
     engine = settings.get("stt_engine")
     print(f"loading speech models ({engine})...")
     starting = lambda detail: emit(notify, "Starting", detail)
@@ -10589,6 +11024,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     print(f"[ears: {ears.engine}{', words as you talk' if ears.live else ''}, smart turn "
           f"{'on' if turn else 'off'}, {in_use()}]")
     transcribe = ears.transcribe  # audio -> (text, ms)
+    extras.start(transcribe)  # meeting notes write with these ears; calendar reminders and the jobs' live view start
     speaker = [None]  # speech.Speaker, whose voice a turn is: loaded when voice ID is on, or to learn your voice
     profile = voiceid.Profile()  # your voice, see voiceid.py
     enrolling = [None]  # {"i": sentence, "prints": [...]} while you read her the sentences for your voice
@@ -10625,7 +11061,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     busy = threading.Lock()
     next_window = [0.0]  # follow-up seconds to open once she's done talking, set by each turn
     shown = [None]  # what the window last said about listening
-    dictation = Dictation(NAMES)  # written by the same local speech model, the audio stays on this PC
+    dictation = Dictation(lambda: NAMES)  # written by the same local speech model, the audio stays on this PC
     win.warm_start_apps()  # read the Start menu now, so the first "open" is quick
     late_timers = []  # timers that went off mid-dictation, announced once it stops
 
@@ -10679,6 +11115,9 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                     next_window[0] = window_ask[0] = FOLLOW_UP if follow else 0.0
                 if gate and result is False:  # someone else's conversation: the model sees it with what comes next
                     ROOM.append((time.time(), str(words)))
+                    missed(words)  # or you, unheard: said again, it's to her (said_again)
+                elif result:
+                    MISSED.clear()  # answered: what came before isn't tried again
                 HER.end()
                 show_sentence()  # "learn my voice": the first sentence to read, once she's said how it goes
         return result
@@ -10815,7 +11254,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             text = speech.heard(f"{first} {text}".strip(), min(getattr(first, "sure", 1.0), getattr(text, "sure", 1.0)))
             # and its voice, checked as for any turn: one print of both parts' audio (kept whole if it's held again).
             # Joined as new words it had none, and the parts' own prints averaged were each from under a second, which
-            # can't tell voices apart: "Hey Jev, open [pause] YouTube" in your voice could be let go
+            # can't tell voices apart: "Hey Harry, open [pause] YouTube" in your voice could be let go
             try:
                 audio = np.concatenate([held_audio[0], audio])
                 text.voice, text.spoke = voice_print(audio)
@@ -10861,7 +11300,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 if her["start"] is None and her["asked"] is None:
                     her["asked"] = pos
             her["strict"] = m.strict
-            if listener.state() != "armed":  # "Hey Jev" said over her keeps the request it's waiting for
+            if listener.state() != "armed":  # "Hey Harry" said over her keeps the request it's waiting for
                 listener.open(m.secs)
             window_from[0], window_strict[0] = pos, m.strict
             # what was said over her, now she's done: all placed against this turn before any runs one of its own
@@ -10926,7 +11365,13 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 return
         if ears.live and kind in ("other", "follow_up") and GREETING_ONLY.fullmatch(text) and zone != "over" \
                 and not (settings.get("call_aware") and win.call_apps()):
-            what = "maybe"  # "Hello Jev" with her name lost, see GREETING_ONLY
+            what = "maybe"  # "Hello Harry" with her name lost, see GREETING_ONLY
+        again = []  # what she let go a moment ago that this says again: then it's to her (said_again)
+        if kind == "other" and (what is None or (isinstance(what, tuple) and what[2] == "cold")) and zone != "over" \
+                and settings.get("no_name") and not (settings.get("call_aware") and win.call_apps()):
+            again = said_again(text)
+            if again and what is None:
+                what = (text, text, "cold")
         # only your voice: too short to check for a bare name, the command after it is checked (voiceid.py)
         mine = what in ("wake", "maybe") or owner_ok(text, kind)
         if what is None:
@@ -10935,6 +11380,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 print(f"\n  (not for me: {text[:80]!r})")
             if open_mic and mine:  # someone else's words never reach the model, not even as what came before
                 ROOM.append((time.time(), str(text)))
+                missed(text)  # unless they come again (said_again)
             if was_named:  # the popup came up as you talked, but it wasn't for her after all
                 emit(notify, "Ready", None)
             voice_kept(False)
@@ -10980,13 +11426,16 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             # no kind at all
             asked_as = "follow_up" if what[2] is True else "cold"
             # and only ever lets go words said cold: on by default it let "And tomorrow?", "Say that again" and "aur
-            # kal?" go unheard right after her answer, and an unsure "Jev" too, the turns most likely to be hers
-            # nor a greeting with a request after it ("Hey Jeff, open settings"): her name misheard, see CALLED
-            if judged and judged[1] == "no" and decider.mode() == "on" and what[2] == "cold" and \
-                    not asks_something(what[1], what[2]) and not CALLED.match(str(what[1])):
+            # kal?" go unheard right after her answer, and an unsure "Harry" too, the turns most likely to be hers
+            # nor a greeting with a request after it ("Hey Hurry, open settings"): her name misheard, see CALLED
+            # nor what's said again after she let it go (said_again), nor "Hey hello" (HAILED)
+            if judged and judged[1] == "no" and decider.mode() == "on" and what[2] == "cold" and not again and \
+                    not asks_something(what[1], what[2]) and not CALLED.match(str(what[1])) and \
+                    not HAILED.fullmatch(str(what[1])):
                 print(f"  (the decider is sure that wasn't for her, {judged[0]:.2f}: staying quiet)")
                 decider.log({"when": round(time.time()), "said": str(what[1]), "kind": asked_as,
                              "for_me": round(judged[0], 3), "verdict": "no", "mode": "on", "result": "let go"})
+                missed(what[1])
                 if was_named:
                     emit(notify, "Ready", None)
                 voice_kept(False)
@@ -10994,7 +11443,16 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             before = rec.blocks.qsize()
             if rec.keeps:  # a turn of yours: what's said from here till her first word is said while she thinks
                 her.update(asked=getattr(listener, "pos", 0), start=None, spoke=None, done=None)
-            result = run_turn(what[0], what[1], ms, gate=what[2], carried=strict and what[2] is True)
+            if again:
+                print(f"  (said again, so it's to her: {' / '.join(w[:60] for w in again)!r})")
+            AGAIN[0] = again or None
+            try:
+                result = run_turn(what[0], what[1], ms, gate=what[2], carried=strict and what[2] is True)
+            finally:
+                AGAIN[0] = None
+            if again and result:  # they were tries at this, not room talk for the next turn to be shown
+                for entry in [e for e in ROOM if e[1] in again]:
+                    ROOM.remove(entry)
             voice_kept(None if failed[0] else result)  # one that failed came back False, but wasn't let go
             if judged:  # what it said and what happened, to train it again later
                 decider.log({"when": round(time.time()), "said": str(what[1]), "kind": asked_as,
@@ -11008,7 +11466,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     def check_partial(audio, session):
         """For Parakeet and Whisper, which only write once you stop: her name at the start of speech that's still
         going on, so the popup comes up before you've finished. session: the turn's, which is then let run past
-        MAX_TURN like Nemotron's with her name in the words: "Hey Jev, open Notepad and write..." was cut at 15 s."""
+        MAX_TURN like Nemotron's with her name in the words: "Hey Harry, open Notepad and write..." was cut at 15 s."""
         try:
             text, _ = transcribe(audio)
         except Exception:
@@ -11022,7 +11480,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
 
     def on_words(words, kind):
         """The words so far while someone talks, from Nemotron: her name brings the popup up before you've
-        finished, and from then on, as after a bare "Hey Jev" or in the follow-up window, it shows what she's
+        finished, and from then on, as after a bare "Hey Harry" or in the follow-up window, it shows what she's
         hearing. Talk in the room that isn't for her shows nothing."""
         if busy.locked() or held[0] or not words or enrolling[0] is not None:  # the sentence stays up as you read
             return
@@ -11068,7 +11526,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     print(f"[waits before answering: {settings.get('turn_wait')}, at least {listener.QUIET:.1f} s of quiet]")
 
     def show_listening():
-        """Listening after a bare "Hey Jev" or "Hello", Still listening during a follow-up window, Ready after."""
+        """Listening after a bare "Hey Harry" or "Hello", Still listening during a follow-up window, Ready after."""
         now = listener.state()
         if now == "window" and window_strict[0] and not maybe[0]:
             now = None  # after a chat answer or a heads-up: only "okay, now ..." counts, so nothing shows for it
@@ -11143,7 +11601,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 if now_calls != calls[0]:
                     calls[0] = now_calls
                     print(f"\n[call: {', '.join(now_calls) if now_calls else 'ended'}; "
-                          f"{'say Jev or Jarvis' if now_calls else 'unnamed requests count again'}]")
+                          f"{f'say {identity.name()} or Jarvis' if now_calls else 'unnamed requests count again'}]")
                 if g != gen or rec.dictating != dictating[0]:
                     dictating[0] = rec.dictating  # Listener.feed starts over at a dictation's start or end
                     forget_her()  # a real break: the listener starts over, and where her turn was with it
@@ -11202,7 +11660,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                              if kept else " to now") + f", {time.strftime('%H:%M:%S')})")
                     continue
                 listener.feed(block, dictating=rec.dictating)
-                # the rest never came. Not while it's still coming: a pause in it let "Hey Jev, search" go alone, and
+                # the rest never came. Not while it's still coming: a pause in it let "Hey Harry, search" go alone, and
                 # her reply to that threw "for flights to Delhi next Friday" away
                 if held[0] and time.time() > held[0][3] and not listener.talking and listener.session is None:
                     text, kind, ms, _ = held[0]
@@ -11373,7 +11831,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             win.chime("timer")
             chimed = True
         if wait and not rec.dictating:
-            wait_her_turn()  # first, as what you were saying may start a dictation: "Hey Jev, transcribe"
+            wait_her_turn()  # first, as what you were saying may start a dictation: "Hey Harry, transcribe"
         if rec.dictating:  # don't pause the mic or talk over a dictation, just chime and tell her afterwards
             late_timers.append(t)
             emit(notify, "Dictating", f"\u23f0 {t['label'] or 'Timer finished'}, I'll tell you when you stop")
@@ -11401,7 +11859,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
 
     def tell(line, said_for, kept=None):
         """Say something she started herself, a welcome or a heads-up, once she's not in the middle of a turn and
-        you're not mid-sentence. You can answer without "Hey Jev", the way you carry on after any reply: "read it",
+        you're not mid-sentence. You can answer without "Hey Harry", the way you carry on after any reply: "read it",
         "thanks". False if it wasn't said, as what you were saying started a dictation, which it never goes over.
         kept: what to keep of it in history, when that's less than she said."""
         wait_her_turn()
@@ -11451,6 +11909,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 break
             time.sleep(5)
         line = welcome_line(back, since)
+        line = fresh_welcome(back, line) or line  # in her own words, never quite the same twice
         try:
             fetch_tts(line)  # made in Fish's steady mode first, a few seconds, then it plays straight off
         except Exception as exc:
@@ -11472,7 +11931,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
 
     def keep_warm():
         """With little memory free (2.6 of 16 GB here), Windows moves a model nobody has used for a while out of
-        memory, and the next "Hey Jev" then waits for it to come back: the first phrases of a test took 3 to 9 s
+        memory, and the next "Hey Harry" then waits for it to come back: the first phrases of a test took 3 to 9 s
         that way. A moment of quiet through speech-to-text and Smart Turn every 45 s keeps them in."""
         while True:
             time.sleep(45)
@@ -11628,7 +12087,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
         """Approve or Deny on the island (island_answer): a turn of hers like any other, under busy, so it never
         overlaps one you're having with her. Ended in the audio as run_turn ends one: she says "Sent." with the mic
         listening, so her line's start is marked, and unmarked the always-listening loop parked all you said after,
-        "Hey Jev" too, as said over her until a timer or a heads-up marked one (27 October, review). "okay, and ..."
+        "Hey Harry" too, as said over her until a timer or a heads-up marked one (27 October, review). "okay, and ..."
         right after carries on, strictly, as after a timer (CARRY): a tap isn't a question back."""
         with busy:
             HER.begin()
@@ -11702,7 +12161,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
 
     start_timer_loop(timer_done)
     threading.Thread(target=task_worker, daemon=True).start()
-    threading.Thread(target=warm_cache, daemon=True).start()
+    threading.Thread(target=keep_phrases_fresh, daemon=True).start()  # warm_cache, then her new ways to say things
     threading.Thread(target=summarize_days, daemon=True).start()
     threading.Thread(target=look_around, daemon=True).start()
     threading.Thread(target=heads_ups, daemon=True).start()
@@ -11800,7 +12259,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--text", help="skip the mic, run one turn on this transcript")
     ap.add_argument("--ui", action="store_true", help="show the status window")
-    ap.add_argument("--wake", action="store_true", help="always listening, say \"Hey Jev\" instead of holding right Alt")
+    ap.add_argument("--wake", action="store_true", help="always listening, say \"Hey Harry\" instead of holding right Alt")
     args = ap.parse_args()
     if args.ui:
         from assistant_ui import run_app

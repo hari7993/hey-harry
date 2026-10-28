@@ -1,15 +1,15 @@
-"""Quick typed decisions in milliseconds, the way Jev and Laya do them, without a model writing text.
+"""Quick typed decisions in milliseconds, the way Harry and Laya do them, without a model writing text.
 
 A small sentence encoder (all-MiniLM-L6-v2, int8 ONNX, 23 MB, Apache 2.0, run by the onnxruntime already here) turns
 what was said into 384 numbers, and small heads trained on her own past turns (train_decider.py) give a chance for
 each question. About 15 ms on this PC. Laya and TypeSafe's Jev were looked at first: Laya needs PyTorch and a
-0.6 to 0.8 GB model, takes 0.3 to 0.75 s a question on this CPU, and is near chance without training; the hosted Jev
+0.6 to 0.8 GB model, takes 0.3 to 0.75 s a question on this CPU, and is near chance without training; the hosted Harry
 is paid (OpenCode has a free one for a limited time). This answers in the same shape as their /v1/systemone, so
 either can be swapped in later without changing callers.
 
 Settings "decider":
     "off"     not asked
-    "shadow"  asked and logged (%LOCALAPPDATA%\\Hey Jev\\decider\\shadow.jsonl), nothing changes
+    "shadow"  asked and logged (%LOCALAPPDATA%\\Hey Harry\\decider\\shadow.jsonl), nothing changes
     "on"      a turn it's sure isn't for her is let go without a model call (the default), unless its words ask
               for something, or about what she knows, or name an app or a site (siri.asks_something); right after
               her answer, unless they're a question. It never drops a question she'd ask
@@ -26,7 +26,7 @@ import numpy as np
 
 import settings
 import speech
-from winplatform import own_data
+from winplatform import home
 
 ENCODER = "minilm-l6"  # <models>\minilm-l6: model_quint8_avx2.onnx and tokenizer.json from huggingface.co/sentence-transformers/all-MiniLM-L6-v2
 DIM = 384
@@ -34,7 +34,7 @@ KINDS = ("follow_up", "other", "cold")  # how a turn reached her, as context for
 
 
 def folder():
-    return own_data(os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Hey Jev", "decider"))
+    return os.path.join(home("LOCALAPPDATA"), "decider")
 
 
 def mode():
@@ -131,7 +131,7 @@ class Decider:
         return v
 
     def decide(self, state, questions):
-        """Jev's /v1/systemone shape: state {"said": ..., "kind": ...}, questions {"for_me": {"type": "noul"}}.
+        """Harry's /v1/systemone shape: state {"said": ..., "kind": ...}, questions {"for_me": {"type": "noul"}}.
         Returns {"answers": {"for_me": {"type": "noul", "noul": 0.97}}, "ms": ...}; questions it has no head for
         are left out."""
         t = time.time()

@@ -120,7 +120,7 @@ class Watching(unittest.TestCase):
                 self.assertFalse(self.w.due(self.t))  # and never glanced at
 
     def test_her_own_windows_are_left_alone(self):
-        self.screen.front = (5, "pythonw.exe", "Hey Jev")
+        self.screen.front = (5, "pythonw.exe", "Hey Harry")
         self.look()
         self.assertIsNone(self.w.now)
 

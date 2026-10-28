@@ -2,7 +2,7 @@
 # https://github.com/NousResearch/hermes-agent, MIT License, see LICENSE in this folder.
 # Copied by sync_hermes.py; only the imports are changed, see UPSTREAM.json. Don't edit by hand.
 
-"""Pieces of Hermes Agent's messaging gateway Hey Jev uses for Telegram (telegram_bot.py): its pairing rules and
+"""Pieces of Hermes Agent's messaging gateway Hey Harry uses for Telegram (telegram_bot.py): its pairing rules and
 code hashing (gateway/pairing.py), and its long-message splitting that counts what Telegram counts and keeps code
 blocks whole (gateway/platforms/base.py, helpers.py)."""
 

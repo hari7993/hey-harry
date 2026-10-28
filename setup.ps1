@@ -1,4 +1,4 @@
-# Builds Hey Jev for Windows: a venv with the packages, plus "Hey Jev" shortcuts in the Start menu and on the Desktop.
+# Builds Hey Harry for Windows: a venv with the packages, plus "Hey Harry" shortcuts in the Start menu and on the Desktop.
 # The shortcuts run the code straight from this folder (like py2app -A on the Mac). Run it again if you move the folder.
 #   powershell -ExecutionPolicy Bypass -File setup.ps1
 $ErrorActionPreference = "Stop"
@@ -33,15 +33,17 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Installing packages failed, see above."; 
 $shell = New-Object -ComObject WScript.Shell
 $targets = @([Environment]::GetFolderPath("Programs"), [Environment]::GetFolderPath("Desktop"))
 foreach ($dir in $targets) {
-    $link = $shell.CreateShortcut((Join-Path $dir "Hey Jev.lnk"))
+    $link = $shell.CreateShortcut((Join-Path $dir "Hey Harry.lnk"))
     $link.TargetPath = Join-Path $here ".venv\Scripts\pythonw.exe"
     $link.Arguments = '"' + (Join-Path $here "app.py") + '"'
     $link.WorkingDirectory = $here
     $link.IconLocation = (Join-Path $here "assets\icon.ico") + ",0"
-    $link.Description = "Hey Jev voice assistant"
+    $link.Description = "Hey Harry voice assistant"
     $link.Save()
-    Write-Host "Shortcut: $(Join-Path $dir 'Hey Jev.lnk')"
+    Write-Host "Shortcut: $(Join-Path $dir 'Hey Harry.lnk')"
+    $old = Join-Path $dir "Hey Jev.lnk"  # her name till 28 October 2026: the new one above takes its place
+    if (Test-Path $old) { Remove-Item $old; Write-Host "Removed the old shortcut: $old" }
 }
 Write-Host ""
-Write-Host "Done. Open Hey Jev from the Start menu or the Desktop."
-Write-Host "Logs: $env:LOCALAPPDATA\Hey Jev\Logs\Hey Jev.log"
+Write-Host "Done. Open Hey Harry from the Start menu or the Desktop."
+Write-Host "Logs: $env:LOCALAPPDATA\Hey Harry\Logs\Hey Harry.log"

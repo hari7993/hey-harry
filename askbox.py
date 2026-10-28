@@ -7,7 +7,7 @@ import ctypes
 import tkinter as tk
 
 KEY = "#010203"  # the window's see-through colour: its square corners show what's under them
-HINT = "Ask Jev anything"
+HINT = "Ask Harry anything"
 DARK = {"body": "#262629", "rim": "#3d3d42", "text": "#f2f2f5", "muted": "#8d8d94"}
 KEEP = 50  # how many of the things you typed Up and Down go back through
 

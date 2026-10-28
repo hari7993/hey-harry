@@ -1,10 +1,10 @@
-"""Jev on your phone, through a Telegram bot of your own: make one with @BotFather, paste its token in Keys, then
+"""Harry on your phone, through a Telegram bot of your own: make one with @BotFather, paste its token in Keys, then
 Settings > Phone > Pair.
 
 Only your Telegram account can use it, and it fails closed: until you've paired, all it answers is /start, with a
 code while a pairing is open (10 minutes from pressing Pair), else with how to open one, and nothing else ever runs;
 after, everyone else is ignored (and you're told once about each). Pairing is Hermes Agent's (gateway/pairing.py, see
-hermes_memory/gateway_bits.py): you send /start, the bot answers with an 8-letter code, and you type that into Jev's
+hermes_memory/gateway_bits.py): you send /start, the bot answers with an 8-letter code, and you type that into Harry's
 window on the PC, which proves you have both. The code is kept only hashed, works only while its pairing is open,
 and 5 wrong ones lock pairing for an hour.
 
@@ -23,7 +23,6 @@ import asyncio
 import collections
 import io
 import re
-import tempfile
 import logging
 import os
 import secrets
@@ -36,7 +35,8 @@ import settings
 from hermes_memory.gateway_bits import (ALPHABET, CODE_LENGTH, CODE_TTL_SECONDS, LOCKOUT_SECONDS, MAX_FAILED_ATTEMPTS,
                                         _hash_code, truncate_message, utf16_len)
 from secrets_store import get_secret
-from winplatform import APPDATA_DIR, own_data
+import identity
+from winplatform import APPDATA_DIR, home
 
 TOKEN = "TELEGRAM_BOT_TOKEN"
 OLDEST = 120  # seconds: a message older than this is dropped
@@ -81,7 +81,7 @@ def prune_files(max_age=KEEP_FOR):
 
 def files_dir():
     """Where what you send her from your phone is kept, to send on: Phone files, beside her log."""
-    return own_data(os.path.join(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir(), "Hey Jev", "Phone files"))
+    return os.path.join(home("LOCALAPPDATA"), "Phone files")
 
 
 def document_roots():
@@ -236,7 +236,7 @@ class Pairing:
 
 class Bot:
     def __init__(self, on_message, on_tap, transcribe=None, on_pair=None, on_stop=None):
-        """on_message(text, chat): a message from you, to run as a turn (on Jev's side, not this thread).
+        """on_message(text, chat): a message from you, to run as a turn (on Harry's side, not this thread).
         on_message(text, chat, pictures, files) when it came with pictures or files: pictures [(bytes, type)] to
         look at, files [paths] kept on the PC to send on, an album's together.
         on_tap(yes, ask, chat, message): you tapped Yes or No on her question ask. transcribe(16 kHz audio) ->
@@ -389,7 +389,7 @@ class Bot:
         me = await app.bot.get_me()
         self.name = me.first_name or me.username or ""
         settings.put("telegram_bot_name", self.name)  # so her heads-ups don't read out her own replies (watch.py)
-        asyncio.get_running_loop().create_task(self._watch(), name="jev:watch")
+        asyncio.get_running_loop().create_task(self._watch(), name="harry:watch")
 
     async def _watch(self):
         """A token revoked while it listens ends the library's asking for messages there and then (it doesn't retry
@@ -420,17 +420,17 @@ class Bot:
             if self.pairing.open:
                 code = self.pairing.request(user.id, who(user))
                 minutes = self.pairing.minutes_left
-                await msg.reply_text(f"Your code is {code}. Type it into Jev's window on your PC, in Settings > Phone, "
+                await msg.reply_text(identity.named(f"Your code is {code}. Type it into Harry's window on your PC, in Settings > Phone, "
                                      f"and press Pair. It works once, in the next {minutes} minute"
                                      f"{'s' if minutes != 1 else ''}." if code else
-                                     "Others asked to pair first. On your PC, press Pair again in Jev's Settings > "
-                                     "Phone, then send /start here again.")
+                                     "Others asked to pair first. On your PC, press Pair again in Harry's Settings > "
+                                     "Phone, then send /start here again."))
                 if self.on_pair:
                     self.on_pair(who(user) if code else None)
             elif user.id not in self.told:  # once each: anyone can find a bot, and it only says how to pair
                 self.told.add(user.id)
-                await msg.reply_text("I'm not paired yet. On your PC, in Jev's Settings > Phone, press Pair with the "
-                                     "box empty, then send /start here again.")
+                await msg.reply_text(identity.named("I'm not paired yet. On your PC, in Harry's Settings > Phone, press Pair with the "
+                                     "box empty, then send /start here again."))
             return
         if user.id != me:
             if user.id not in self.strangers:  # once each, so you know, and nothing else
@@ -652,7 +652,7 @@ class Bot:
             sent[1] = time.time()
 
     def _call(self, coro_fn):
-        """Runs a send on the bot's own loop, from Jev's side. False if it couldn't."""
+        """Runs a send on the bot's own loop, from Harry's side. False if it couldn't."""
         loop = self.loop
         if loop is None:
             return False

@@ -9,12 +9,12 @@ entries in the dictation log. A row is taken out only if all of these hold:
 - it was written in the window (--from and --to, 8 Oct 15:55 to 19:10 by default),
 - what it says is word for word a phrase from the tests (tests\\*.py),
 - it came in a burst: another such row within BURST seconds (a test run wrote dozens a second, you one at a time),
-- and there are more of it than you said: Logs\\Hey Jev.log has every phrase she heard from you, and that many are
+- and there are more of it than you said: Logs\\Hey Harry.log has every phrase she heard from you, and that many are
   kept, the ones least like a test's burst of rows in the same few seconds.
 Everything else stays. A row that matches a test phrase but stands on its own, and rows in the window that came in
 bursts like a test's but match no test phrase, are listed for you to look at, not taken out. Every row it would take
 out, and every one to look at, is listed in Logs\\clean_test_data.txt, the only file a dry run writes. Her memory
-(USER.md, MEMORY.md), skills, notes, contacts, recipes and settings are never touched. Run it with Hey Jev closed: it
+(USER.md, MEMORY.md), skills, notes, contacts, recipes and settings are never touched. Run it with Hey Harry closed: it
 refuses while her window is open, and can't see siri.py in a console, so close that too. A log or day file written to
 after it was read is left as it was, and said, for another run.
 """
@@ -59,7 +59,7 @@ def test_phrases(folder=None):
 
 
 def kept_as(said):
-    """A phrase she heard as her history keeps it: siri.route takes her name off ("Hey Jev, open Notepad." is "open
+    """A phrase she heard as her history keeps it: siri.route takes her name off ("Hey Harry, open Notepad." is "open
     Notepad"), and siri.handle puts app names and your Dictionary's words right."""
     import siri  # only here: everything else in this script needs none of her
     found = siri.find_name(said)
@@ -67,11 +67,11 @@ def kept_as(said):
 
 
 def heard_counts(logs):
-    """How many times she heard each phrase from you, from her own log (Hey Jev.log and any older copies), counted
+    """How many times she heard each phrase from you, from her own log (Hey Harry.log and any older copies), counted
     both as heard and as her history keeps it. Every day's: the log doesn't say which day a line is from, and
     counting more only keeps more."""
     counts = collections.Counter()
-    for path in sorted(glob.glob(os.path.join(logs, "Hey Jev.log*"))):
+    for path in sorted(glob.glob(os.path.join(logs, "Hey Harry.log*"))):
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 m = HEARD.match(line)
@@ -93,7 +93,7 @@ def _burst(times):
 
 def pick(rows, window, phrases, heard):
     """rows are (key, text, when). Returns (the tests' rows to take out, rows to look at, kept). A test phrase on its
-    own, with no other within BURST seconds, is never taken out: a real "Hey Jev, open Notepad." in the window is
+    own, with no other within BURST seconds, is never taken out: a real "Hey Harry, open Notepad." in the window is
     one of those, and the dictation log and tasks have no log of what you said to keep yours by."""
     start, end = window
     inside = [r for r in rows if start <= r[2] <= end]
@@ -253,7 +253,7 @@ def plans(window, appdata=None, local=None, tests=None):
              tasks_plan(os.path.join(appdata, "tasks.db"), window, phrases)]
     for name in ("agent.jsonl", "agent.1.jsonl"):
         found.append(jsonl_plan(os.path.join(logs, name), "at", "goal", window, phrases, heard))
-    found.append(jsonl_plan(os.path.join(logs, "Hey Jev dictation.jsonl"), "time", "text", window, phrases, {}))
+    found.append(jsonl_plan(os.path.join(logs, "Hey Harry dictation.jsonl"), "time", "text", window, phrases, {}))
     found.append(jsonl_plan(os.path.join(local, "decider", "shadow.jsonl"), "when", "said", window, phrases, heard))
     return [p for p in found if p]
 
@@ -372,7 +372,7 @@ def leftovers(window, appdata=None, local=None):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Take the unit tests' rows out of Hey Jev's real data.")
+    parser = argparse.ArgumentParser(description="Take the unit tests' rows out of Hey Harry's real data.")
     parser.add_argument("--apply", action="store_true", help="back up, then take them out (without it: a dry run)")
     parser.add_argument("--from", dest="start", default=WINDOW[0], help="window start, YYYY-MM-DD HH:MM local time")
     parser.add_argument("--to", dest="end", default=WINDOW[1], help="window end, YYYY-MM-DD HH:MM local time")

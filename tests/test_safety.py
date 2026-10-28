@@ -396,7 +396,7 @@ class ChatApps(unittest.TestCase):
         for exe in (r"C:\x\pycharm64.exe", r"C:\x\zed.exe"):  # an editor it can't tell the focus of
             self.assertEqual(self.run_quick(exe, "press enter", focus=None)[1], [], exe)
         # PyCharm paints its terminal itself and Zed shows only its window: the focus read is the window, by its file
-        window = {"name": "hey-jev – app.py", "role": "", "el": SimpleNamespace(CurrentClassName="SunAwtFrame")}
+        window = {"name": "hey-harry – app.py", "role": "", "el": SimpleNamespace(CurrentClassName="SunAwtFrame")}
         for exe in (r"C:\x\pycharm64.exe", r"C:\x\zed.exe"):
             for words in ("type npm run build and press enter", "press enter"):
                 self.assertEqual(self.run_quick(exe, words, focus=window)[1], [], (exe, words))

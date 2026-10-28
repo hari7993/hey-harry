@@ -1,4 +1,4 @@
-"""Hermes' memory and learning in Hey Jev: past-chat search (history.search), skills in Hermes' format with its usage
+"""Hermes' memory and learning in Hey Harry: past-chat search (history.search), skills in Hermes' format with its usage
 tracking and curator, corrections looked at straight away, undo for what she learned on her own, and the prompt
 staying small. All on a temp folder, no model."""
 import contextlib
@@ -24,7 +24,7 @@ class Home(unittest.TestCase):
 
     def setUp(self):
         settle_used()  # one an earlier test of any kind left running mustn't land in this test's home
-        root = tempfile.mkdtemp(prefix="heyjev-learning-")
+        root = tempfile.mkdtemp(prefix="heyharry-learning-")
         for target, name, value in ((history, "DB", os.path.join(root, "history.db")),
                                     (history, "DAYS_DIR", os.path.join(root, "days")),
                                     (skills, "SKILLS_DIR", __import__("pathlib").Path(root, "skills")),
@@ -300,14 +300,14 @@ class Undo(Home):
 
 class MakingRoom(Home):
     """From 20 October her memory was full and everything new was let go, "not kept" five times in the log, while
-    one-day facts like "Hari asked Jev to open Telegram and WhatsApp" stayed."""
+    one-day facts like "Hari asked Harry to open Telegram and WhatsApp" stayed."""
     NEW = "When Hari says not this about a video, check his screen first."
 
     def setUp(self):
         super().setUp()
         self.store, self.asked = hermes_memory.MemoryStore(user_char_limit=200), []
         for fact in ("Hari asked about a CWC recruitment page on 22 October.", "Hari prefers Light mode.",
-                     "Hari asked Jev to open Telegram and WhatsApp on 23 October."):
+                     "Hari asked Harry to open Telegram and WhatsApp on 23 October."):
             hermes_memory.memory_tool(self.store, "add", "user", fact)
         for patch in (mock.patch.object(siri, "MEMORY", self.store),
                       mock.patch.object(siri, "learn_words", lambda w, s: "words")):
@@ -690,7 +690,7 @@ class StrongerModel(Home):
         self.addCleanup(quiet.__exit__, None, None, None)
 
     def test_the_free_model_failing_offers_a_stronger_one_and_yes_tries_it(self):
-        siri.handle("Jev, what's the capital of Peru", "what's the capital of Peru")
+        siri.handle("Harry, what's the capital of Peru", "what's the capital of Peru")
         self.assertEqual(self.said, ["Want me to try that with Claude Sonnet?"])
         self.assertEqual(siri.OFFER["model"], "anthropic/claude-sonnet-5-5")
         self.fail = None
@@ -713,7 +713,7 @@ class StrongerModel(Home):
             siri.agent.LAST_FAILURE.update(app="WhatsApp", at=time.time())
             return [], False, None, ["I couldn't find the Send button."]
         with mock.patch.object(siri, "run_plan", fell_short):
-            siri.handle("Jev, send hi to Mum on WhatsApp", "send hi to Mum on WhatsApp")
+            siri.handle("Harry, send hi to Mum on WhatsApp", "send hi to Mum on WhatsApp")
         self.assertEqual(self.said, ["Want me to try that with Claude Sonnet?"])
         siri.handle("try again", "try again", gate=True)
         text, note, model, _ = self.thought[-1]
@@ -722,17 +722,17 @@ class StrongerModel(Home):
 
     def test_never_without_a_key_offline_or_with_a_strong_model_picked(self):
         with mock.patch.object(siri.providers, "key", lambda p: ""):
-            siri.handle("Jev, what's the capital of Peru", "what's the capital of Peru")
+            siri.handle("Harry, what's the capital of Peru", "what's the capital of Peru")
         self.fail = siri.requests.ConnectionError("Max retries exceeded with url")
-        siri.handle("Jev, what's the capital of Peru", "what's the capital of Peru")
+        siri.handle("Harry, what's the capital of Peru", "what's the capital of Peru")
         self.assertEqual(self.said, [])
         self.assertIsNone(siri.stronger_model("openai/gpt-5.2"))  # you picked a strong one yourself
         self.assertEqual(siri.stronger_model("anthropic/claude-haiku-5-5"), "anthropic/claude-sonnet-5-5")
 
     def test_her_offer_is_for_the_next_thing_said_and_never_twice(self):
-        siri.handle("Jev, what's the capital of Peru", "what's the capital of Peru")
+        siri.handle("Harry, what's the capital of Peru", "what's the capital of Peru")
         self.fail = None
-        siri.handle("Jev, open notepad", "open notepad")  # something else: the offer's gone
+        siri.handle("Harry, open notepad", "open notepad")  # something else: the offer's gone
         siri.handle("Yes.", "Yes.", gate=True)
         self.assertIsNone(self.thought[-1][2])  # not on the stronger model
         self.said.clear()
@@ -950,12 +950,12 @@ class MemoryPatches(Home):
         store = hermes_memory.MemoryStore(user_char_limit=200)
         os.remove(os.path.join(hermes_memory.get_memory_dir(), "USER.md"))
         for fact in ("Hari asked about a CWC recruitment page on 22 October.", "Hari prefers Light mode.",
-                     "Hari asked Jev to open Telegram and WhatsApp on 23 October."):
+                     "Hari asked Harry to open Telegram and WhatsApp on 23 October."):
             hermes_memory.memory_tool(store, "add", "user", fact)
         new = "When Hari says not this about a video, check his screen first."
         reply = json.dumps({"operations": [
             {"action": "patch", "entry": 2, "old": "not in it", "content": "x"},  # not in the entry: let go
-            {"action": "patch", "entry": 3, "old": "asked Jev to open Telegram and WhatsApp on 23 October",
+            {"action": "patch", "entry": 3, "old": "asked Harry to open Telegram and WhatsApp on 23 October",
              "content": "uses Telegram and WhatsApp"}, {"action": "add", "content": new}]})
         with mock.patch.object(siri, "MEMORY", store), \
                 mock.patch.object(siri.opencode, "chat", lambda key, messages, **kw: (reply, None, None)), \
@@ -1201,7 +1201,7 @@ class FailedRuns(Home):
 
 
 class CuratorPass(Home):
-    """Hermes' curator with a model, run by Jev once a week: only skills she wrote herself, one change a pass,
+    """Hermes' curator with a model, run by Harry once a week: only skills she wrote herself, one change a pass,
     journaled for undo, the SKILL.md before it kept in skills\\.versions."""
 
     def setUp(self):

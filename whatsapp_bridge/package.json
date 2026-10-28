@@ -1,8 +1,8 @@
 {
-  "name": "hey-jev-whatsapp-bridge",
+  "name": "hey-harry-whatsapp-bridge",
   "private": true,
   "version": "1.0.0",
-  "description": "Hey Jev's WhatsApp link: a linked device that only reads, talking to her over stdin and stdout",
+  "description": "Hey Harry's WhatsApp link: a linked device that only reads, talking to her over stdin and stdout",
   "type": "module",
   "main": "bridge.mjs",
   "engines": {

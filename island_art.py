@@ -39,7 +39,7 @@ BRANDS = {"whatsapp": (0.15, 0.83, 0.4), "telegram": (0.13, 0.62, 0.85), "discor
           "chrome": (0.26, 0.52, 0.96), "google chrome": (0.26, 0.52, 0.96), "spotify": (0.11, 0.73, 0.33),
           "youtube": (1.0, 0.0, 0.0), "kiro": (0.49, 0.36, 1.0), "claude": (0.85, 0.47, 0.34),
           "microsoft edge": (0.0, 0.47, 0.83), "msedge": (0.0, 0.47, 0.83), "vlc": (1.0, 0.53, 0.0),
-          "hey jev": (0.06, 0.46, 0.43)}
+          "hey harry": (0.06, 0.46, 0.43)}
 
 
 def brand(name):

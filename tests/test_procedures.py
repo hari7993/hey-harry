@@ -566,7 +566,7 @@ class Said(Agent):
         likely meant; a task said in so many words is as plainly yours as her name, so it can be learned."""
         named = []
         self.patch(siri, "think", lambda *a, **kw: named.append(agent.NAMED.get()) or {"steps": [], "say": "Okay."})
-        for said, gate in (("Jev, turn on night light", False), ("turn on night light", True)):
+        for said, gate in (("Harry, turn on night light", False), ("turn on night light", True)):
             siri.handle(siri.speech.heard(said, 0.6), siri.speech.heard("turn on night light", 0.6), gate=gate)
             self.assertEqual(self.said[-1], "Okay.")
         self.assertEqual(named, [True, True])
@@ -758,7 +758,7 @@ class Plans(Agent):
         self.assertIn("agent_resume", siri.ASKS_YES)
 
     def test_a_plan_never_presses_a_send_shortcut_you_didnt_say(self):
-        """"Jev, send it" with a mail still open, planned as Ctrl+Enter: it went with nothing read back and no yes.
+        """"Harry, send it" with a mail still open, planned as Ctrl+Enter: it went with nothing read back and no yes.
         Said in so many words ("press control enter"), it's pressed; and closing a tab or a window still is."""
         pressed = []
         self.patch(siri, "press_keys", lambda keys, vetted=False: pressed.append(siri.combo(keys)))

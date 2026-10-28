@@ -39,7 +39,7 @@ class Jobs(Live):
         super().setUp()
         self.tripped = len(TRIPPED)
         self.addCleanup(lambda: self.assertEqual(TRIPPED[self.tripped:], []))
-        self.store = tasks.Store(os.path.join(tempfile.mkdtemp(prefix="heyjev-jobs-"), "tasks.db"))
+        self.store = tasks.Store(os.path.join(tempfile.mkdtemp(prefix="heyharry-jobs-"), "tasks.db"))
         self.told, self.idle, self.locked, self.judged = queue.Queue(), [60.0], [False], []
         self.verdicts = []  # the judge's verdicts in turn, then done
         for target, name, value in (
@@ -793,13 +793,13 @@ class Asking(Jobs):
 
 
 class Restart(Jobs):
-    """A job Jev stopped in the middle of is asked about again at start, keyed by it, by voice or on the phone."""
+    """A job Harry stopped in the middle of is asked about again at start, keyed by it, by voice or on the phone."""
 
     def test_it_asks_again_and_only_that_yes_starts_it(self):
         store = StopsWorker(self.store.path)
         self.patch(siri, "TASK_STORE", store)
         tid = store.create("Write to Ravi", "agent", {"goal": "write to Ravi", "approved": True})
-        store.claim_due()  # running when Jev stopped
+        store.claim_due()  # running when Harry stopped
         worker = threading.Thread(target=siri.task_worker, daemon=True)
         worker.start()
         try:
@@ -823,7 +823,7 @@ class Store(unittest.TestCase):
     """tasks.py for jobs: the agent kind changes the PC, a progress column, and approvals keyed by step."""
 
     def setUp(self):
-        self.path = os.path.join(tempfile.mkdtemp(prefix="heyjev-jobs-"), "tasks.db")
+        self.path = os.path.join(tempfile.mkdtemp(prefix="heyharry-jobs-"), "tasks.db")
 
     def test_a_restart_asks_again_before_a_job_goes_on(self):
         store = tasks.Store(self.path)

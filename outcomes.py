@@ -1,4 +1,4 @@
-"""How her skills and tasks in apps really went, kept by Jev herself in skills\\.outcomes.json: runs, successes and
+"""How her skills and tasks in apps really went, kept by Harry herself in skills\\.outcomes.json: runs, successes and
 failures for each routine, procedure and skill she wrote herself, and the last few tasks in each app that ended
 without being done. Hermes' skill_usage counts how often a skill was loaded, never whether it worked, and until
 27 October nothing ever read a failed run back (agent.py wrote it to Logs\\agent.jsonl only), so a task that got

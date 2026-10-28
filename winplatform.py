@@ -37,7 +37,7 @@ _system_cpp_runtime()
 # On 8 Oct `python -m unittest` from the repo root imported siri through the old hand checks (test_listen.py and co.)
 # before tests/support.py had moved %APPDATA%, and the test run wrote 982 turns into her real history, 1,488 runs into
 # the task log, 88 dictations, and an empty contacts book over three real people. So in a test run her real folders
-# are refused outright: tests/support.py sets HEYJEV_TESTING to the real folders before it imports anything, and a
+# are refused outright: tests/support.py sets HEYHARRY_TESTING to the real folders before it imports anything, and a
 # test runner that started without it (python -m unittest, pytest, an editor's) is told apart by what it ran. A normal
 # run of hers is neither, and for her this is one dict lookup.
 RUNNERS = ("pytest", "_pytest", "unittestadapter", "teamcity")  # an editor's runner loads one of these first
@@ -54,9 +54,14 @@ def _test_run():
 TEST_RUN = _test_run()
 
 
+# She was Jev till 28 October 2026, in a program called Hey Jev: her folders, the keys in Credential Manager, the
+# start-up entry and the one-at-a-time lock go by Hey Harry from then on, moved from the old names the first time
+NAME, OLD_NAME = "Hey Harry", "Hey Jev"
+
+
 def own_data(path):
     """path, unless this is a test run and path is in her real data, which raises instead."""
-    real = os.environ.get("HEYJEV_TESTING")
+    real = os.environ.get("HEYHARRY_TESTING")
     if real is None and not TEST_RUN:
         return path
     home = os.path.expanduser("~")
@@ -64,15 +69,66 @@ def own_data(path):
         os.pathsep) + [os.path.join(home, "AppData", "Roaming"), os.path.join(home, "AppData", "Local"), home]
     target = os.path.normcase(os.path.abspath(path))
     for base in filter(None, bases):
-        mine = os.path.normcase(os.path.abspath(os.path.join(base, "Hey Jev")))
-        if target == mine or target.startswith(mine + os.sep):
-            raise RuntimeError(f"a test run reached her real data ({path}): import tests.support first, and run the "
-                               "suite as python -m unittest discover -s tests -t .")
+        for name in (NAME, OLD_NAME):
+            mine = os.path.normcase(os.path.abspath(os.path.join(base, name)))
+            if target == mine or target.startswith(mine + os.sep):
+                raise RuntimeError(f"a test run reached her real data ({path}): import tests.support first, and run "
+                                   "the suite as python -m unittest discover -s tests -t .")
     return path
 
 
-APPDATA_DIR = own_data(os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "Hey Jev"))
-LOG_DIR = own_data(os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Hey Jev", "Logs"))
+MOVED = []  # her folders moved from Hey Jev's as she started this time (identity.moved_on tells her notes her name)
+
+
+def home(var="APPDATA"):
+    """Her folder in %APPDATA% or %LOCALAPPDATA% (var): Hey Harry's, or Hey Jev's while that's the one there is
+    (move_home moves it), so everything that reads or writes her data agrees on where it is, and nothing new is made
+    beside an old folder that still has to move."""
+    base = os.environ.get(var) or os.path.expanduser("~")
+    new, old = own_data(os.path.join(base, NAME)), own_data(os.path.join(base, OLD_NAME))
+    return old if os.path.isdir(old) and not os.path.exists(new) else new
+
+
+def _running():
+    """True while Harry or Hey Jev is open: each holds its lock (LOCKS) for as long as it runs."""
+    for name in LOCKS:
+        handle = kernel32.OpenMutexW(0x00100000, False, f"Local\\{name}")  # SYNCHRONIZE
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+    return False
+
+
+def move_home():
+    """Hey Jev's folders as Hey Harry's, renamed in place so nothing's copied: only from app.py as she starts, before
+    anything else reads her data, and never while Harry or Hey Jev is open (a second start, or the old app still
+    running: its files would go from under it). One that can't be moved yet, a file in it held open, stays where it
+    is and is used there till the next start."""
+    global APPDATA_DIR, LOG_DIR
+    if _running():
+        return
+    for var in ("APPDATA", "LOCALAPPDATA"):
+        base = os.environ.get(var) or os.path.expanduser("~")
+        new, old = own_data(os.path.join(base, NAME)), own_data(os.path.join(base, OLD_NAME))
+        if os.path.isdir(old) and not os.path.exists(new):
+            try:
+                os.rename(old, new)
+                MOVED.append(new)
+                print(f"moved {old} to {new}")
+            except OSError as exc:
+                print(f"couldn't move {old} to {new} yet, using it as it is: {exc!r}")
+    APPDATA_DIR, LOG_DIR = home("APPDATA"), os.path.join(home("LOCALAPPDATA"), "Logs")
+    try:  # her log and your dictations under their old names (Hey Jev.log): carried on under the new ones
+        for name in os.listdir(LOG_DIR):
+            new = os.path.join(LOG_DIR, name.replace(OLD_NAME, NAME, 1))
+            if name.startswith(OLD_NAME) and not os.path.exists(new):
+                os.rename(os.path.join(LOG_DIR, name), new)
+    except OSError as exc:
+        print(f"couldn't rename her logs: {exc!r}")
+
+
+APPDATA_DIR = home("APPDATA")
+LOG_DIR = os.path.join(home("LOCALAPPDATA"), "Logs")
 os.makedirs(APPDATA_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -153,6 +209,7 @@ _sig(kernel32.QueryFullProcessImageNameW, [wintypes.HANDLE, DWORD, wintypes.LPWS
 _sig(kernel32.CloseHandle, [wintypes.HANDLE])
 _sig(kernel32.GetCurrentThreadId, [], DWORD)
 _sig(kernel32.CreateMutexW, [ctypes.c_void_p, BOOL, wintypes.LPCWSTR], wintypes.HANDLE)
+_sig(kernel32.OpenMutexW, [DWORD, BOOL, wintypes.LPCWSTR], wintypes.HANDLE)
 _sig(dwmapi.DwmGetWindowAttribute, [HWND, DWORD, ctypes.c_void_p, DWORD], ctypes.c_long)
 _sig(version.GetFileVersionInfoSizeW, [wintypes.LPCWSTR, ctypes.POINTER(DWORD)], DWORD)
 _sig(version.GetFileVersionInfoW, [wintypes.LPCWSTR, DWORD, DWORD, ctypes.c_void_p])
@@ -176,7 +233,7 @@ MONITOR_DEFAULTTOPRIMARY = 1
 
 # Windows parts that look like app windows but must never be closed or minimised as one
 SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"}
-# Never force-quit these: the taskbar, the frame UWP apps live in, and Jev herself
+# Never force-quit these: the taskbar, the frame UWP apps live in, and Harry herself
 PROTECTED = {"explorer.exe", "applicationframehost.exe", "python.exe", "pythonw.exe", "py.exe", "pyw.exe",
              "dwm.exe", "csrss.exe", "winlogon.exe", "svchost.exe", "searchhost.exe",
              "startmenuexperiencehost.exe", "shellexperiencehost.exe", "textinputhost.exe"}
@@ -735,12 +792,12 @@ def sleep():
 
 def shutdown(delay=10):
     """Initiate a clean Windows shutdown with a grace period (default 10s)."""
-    subprocess.Popen(["shutdown.exe", "/s", "/t", str(delay), "/c", "Hey Jev is shutting down the PC."])
+    subprocess.Popen(["shutdown.exe", "/s", "/t", str(delay), "/c", "Hey Harry is shutting down the PC."])
 
 
 def restart(delay=10):
     """Initiate a clean Windows restart with a grace period (default 10s)."""
-    subprocess.Popen(["shutdown.exe", "/r", "/t", str(delay), "/c", "Hey Jev is restarting the PC."])
+    subprocess.Popen(["shutdown.exe", "/r", "/t", str(delay), "/c", "Hey Harry is restarting the PC."])
 
 
 def abort_shutdown():
@@ -876,7 +933,7 @@ def loaded_start_apps():
 
 def find_start_app(name, refresh=True):
     target, target_norm = name.lower(), _norm(name)
-    for again in ((False, True) if refresh else (False,)):  # look again in case it was installed after Jev started
+    for again in ((False, True) if refresh else (False,)):  # look again in case it was installed after Harry started
         apps = start_apps(refresh=again)
         for rule in (lambda n: n.lower() == target, lambda n: _norm(n) == target_norm,
                      lambda n: re.search(rf"\b{re.escape(target_norm)}\b", _norm(n))):
@@ -1277,7 +1334,7 @@ def front_title():
 # --------------------------------------------------------------------------- calls
 # Windows keeps which apps use the mic, for the mic icon on the taskbar: a key per app under ConsentStore\microphone,
 # with LastUsedTimeStop 0 while it's in use. Only apps that mean a conversation count, never Voicemeeter, which can
-# hold the mic all day, or Hey Jev itself, which is python. (in the key's name, in the running program's name, name)
+# hold the mic all day, or Hey Harry itself, which is python. (in the key's name, in the running program's name, name)
 CALL_APPS = (("whatsapp", "whatsapp", "WhatsApp"), ("msteams", "teams", "Teams"), ("teams", "teams", "Teams"),
              ("yourphone", "phoneexperiencehost", "Phone Link"), ("zoom", "zoom", "Zoom"),
              ("discord", "discord", "Discord"), ("skype", "skype", "Skype"), ("slack", "slack", "Slack"),
@@ -1337,7 +1394,7 @@ def front_app_name():
     """The app in front by name, like "Google Chrome", so "close it" or "scroll down" make sense to the planner."""
     hwnd = user32.GetForegroundWindow()
     if not hwnd or _pid(hwnd) == os.getpid():
-        return ""  # nothing, or Jev's own window
+        return ""  # nothing, or Harry's own window
     exe = window_exe(hwnd)
     return (file_description(exe) or os.path.splitext(os.path.basename(exe))[0]) if exe else ""
 
@@ -1582,6 +1639,32 @@ def selected_files():
     return []
 
 
+def copied_files():
+    """The files on the clipboard as File Explorer's Copy (Ctrl+C) leaves them (CF_HDROP), as full paths: [] if there
+    are none or it's busy. Folders aren't files."""
+    for _ in range(20):
+        if user32.OpenClipboard(None):
+            break
+        time.sleep(0.05)
+    else:
+        return []
+    try:
+        handle = user32.GetClipboardData(15)  # CF_HDROP
+        size = kernel32.GlobalSize(handle) if handle else 0
+        ptr = kernel32.GlobalLock(handle) if size else None
+        if not ptr:
+            return []
+        try:
+            data = ctypes.string_at(ptr, size)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    finally:
+        user32.CloseClipboard()
+    start, wide = int.from_bytes(data[:4], "little"), int.from_bytes(data[16:20], "little")  # DROPFILES
+    names = data[start:].decode("utf-16-le" if wide else "mbcs", "replace").split("\0")
+    return [n for n in names if n and os.path.isfile(n)]
+
+
 def paste(text):
     set_clipboard(text)  # stays on the clipboard too, in case the paste misses
     time.sleep(0.2)
@@ -1688,7 +1771,7 @@ def default_input_name():
 
 
 # --------------------------------------------------------------------------- window helpers for the UI
-def prepare_gui(app_id="HeyJev.App"):
+def prepare_gui(app_id="HeyHarry.App"):
     """Sharp text on high-DPI screens, and a taskbar button of our own instead of Python's."""
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
@@ -1706,16 +1789,22 @@ def prepare_gui(app_id="HeyJev.App"):
 _mutex = []
 
 
-def single_instance(name="HeyJevSingleInstance"):
-    """False if Jev is already running, the way a Mac app only ever opens once."""
-    handle = kernel32.CreateMutexW(None, False, f"Local\\{name}")
-    already = ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
-    _mutex.append(handle)
+LOCKS = ("HeyHarrySingleInstance", "HeyJevSingleInstance")  # hers, and Hey Jev's, so neither opens over the other
+
+
+def single_instance(names=LOCKS):
+    """False if Harry is already running, the way a Mac app only ever opens once."""
+    already = False
+    for name in names:
+        handle = kernel32.CreateMutexW(None, False, f"Local\\{name}")
+        already = already or ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+        _mutex.append(handle)
     return not already
 
 
-def show_existing(title):
-    hwnd = user32.FindWindowW("TkTopLevel", title)
+def show_existing(*titles):
+    """Her window brought back by its title, the first of titles there is, from a second start."""
+    hwnd = next(filter(None, (user32.FindWindowW("TkTopLevel", title) for title in titles)), None)
     if hwnd:
         user32.ShowWindow(hwnd, SW_RESTORE)
         user32.SetForegroundWindow(hwnd)
@@ -1828,7 +1917,7 @@ def startup_command():
     return f'"{exe if os.path.exists(exe) else sys.executable}" "{os.path.join(here, "app.py")}" --startup'
 
 
-def starts_with_windows(name="Hey Jev"):
+def starts_with_windows(name=NAME):
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             return bool(winreg.QueryValueEx(key, name)[0])
@@ -1836,7 +1925,7 @@ def starts_with_windows(name="Hey Jev"):
         return False
 
 
-def set_start_with_windows(on, name="Hey Jev"):
+def set_start_with_windows(on, name=NAME):
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
         if on:
             winreg.SetValueEx(key, name, 0, winreg.REG_SZ, startup_command())
@@ -1845,6 +1934,18 @@ def set_start_with_windows(on, name="Hey Jev"):
                 winreg.DeleteValue(key, name)
             except FileNotFoundError:
                 pass
+
+
+def move_start_entry():
+    """Hey Jev's start-up entry, if you had one, as Hey Harry's: she still starts when you sign in, and Settings
+    shows it on."""
+    try:
+        if starts_with_windows(OLD_NAME):
+            set_start_with_windows(True)
+            set_start_with_windows(False, OLD_NAME)
+            print("moved the start-up entry to Hey Harry")
+    except OSError as exc:
+        print(f"couldn't move the start-up entry: {exc!r}")
 
 
 # --------------------------------------------------------------------------- the screen, for vision mode

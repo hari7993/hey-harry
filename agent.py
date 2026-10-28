@@ -1,4 +1,4 @@
-"""Jev doing a task in an app, and her procedures: a task she has done before kept as steps (open this, put that in
+"""Harry doing a task in an app, and her procedures: a task she has done before kept as steps (open this, put that in
 the Subject box, check the mail went) and done again without the model. Only code writes a procedure, from a run that
 worked, and its sha1 is checked every time before it runs, so neither a model nor an edited file can change what she
 does; what changes each time, like who a mail is to and what it says, comes in its slots, from your words.
@@ -152,7 +152,7 @@ AGENT_ROUNDS, AGENT_SECONDS, AGENT_SHOTS, AGENT_STUCK, STEPS_PER_ROUND = 30, 175
 OWN_STEPS = {"note", "memory", "todo_list"}
 TASK_ROUNDS, LOOK_LEFT, FOUND_KEEP, FOUND_CHARS, SKILL_CHARS, CHECKLIST_FROM = 20, 35.0, 3, 3000, 900, 3
 # Hermes' placeholder for a tool's old output dropped to save room (agent/context_compressor.py, at 1ae3c55e): its
-# no-model prune, the one piece of that 5,737-line module a run of Jev's needs
+# no-model prune, the one piece of that 5,737-line module a run of Harry's needs
 PRUNED = "[Old tool output cleared to save context space]"
 GUARD_LINE = "I kept trying the same thing and it didn't work, so I've stopped."
 # A job with Vision off can look things up and keep notes but not work in an app: what she says when it planned steps
@@ -745,7 +745,7 @@ def resume(step, notify=None):
 
 def resume_job(job, hold, notify=None):
     """A job's held step, after tasks.db took your yes to it (siri.run_job): only the step that yes was for, by its
-    id, which no other job's yes can carry. None if it's not waiting any more (Jev restarted meanwhile, or another
+    id, which no other job's yes can carry. None if it's not waiting any more (Harry restarted meanwhile, or another
     question took its place): the job starts again, and asks again."""
     held = JOB_HELD.get(job.id)
     if not held or str(held["id"]) != str(hold):
@@ -2211,7 +2211,7 @@ How to work:
 With no controls listed, only open, website or switch, or no steps to see the window in front.
 look: true for a screenshot next time, when you have none and the controls don't show what you need.
 done: true once the task is finished, with expect saying what shows it now: {"has":"name"} a control that's there, with "state":"on" or "off" for a switch, {"gone":"name"} one that went, or {"title":"..."} words in the title. say: one short spoken sentence of what you did, or the answer if it's a question about the screen.
-Never type passwords, card numbers or codes, and leave password managers alone. Plan send, pay or delete steps when the task asks for them: Jev asks the user first. If you can't do it, or a sign-in, a CAPTCHA or an app run as administrator (it won't take clicks or keys from you) is in the way: no steps, done false, and say what's in the way."""
+Never type passwords, card numbers or codes, and leave password managers alone. Plan send, pay or delete steps when the task asks for them: Harry asks the user first. If you can't do it, or a sign-in, a CAPTCHA or an app run as administrator (it won't take clicks or keys from you) is in the way: no steps, done false, and say what's in the way."""
 # What a job of several parts (task) gets after AGENT_PROMPT, the same every round of it, so cached with it: the
 # look-ups and the note it may use, listed by the registry (toolbox.describe, at {tools}), memory's own line (a job
 # only adds a fact, so the planner's "add, replace or remove" isn't offered), and Hermes' ways
@@ -2841,6 +2841,10 @@ def messages(r, obs, shot, task=None):
     cached part, and in this message the skill that fits it (job_skills), its checklist, what its look-ups found,
     each wrapped as data, and the guardrail's warnings, said once."""
     lines = [f"Task: {task or r.goal}"] + ([r.hints] if r.hints else [])
+    steer = getattr(r.job, "steer", None) if r.job is not None else None
+    if steer:  # what they told this helper since it started (helpers.tell, 28 October 2026): theirs, so it counts
+        lines.append("Since you started, they told you: " + " ".join(f"\u201c{s}\u201d" for s in steer[-4:]) +
+                     " Do the task that way from now on.")
     if r.task:
         lines += job_lines(r)
     lessons = host.lessons_for(obs.get("site") or obs.get("exe"))

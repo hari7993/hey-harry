@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dream mode</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Dream mode's page (28 October 2026): a pixel-art scene filling the screen (scenes.js), the song's words going by on
+     the right, and what's playing under them. Harry's dream.py serves it on this PC only and tells it what's playing
+     (state). Opened as a file, or with ?demo, it plays a made-up song to show how it looks. Keys: Esc leaves, N or
+     the right arrow is the next scene, L hides or shows the words. -->
+<style>
+  :root { --ink: 255, 250, 240; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  body { cursor: default; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; }
+  body.idle { cursor: none; }
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; object-fit: cover; image-rendering: pixelated; }
+  #fade { opacity: 0; transition: opacity 1.4s ease; }
+  /* soft dark edges, as an old lens has them: the scene's middle stays bright */
+  #vignette { position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 75% 70% at 45% 50%, transparent 60%, rgba(0, 0, 8, .5) 100%); }
+  /* behind the words, a shade so they read on any scene */
+  #shade { position: fixed; top: 0; right: 0; bottom: 0; width: 46vw; pointer-events: none;
+    background: linear-gradient(to left, rgba(4, 4, 14, .5), rgba(4, 4, 14, .18) 55%, transparent); transition: opacity .8s; }
+  #lyrics { position: fixed; right: 5vw; top: 50%; width: min(31vw, 470px); height: 48vh; transform: translateY(-58%);
+    overflow: hidden; transition: opacity .8s;
+    -webkit-mask-image: linear-gradient(transparent, #000 22%, #000 70%, transparent);
+            mask-image: linear-gradient(transparent, #000 22%, #000 70%, transparent); }
+  #lines { transition: transform .75s cubic-bezier(.2, .75, .15, 1); will-change: transform; }
+  .line { font-weight: 600; font-size: clamp(17px, 1.85vw, 31px); line-height: 1.32; margin: 0 0 .62em;
+    color: rgba(var(--ink), .26); transform-origin: left center; transition: color .6s, transform .6s, filter .6s, text-shadow .6s;
+    filter: blur(.4px); letter-spacing: .005em; text-wrap: balance; }
+  .line.near { color: rgba(var(--ink), .48); filter: none; }
+  .line.cur { color: rgb(var(--ink)); transform: scale(1.045); filter: none;
+    text-shadow: 0 0 22px rgba(255, 214, 170, .38), 0 0 2px rgba(255, 240, 220, .4); }
+  .line.pause { letter-spacing: .3em; }
+  #alone { position: fixed; right: 5vw; top: 44%; width: min(31vw, 470px); text-align: left; transition: opacity .8s;
+    color: rgba(var(--ink), .82); font-weight: 600; font-size: clamp(20px, 2.2vw, 36px); line-height: 1.25; }
+  #alone small { display: block; margin-top: .5em; font-weight: 500; font-size: .48em; letter-spacing: .22em;
+    text-transform: uppercase; color: rgba(var(--ink), .45); }
+  #track { position: fixed; right: 5vw; bottom: 7vh; width: min(31vw, 470px); color: rgba(var(--ink), .7);
+    font-size: clamp(12px, .95vw, 16px); transition: opacity .8s; }
+  #track b { display: block; font-weight: 600; color: rgba(var(--ink), .9); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  #track span { display: block; margin-top: .15em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #bar { margin-top: .9em; height: 2px; border-radius: 1px; background: rgba(var(--ink), .16); overflow: hidden; }
+  #bar i { display: block; height: 100%; width: 0; background: rgba(var(--ink), .7); }
+  #scene-name { position: fixed; left: 5vw; bottom: 7vh; color: rgba(var(--ink), .8); font-weight: 600;
+    font-size: clamp(14px, 1.3vw, 22px); letter-spacing: .28em; text-transform: uppercase; opacity: 0;
+    transition: opacity 1.6s ease; text-shadow: 0 1px 12px rgba(0, 0, 0, .5); }
+  #scene-name small { display: block; margin-top: .7em; font-size: .55em; letter-spacing: .14em; font-weight: 500;
+    text-transform: none; color: rgba(var(--ink), .55); }
+  .show { opacity: 1 !important; }
+  .gone { opacity: 0 !important; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<canvas id="fade"></canvas>
+<div id="vignette"></div>
+<div id="shade"></div>
+<div id="lyrics"><div id="lines"></div></div>
+<div id="alone" class="gone"></div>
+<div id="track" class="gone"><b></b><span></span><div id="bar"><i></i></div></div>
+<div id="scene-name"></div>
+<script src="scenes.js"></script>
+<script>
+"use strict";
+const H = 180;
+const W = Math.round(Math.min(480, Math.max(240, H * innerWidth / Math.max(1, innerHeight))));
+const params = new URLSearchParams(location.search);
+const DEMO = params.has("demo") || location.protocol === "file:";
+const base = location.pathname.replace(/[^/]*$/, "");  // her server's address for this page, key and all
+const $ = id => document.getElementById(id);
+const screen = $("scene"), fade = $("fade"), g = screen.getContext("2d");
+for (const c of [screen, fade]) { c.width = W; c.height = H; }
+
+// ------------------------------------------------------------------------------------- the scene, 30 frames a second
+let scene = null, name = null, started = performance.now() / 1000;
+function show(next) {
+  if (!SCENES[next] || next === name) return;
+  if (scene) {  // the old scene stays on top and fades away
+    fade.getContext("2d").drawImage(screen, 0, 0);
+    fade.style.transition = "none";
+    fade.style.opacity = 1;
+    requestAnimationFrame(() => { fade.style.transition = ""; fade.style.opacity = 0; });
+  }
+  name = next;
+  scene = SCENES[next];
+  scene.W = W; scene.H = H;
+  if (!scene.ready) { scene.init(W, H); scene.ready = true; }
+  const tag = $("scene-name");
+  tag.innerHTML = `${scene.label}<small>Esc to leave · N for another scene</small>`;
+  tag.classList.add("show");
+  clearTimeout(show.job);
+  show.job = setTimeout(() => tag.classList.remove("show"), 5200);
+}
+let last = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (now - last < 1000 / 30 - 2) return;
+  last = now;
+  if (scene) scene.draw(g, now / 1000 - started);
+  follow();
+}
+
+// ------------------------------------------------------------------------------------- what's playing, and its words
+let state = { scene: params.get("scene") || SCENE_ORDER[0], rev: -1, track: null, lyrics: null };
+let shownKey = null, lineEls = [], times = [], cur = -2, wordsOff = false;
+function apply(next) {
+  if (next.close) { setTimeout(() => window.close(), 50); return; }  // "exit dream mode": its window goes
+  if (next.scene && next.scene !== name) show(next.scene);
+  state = next;
+  const t = state.track, key = t ? `${t.title}\n${t.artist}\n${!!state.lyrics}` : "";
+  if (key !== shownKey) { shownKey = key; build(); }
+}
+function build() {  // the words for this song, laid out once
+  const t = state.track, L = state.lyrics, box = $("lines");
+  box.innerHTML = "";
+  lineEls = []; times = []; cur = -2;
+  const lines = L && L.lines && L.lines.length ? L.lines : null;
+  const plain = !lines && L && L.plain && L.plain.length ? L.plain.filter(s => s.trim()) : null;
+  for (const [i, entry] of (lines || (plain || []).map(s => [null, s])).entries()) {
+    const el = document.createElement("div");
+    el.className = "line" + (entry[1].trim() ? "" : " pause");
+    el.textContent = entry[1].trim() || "♪";
+    box.appendChild(el);
+    lineEls.push(el);
+    times.push(entry[0]);
+  }
+  box.style.transform = "translateY(20%)";
+  const words = lineEls.length > 0;
+  $("lyrics").classList.toggle("gone", !words || wordsOff);
+  const alone = $("alone");
+  if (t && !words) {  // no words to show: the song's name in their place
+    alone.innerHTML = "";
+    alone.append(t.title || "");
+    const tag = document.createElement("small");
+    tag.textContent = L && L.instrumental ? "instrumental" : t.artist || "";
+    alone.append(tag);
+  } else if (!t) {
+    alone.innerHTML = "Play something<small>and I'll follow along</small>";
+  }
+  alone.classList.toggle("gone", words || wordsOff);
+  $("track").classList.toggle("gone", !t || !words);
+  if (t) { $("track").querySelector("b").textContent = t.title || ""; $("track").querySelector("span").textContent = t.artist || ""; }
+}
+function position() {
+  const t = state.track;
+  if (!t) return 0;
+  return t.position + (t.playing ? Date.now() / 1000 - t.at : 0);
+}
+function follow() {  // which line she's at, centred, the ones round it brighter
+  const t = state.track;
+  if (!t) return;
+  const pos = position();
+  if (t.duration > 0) $("bar").firstChild.style.width = `${Math.min(100, (pos / t.duration) * 100).toFixed(2)}%`;
+  if (!lineEls.length) return;
+  let i;
+  if (times[0] !== null) {
+    i = -1;
+    while (i + 1 < times.length && times[i + 1] <= pos + 0.25) i++;
+  } else {  // words with no times: as far through them as through the song
+    i = t.duration > 0 ? Math.min(lineEls.length - 1, Math.floor((pos / t.duration) * lineEls.length)) : 0;
+  }
+  if (i === cur) return;
+  cur = i;
+  lineEls.forEach((el, k) => {
+    el.classList.toggle("cur", k === i);
+    el.classList.toggle("near", k !== i && Math.abs(k - i) <= 1);
+  });
+  const at = lineEls[Math.max(0, i)], box = $("lyrics");
+  const y = box.clientHeight * 0.42 - (at.offsetTop + at.offsetHeight / 2);
+  $("lines").style.transform = `translateY(${y.toFixed(1)}px)`;
+}
+async function poll() {
+  try {
+    const r = await fetch(base + "state", { cache: "no-store" });
+    if (r.ok) apply(await r.json());
+  } catch (e) { /* Harry restarting, or gone: try again */ }
+  setTimeout(poll, 600);
+}
+
+// ------------------------------------------------------------------------------------- a made-up song, for a look
+function demo() {
+  const start = Date.now() / 1000;
+  const words = ["Headlights on an empty road", "the radio is low", "the city's somewhere far behind",
+    "and there's nowhere we need to go", "", "Stars come out above the sea", "the night is warm and slow",
+    "hold the wheel and breathe with me", "let the rest of it go"];
+  apply({ scene: state.scene, rev: 0, track: { title: "Nowhere We Need to Go", artist: "Dream mode", playing: true,
+    position: 9.5, duration: 160, at: start }, lyrics: { lines: words.map((w, i) => [8 + i * 3.6, w]) } });
+  addEventListener("keydown", e => {
+    if (e.key === "n" || e.key === "N" || e.key === "ArrowRight") {
+      apply({ ...state, scene: SCENE_ORDER[(SCENE_ORDER.indexOf(name) + 1) % SCENE_ORDER.length] });
+    }
+  });
+}
+
+// ------------------------------------------------------------------------------------- keys, and the pointer
+addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    if (!DEMO) fetch(base + "close").catch(() => {});
+    setTimeout(() => window.close(), 200);
+  } else if (!DEMO && (e.key === "n" || e.key === "N" || e.key === "ArrowRight")) {
+    fetch(base + "next").then(r => r.json()).then(apply).catch(() => {});
+  } else if (e.key === "l" || e.key === "L") {
+    wordsOff = !wordsOff;
+    shownKey = null;
+    build();
+    $("shade").classList.toggle("gone", wordsOff);
+  }
+});
+let still;
+addEventListener("mousemove", () => {
+  document.body.classList.remove("idle");
+  clearTimeout(still);
+  still = setTimeout(() => document.body.classList.add("idle"), 2200);
+});
+document.body.classList.add("idle");
+
+show(state.scene);
+requestAnimationFrame(frame);
+if (DEMO) demo(); else poll();
+</script>
+</body>
+</html>

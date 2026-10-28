@@ -17,12 +17,14 @@ import speech
 
 class Names(unittest.TestCase):
     def test_her_name_as_it_was_misheard(self):
-        for said in ("Hey Zoe, shut down the computer", "Hey Jevon, open Notepad", "Jevan, what time is it?"):
+        for said in ("Hey Hurry, shut down the computer", "Hey Hairy, open Notepad", "Hari, what time is it?",
+                     "Heyharry, open Chrome", "Jarvis, mute"):
             with self.subTest(said=said):
                 self.assertTrue(siri.find_name(said))
 
     def test_not_job_or_a_name_said_about_someone(self):
-        for said in ("Okay, job done", "Zoe said she'd come", "Jevon's coming tomorrow"):
+        for said in ("Okay, job done", "Harry said he'd come", "I'm in a hurry today", "Play Harry Styles",
+                     "Harry Potter's on tonight"):
             with self.subTest(said=said):
                 self.assertFalse(siri.find_name(said))
 
@@ -94,7 +96,7 @@ class AboutHer(unittest.TestCase):
         self.assertIn("you can't see them", said)
         self.assertIn("so it's to you", self.told("Hey why you are not replying", "cold"))
         self.assertNotIn("can't see them", self.told("Can you hear me?", "cold"))
-        named = self.told("Jev, can you see me?", False)  # to her anyway: only what's true of her
+        named = self.told("Harry, can you see me?", False)  # to her anyway: only what's true of her
         self.assertIn("you can't see them", named)
         self.assertNotIn("no call", named)
 

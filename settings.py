@@ -1,4 +1,4 @@
-"""Window and model settings, saved to %APPDATA%\\Hey Jev\\settings.json (the Mac build used NSUserDefaults)."""
+"""Window and model settings, saved to %APPDATA%\\Hey Harry\\settings.json (the Mac build used NSUserDefaults)."""
 import json
 import os
 import threading
@@ -13,7 +13,7 @@ DEFAULTS = {
     # free, the same model as siri.FAST_MODEL. It was space-bunny-free on OpenCode Zen, gone (410) since 11 October,
     # so a fresh install failed every request until Settings refreshed the model list
     "llm_model": "kilo/nvidia/nemotron-3-ultra-550b-a55b:free",
-    # speech to text on this PC: parakeet, nemotron (writes as you talk, but lost "Hey Jev" in Hari's voice), or whisper
+    # speech to text on this PC: parakeet, nemotron (writes as you talk, but lost "Hey Harry" in Hari's voice), or whisper
     "stt_engine": "parakeet",
     # how long she waits for you to finish before answering: patient, even or quick (speech.Listener.WAITS)
     "turn_wait": "patient",
@@ -21,6 +21,7 @@ DEFAULTS = {
     "talk_over": True,  # in speech mode the mic stays on while she talks, so what you say over her is heard
     "popup": True,  # the pill at the bottom of the screen while she listens, thinks and talks
     "name": "",  # what she calls you
+    "nickname": "",  # what you call her, when it isn't Harry: identity.py, changed with identity.rename
     "welcome": True,  # hello when you sign in or come back to the laptop, and what she can do
     "met": False,  # she's introduced herself since her memory was last started fresh, see backup.py --fresh
     "onboarded": False,  # her walkthrough's been through once (onboarding.py); Settings > Walkthrough shows it again
@@ -48,10 +49,10 @@ DEFAULTS = {
     # "all", every one while you're paired, as one message each that's edited as it goes
     "phone_progress": "asked",
     "learning": True,  # she looks back over turns to learn, Hermes Agent's learning loop, see siri.review()
-    # no "Hey Jev" needed: anything said that could be a request goes to the answer model, which decides if it was
+    # no "Hey Harry" needed: anything said that could be a request goes to the answer model, which decides if it was
     # for her or for someone else in the room, see siri.route()
     "no_name": False,
-    "call_aware": True,  # during WhatsApp/Teams/Zoom/browser calls, unnamed speech is for the call; say Jev/Jarvis
+    "call_aware": True,  # during WhatsApp/Teams/Zoom/browser calls, unnamed speech is for the call; say Harry/Jarvis
     "spoken_answers": True,  # a question, even "Google when is...", is looked up and answered out loud, see siri
     # the popup: "island" (her face at the top, like Nixi's, with plugins: island.py), "card" (the iPhone Dynamic
     # Island card, bubble.Island) or "pill" (the Siri pill at the bottom)
@@ -68,6 +69,9 @@ DEFAULTS = {
     "island_theme": "amoled",  # system, light, dark or amoled (pure black)
     "island_border": False,  # a thin line round it
     "island_align": "center",  # left, center or right of the screen's top
+    # hanging from the top of the screen like a notch, in the same glass, no gap above it (28 October 2026, the owner's
+    # pick): the capsule and the answer card both. Off, the capsule floats a little under the top again
+    "island_drop": True,
     "island_x": 0,  # px across from there
     "island_y": 8,  # px down from the top of the screen
     "island_scale": 100,  # its size, percent
@@ -88,8 +92,8 @@ VOICES = (  # the first is the default when none is picked, so Hannah stays firs
     ("Assistant", "fa97330bb80549fbb3cf84a1c421d70c", "crisp, American"),
     ("Ethan", "536d3a5e000945adb7038665781a4aca", "calm, a man"),
     # Her voice made on this PC (pocket.py): free for good, used for Fish voices too once Fish's free model ends
-    ("Jev on this PC", "pocket:p248", "Indian English, offline, free for good"),
-    ("Jev on this PC, a man", "pocket:p251", "Indian English, offline, free for good"),
+    ("Harry on this PC", "pocket:p248", "Indian English, offline, free for good"),
+    ("Harry on this PC, a man", "pocket:p251", "Indian English, offline, free for good"),
     # Windows' own voices: offline, instant, no Fish account needed
     ("Windows Heera", "onecore:MSTTS_V110_enIN_HeeraM", "offline, Indian English"),
     ("Windows Ravi", "onecore:MSTTS_V110_enIN_RaviM", "offline, Indian English, a man"),

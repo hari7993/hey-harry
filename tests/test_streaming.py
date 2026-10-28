@@ -105,7 +105,7 @@ class Unnamed(unittest.TestCase):
     def setUp(self):
         FakeLine.said = []
         for target, name, value in ((siri, "skills_block", lambda *a: ""), (siri, "memory_block", lambda: ""),
-                                    (siri, "context", lambda: ""), (siri, "soul", lambda: "You are Jev."),
+                                    (siri, "context", lambda: ""), (siri, "soul", lambda: "You are Harry."),
                                     (siri, "Line", FakeLine), (siri, "MIC", [None]), (siri, "STREAM_SAY", True),
                                     (siri, "media_playing", lambda: False),
                                     (siri.history, "recent", lambda *a, **k: [])):

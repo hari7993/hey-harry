@@ -61,7 +61,7 @@ BY_ID = {p.id: p for p in PROVIDERS}
 OPENCODE = BY_ID["opencode"]
 
 # Not chat models: pictures, speech, embeddings, safety checkers. Also OpenCode's own (Jev's own endpoint, Muse Spark
-# only does /responses), and Kilo's that answered in October 2026 but not with Hey Jev's JSON: a router that picked a
+# only does /responses), and Kilo's that answered in October 2026 but not with Hey Harry's JSON: a router that picked a
 # safety model, or empty replies
 NOT_CHAT = re.compile(r"embed|tts|whisper|dall-e|moderation|transcri|realtime|audio|image|imagen|veo|sora|rerank|"
                       r"guard|aqa|davinci|babbage|lyria|content-safety|computer-use|^jev-|^muse-spark|"

@@ -24,7 +24,7 @@ YOU, SOMEONE = unit(1, 0.1), unit(0.1, 1)  # cosine about 0.2 between them, 1 wi
 
 
 def profile(**kw):
-    p = voiceid.Profile(tempfile.mkdtemp(prefix="heyjev-voice-"))
+    p = voiceid.Profile(tempfile.mkdtemp(prefix="heyharry-voice-"))
     p.enrol([unit(1, 0.1 * i % 0.3) for i in range(10)])
     for k, v in kw.items():
         setattr(p, k, v)
@@ -53,12 +53,12 @@ class Levels(unittest.TestCase):
     def test_her_name_gets_the_lower_level(self):
         between = (voiceid.NAMED + voiceid.STRICT) / 2
         self.assertTrue(voiceid.judge(self.p, between, 2.0, True, "other")[0])
-        self.assertTrue(voiceid.judge(self.p, between, 2.0, False, "armed")[0])  # just after a bare "Hey Jev"
+        self.assertTrue(voiceid.judge(self.p, between, 2.0, False, "armed")[0])  # just after a bare "Hey Harry"
         self.assertFalse(voiceid.judge(self.p, between, 2.0, False, "other")[0])
         self.assertFalse(voiceid.judge(self.p, between, 2.0, False, "follow_up")[0])
 
     def test_too_short_to_tell_counts_only_with_her_name_or_just_after_she_spoke(self):
-        """Under a second, voice prints match on the words, not the voice: a bare "Hey Jev" in Windows' voices
+        """Under a second, voice prints match on the words, not the voice: a bare "Hey Harry" in Windows' voices
         scored 0.84 to 0.97 against Hari's."""
         for named, kind, counts in ((True, "other", True), (False, "armed", True), (False, "follow_up", True),
                                     (False, "other", False)):
@@ -259,7 +259,7 @@ class Words(unittest.TestCase):
 
     def test_a_sentence_read_out_counts_when_most_of_its_words_are_there(self):
         want = voiceid.SENTENCES[0]
-        self.assertTrue(siri.voice_like("Hey Jeff open Chrome and play some music", want))
+        self.assertTrue(siri.voice_like("Hey Hurry open Chrome and play some music", want))
         self.assertTrue(siri.voice_like("open from and play music", want))
         self.assertFalse(siri.voice_like("pass me the water", want))
 
@@ -267,10 +267,10 @@ class Words(unittest.TestCase):
         self.assertTrue(all(len(s) <= 50 for s in voiceid.SENTENCES))
 
     def test_there_are_enough_sentences_and_most_without_her_name_the_way_you_talk_to_her(self):
-        """10 sentences, 7 starting with "Hey Jev": two unlike the rest left 8, and with "Answer without her name" on
+        """10 sentences, 7 starting with "Hey Harry": two unlike the rest left 8, and with "Answer without her name" on
         you hardly say it."""
         self.assertGreaterEqual(len(voiceid.SENTENCES), 20)
-        self.assertGreaterEqual(sum(not s.startswith("Hey Jev") for s in voiceid.SENTENCES), len(voiceid.SENTENCES) / 2)
+        self.assertGreaterEqual(sum(not s.startswith("Hey Harry") for s in voiceid.SENTENCES), len(voiceid.SENTENCES) / 2)
 
 
 class InHerEars(unittest.TestCase):
@@ -287,10 +287,10 @@ class InHerEars(unittest.TestCase):
         handled = []
         with mock.patch.object(siri, "handle", lambda text, *args, **kw: handled.append(str(text))), \
                 mock.patch.dict(siri.settings._load(), {"voice_id": "on", "no_name": True}):
-            a.var("act_on")(turn("Hey Jev, what time is it?", SOMEONE), "other", 100)
+            a.var("act_on")(turn("Hey Harry, what time is it?", SOMEONE), "other", 100)
             a.var("act_on")(turn("what's the weather like today", SOMEONE), "other", 100)
-            a.var("act_on")(turn("Hey Jev, what time is it?", YOU), "other", 100)
-        self.assertEqual(handled, ["Hey Jev, what time is it?"])
+            a.var("act_on")(turn("Hey Harry, what time is it?", YOU), "other", 100)
+        self.assertEqual(handled, ["Hey Harry, what time is it?"])
 
     def test_someone_elses_words_never_go_to_the_model_as_room_talk(self):
         a = self.assistant()
@@ -304,7 +304,7 @@ class InHerEars(unittest.TestCase):
 
     def test_reading_the_sentences_learns_your_voice_then_she_starts_learning(self):
         a = self.assistant()
-        a.put("profile", voiceid.Profile(tempfile.mkdtemp(prefix="heyjev-voice-")))
+        a.put("profile", voiceid.Profile(tempfile.mkdtemp(prefix="heyharry-voice-")))
         a.var("enrolling")[0] = {"i": 0, "prints": [], "until": 1e12}
         told = []
         a.put("tell", lambda line, said_for: told.append(said_for))
@@ -329,7 +329,7 @@ class InHerEars(unittest.TestCase):
         """On 8 Oct two of the ten sentences scored 0.37 and 0.43 against the other eight (the rest 0.54 to 0.80) and
         were kept, and against that picture of your voice your own commands scored 0.33 to 0.54."""
         a = self.assistant()
-        a.put("profile", voiceid.Profile(tempfile.mkdtemp(prefix="heyjev-voice-")))
+        a.put("profile", voiceid.Profile(tempfile.mkdtemp(prefix="heyharry-voice-")))
         a.var("enrolling")[0] = {"i": 0, "prints": [], "until": 1e12}
         a.put("tell", lambda line, said_for: None)
         where, audio = tempfile.mkdtemp(), np.zeros(16000, np.float32)
@@ -416,7 +416,7 @@ class InHerEars(unittest.TestCase):
         self.assertEqual(a.var("profile").scores(), [])
 
     def test_a_phrase_held_for_the_rest_keeps_its_voice(self):
-        """"Hey Jev, open [pause] YouTube" in someone else's voice was joined as new words with no voice print, so it
+        """"Hey Harry, open [pause] YouTube" in someone else's voice was joined as new words with no voice print, so it
         passed as too short to check, her name being in it; and yours, "open [pause] recycle bin" without her name,
         was let go as too short however long it was. Then the parts' own prints were averaged, each from under a
         second of speech, which can't tell voices apart (voiceid.py): yours, split, could be let go. So the joined
@@ -432,11 +432,11 @@ class InHerEars(unittest.TestCase):
         with mock.patch.object(siri, "handle", lambda text, *args, **kw: handled.append(str(text))), \
                 mock.patch.dict(siri.settings._load(), {"voice_id": "on", "no_name": True}):
             for who in (SOMEONE, YOU):
-                said("Hey Jev, open", who, 0.7)
+                said("Hey Harry, open", who, 0.7)
                 said("YouTube", who, 0.5)
             said("open", YOU, 0.5)
             said("recycle bin", YOU, 0.7)
-        self.assertEqual(handled, ["Hey Jev, open YouTube", "open recycle bin"])
+        self.assertEqual(handled, ["Hey Harry, open YouTube", "open recycle bin"])
 
     def test_saying_stop_stops_learning_your_voice(self):
         a = self.assistant()

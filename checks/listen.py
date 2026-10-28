@@ -55,25 +55,25 @@ $s.Dispose()
 # (seconds of quiet before it, what's said, what it should be taken as: None for not hers, "wake" for just her name,
 #  or (gate, a word in the request, what the quick path does first: a step, "say" for a reply, None for the model))
 SCRIPT = [
-    (1.0, "Hey Jev, open Notepad.", (False, "notepad", "open")),
+    (1.0, "Hey Harry, open Notepad.", (False, "notepad", "open")),
     (1.0, "Turn the volume up.", (True, "volume", "volume")),  # in the follow-up window, so no name needed
     (13.0, "Turn the volume down.", None),  # the window has closed
     (1.0, "I told Jeff about the meeting yesterday.", None),  # a name, but nobody called her
-    (1.0, "Hey Jev.", "wake"),
-    (1.0, "Play some lo-fi music and open Notepad.", (False, "notepad", None)),  # after a bare "Hey Jev": the model
-    (1.0, "Hello Jev.", (False, "hello", "say")),  # a greeting gets a greeting back
-    (1.0, "Hello[700] Jev.", (False, "hello", "say")),  # a breath after "Hello": that cut her name off
-    (1.0, "Hey Jev, open[800] Notepad.", (False, "notepad", "open")),  # "open" and a pause: wait for what
-    (1.0, "Hey Jev, check the space of the C drive.", (False, "drive", "say")),  # answered on the PC, no model
-    (1.0, "Hey Jev[400] open YouTube.", (False, "youtube", "website")),  # a short pause after her name: one turn
+    (1.0, "Hey Harry.", "wake"),
+    (1.0, "Play some lo-fi music and open Notepad.", (False, "notepad", None)),  # after a bare "Hey Harry": the model
+    (1.0, "Hello Harry.", (False, "hello", "say")),  # a greeting gets a greeting back
+    (1.0, "Hello[700] Harry.", (False, "hello", "say")),  # a breath after "Hello": that cut her name off
+    (1.0, "Hey Harry, open[800] Notepad.", (False, "notepad", "open")),  # "open" and a pause: wait for what
+    (1.0, "Hey Harry, check the space of the C drive.", (False, "drive", "say")),  # answered on the PC, no model
+    (1.0, "Hey Harry[400] open YouTube.", (False, "youtube", "website")),  # a short pause after her name: one turn
     # a pause to think mid-sentence: she waits for the rest, not "Sorry?" after "and"
-    (1.0, "Hey Jev, open Gmail in my Work profile and[900] set the volume to thirty.", (False, "volume", None)),
+    (1.0, "Hey Harry, open Gmail in my Work profile and[900] set the volume to thirty.", (False, "volume", None)),
 ]
 
 
 def voice(lines):
     """Windows' built-in voice saying each line, as 16 kHz audio."""
-    folder = tempfile.mkdtemp(prefix="heyjev-test-")
+    folder = tempfile.mkdtemp(prefix="heyharry-test-")
     try:
         with open(os.path.join(folder, "say.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
@@ -88,7 +88,7 @@ def voice(lines):
 
 def taken_as(text, kind):
     """What the app would make of a phrase: None, "wake", or (gate, request, first quick step / "say" / None). With
-    "Hey Jev" needed, whatever Settings say: Answer without her name sends more to the model, see checks/open_mic.py."""
+    "Hey Harry" needed, whatever Settings say: Answer without her name sends more to the model, see checks/open_mic.py."""
     what = siri.route(text, kind, open_mic=False)
     if not isinstance(what, tuple):
         return what

@@ -31,13 +31,13 @@ def real_folders():
     home = os.path.expanduser("~")
     bases = REAL.split(os.pathsep) + [os.path.join(home, "AppData", "Roaming"), os.path.join(home, "AppData", "Local"),
                                       home]
-    return [os.path.normcase(os.path.abspath(os.path.join(b, "Hey Jev"))) for b in bases if b]
+    return [os.path.normcase(os.path.abspath(os.path.join(b, "Hey Harry"))) for b in bases if b]
 
 
 class Isolation(unittest.TestCase):
     def test_app_data_is_a_temp_folder(self):
         self.assertTrue(winplatform.APPDATA_DIR.startswith(DATA))
-        self.assertNotIn(os.path.join("AppData", "Roaming", "Hey Jev"), siri.history.DB)
+        self.assertNotIn(os.path.join("AppData", "Roaming", "Hey Harry"), siri.history.DB)
 
     def test_pc_actions_are_tripwires(self):
         before = len(TRIPPED)
@@ -64,7 +64,7 @@ class RealData(unittest.TestCase):
                  backup.appdata(), backup.localdata(), telegram_bot.files_dir()]
         for module in list(sys.modules.values()):  # and any other path a project module worked out when imported
             if os.path.dirname(getattr(module, "__file__", "") or "") == ROOT:
-                paths += [v for v in vars(module).values() if isinstance(v, str) and "Hey Jev" in v and os.sep in v]
+                paths += [v for v in vars(module).values() if isinstance(v, str) and "Hey Harry" in v and os.sep in v]
         for path in paths:
             target = os.path.normcase(os.path.abspath(path))
             for real in real_folders():
@@ -92,13 +92,13 @@ class RealData(unittest.TestCase):
         for real in real_folders():
             with self.assertRaisesRegex(RuntimeError, "real data"):
                 winplatform.own_data(os.path.join(real, "history.db"))
-        here = os.path.join(DATA, "Hey Jev", "history.db")
+        here = os.path.join(DATA, "Hey Harry", "history.db")
         self.assertEqual(winplatform.own_data(here), here)
 
     def test_a_runner_started_without_the_harness_cant_write_to_her_data(self):
         """The 8 Oct run again, in a folder standing in for %APPDATA%: unittest imports a module that imports history
         before anything moved %APPDATA%. Nothing may be made there, and the run must fail."""
-        real = tempfile.mkdtemp(prefix="heyjev-real-")
+        real = tempfile.mkdtemp(prefix="heyharry-real-")
         with open(os.path.join(real, "test_reach.py"), "w", encoding="utf-8") as f:
             f.write("import history  # noqa\n")
         driver = textwrap.dedent(f"""
@@ -109,18 +109,18 @@ class RealData(unittest.TestCase):
             sys.argv = ["python -m unittest", "test_reach"]
             runpy.run_module("unittest", run_name="__main__", alter_sys=True)
         """)
-        env = {k: v for k, v in os.environ.items() if k != "HEYJEV_TESTING"}
+        env = {k: v for k, v in os.environ.items() if k != "HEYHARRY_TESTING"}
         env.update(APPDATA=real, LOCALAPPDATA=real)
         run = subprocess.run([sys.executable, "-c", driver], cwd=real, env=env, capture_output=True, text=True,
                              timeout=120)
         self.assertNotEqual(run.returncode, 0, run.stderr[-2000:])
         self.assertIn("real data", run.stderr)
-        self.assertFalse(os.path.exists(os.path.join(real, "Hey Jev")), os.listdir(real))
+        self.assertFalse(os.path.exists(os.path.join(real, "Hey Harry")), os.listdir(real))
 
     def test_a_library_loading_pytest_later_never_turns_her_own_run_away(self):
         """Her own run, not a test's, with a library that imports pytest once she's going: her voice and decider
         folders are worked out on every use, and must not start raising then."""
-        real = tempfile.mkdtemp(prefix="heyjev-real-")
+        real = tempfile.mkdtemp(prefix="heyharry-real-")
         driver = textwrap.dedent(f"""
             import os, sys, types
             sys.path[:0] = [{ROOT!r}]
@@ -128,14 +128,14 @@ class RealData(unittest.TestCase):
             winfakes.install()
             import winplatform
             sys.modules["pytest"] = types.ModuleType("pytest")
-            print(winplatform.own_data(os.path.join({real!r}, "Hey Jev", "voice")))
+            print(winplatform.own_data(os.path.join({real!r}, "Hey Harry", "voice")))
         """)
-        env = {k: v for k, v in os.environ.items() if k != "HEYJEV_TESTING"}
+        env = {k: v for k, v in os.environ.items() if k != "HEYHARRY_TESTING"}
         env.update(APPDATA=real, LOCALAPPDATA=real)
         run = subprocess.run([sys.executable, "-c", driver], cwd=real, env=env, capture_output=True, text=True,
                              timeout=120)
         self.assertEqual(run.returncode, 0, run.stderr[-2000:])
-        self.assertEqual(run.stdout.strip(), os.path.join(real, "Hey Jev", "voice"))
+        self.assertEqual(run.stdout.strip(), os.path.join(real, "Hey Harry", "voice"))
 
     def test_no_hand_check_is_left_where_discovery_finds_it(self):
         """The hand checks are in checks\\ now, which isn't a package: unittest discovery doesn't load them."""
@@ -155,17 +155,17 @@ class HandChecks(unittest.TestCase):
         """Runs a check's top in a plain python, as you would by hand (not its main(): that needs Windows' voices
         and the models), against a folder standing in for her real ones, then has her code write a turn and a
         decider line as a check could. Returns (stand-in, what it saw, the stand-in's files before)."""
-        real = tempfile.mkdtemp(prefix="heyjev-real-")
+        real = tempfile.mkdtemp(prefix="heyharry-real-")
         roaming, local = os.path.join(real, "Roaming"), os.path.join(real, "Local")
-        files = {os.path.join(roaming, "Hey Jev", "settings.json"): '{"stt_engine": "whisper"}',
-                 os.path.join(roaming, "Hey Jev", "memories", "USER.md"): "Lives in Hyderabad.",
-                 os.path.join(local, "Hey Jev", "Logs", "Hey Jev.log"): "> heard: 'open notepad'\n"}
-        files.update({os.path.join(local, "Hey Jev", "voice", "clips", f"{i}.wav"): "RIFF" for i in range(3)})
+        files = {os.path.join(roaming, "Hey Harry", "settings.json"): '{"stt_engine": "whisper"}',
+                 os.path.join(roaming, "Hey Harry", "memories", "USER.md"): "Lives in Hyderabad.",
+                 os.path.join(local, "Hey Harry", "Logs", "Hey Harry.log"): "> heard: 'open notepad'\n"}
+        files.update({os.path.join(local, "Hey Harry", "voice", "clips", f"{i}.wav"): "RIFF" for i in range(3)})
         for path, text in files.items():
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
-        con = sqlite3.connect(os.path.join(roaming, "Hey Jev", "history.db"))  # one turn of yours already in it
+        con = sqlite3.connect(os.path.join(roaming, "Hey Harry", "history.db"))  # one turn of yours already in it
         with con:
             con.execute("CREATE VIRTUAL TABLE turns USING fts5(said, did, reply, plan UNINDEXED, day UNINDEXED, "
                         "ts UNINDEXED, tokenize='porter unicode61')")
@@ -189,7 +189,7 @@ class HandChecks(unittest.TestCase):
                                "clips": len(glob.glob(os.path.join(voiceid.folder(), "clips", "*.wav"))),
                                "models": speech.models_dir()}}))
         """)
-        env = {k: v for k, v in os.environ.items() if k not in ("HEYJEV_TESTING", "HEYJEV_MODELS")}
+        env = {k: v for k, v in os.environ.items() if k not in ("HEYHARRY_TESTING", "HEYHARRY_MODELS")}
         env.update(APPDATA=roaming, LOCALAPPDATA=local)
         run = subprocess.run([sys.executable, "-c", driver], cwd=real, env=env, capture_output=True, text=True,
                              timeout=120)
@@ -215,26 +215,26 @@ class HandChecks(unittest.TestCase):
                 self.assertEqual(saw["argv"], list(args))  # its own arguments as they were
                 self.assertEqual(saw["engine"], "whisper")  # her settings, read from the copy
                 self.assertEqual(saw["clips"], 3)  # your clips, for voice_id.py
-                models = dotenv.dotenv_values(os.path.join(ROOT, ".env")).get("HEYJEV_MODELS")  # D:\HeyJev\models
-                self.assertEqual(saw["models"], models or os.path.join(real, "Local", "Hey Jev", "models"))  # real ones
+                models = dotenv.dotenv_values(os.path.join(ROOT, ".env")).get("HEYHARRY_MODELS")  # D:\HeyJev\models
+                self.assertEqual(saw["models"], models or os.path.join(real, "Local", "Hey Harry", "models"))  # real ones
                 self.assertFalse(os.path.exists(os.path.dirname(saw["data"])), "the copy is gone when it ends")
 
     def test_a_check_imported_by_a_test_leaves_the_harness_as_it_is(self):
         """tests/test_listening.py imports checks/listen.py for its pair(): its sandbox must not move this run's temp
-        folders, nor put a temp folder in place of her real ones in HEYJEV_TESTING."""
+        folders, nor put a temp folder in place of her real ones in HEYHARRY_TESTING."""
         from checks import listen  # noqa: F401
         from checks import sandbox
-        before = {k: os.environ.get(k) for k in ("HEYJEV_TESTING", "APPDATA", "LOCALAPPDATA", "HEYJEV_MODELS")}
+        before = {k: os.environ.get(k) for k in ("HEYHARRY_TESTING", "APPDATA", "LOCALAPPDATA", "HEYHARRY_MODELS")}
         self.assertIsNone(sandbox.use(["listen.py"]))
         self.assertEqual({k: os.environ.get(k) for k in before}, before)
-        self.assertEqual(os.environ["HEYJEV_TESTING"], REAL)
+        self.assertEqual(os.environ["HEYHARRY_TESTING"], REAL)
 
     def test_only_real_data_lets_a_check_write_to_her_data(self):
         real, saw, _ = self.run_check("listen.py", "--real-data", "parakeet")
         self.assertEqual(saw["argv"], ["parakeet"])
-        self.assertEqual(saw["history"], os.path.join(real, "Roaming", "Hey Jev", "history.db"))
+        self.assertEqual(saw["history"], os.path.join(real, "Roaming", "Hey Harry", "history.db"))
         self.assertEqual(saw["turns"], 2)
-        with open(os.path.join(real, "Local", "Hey Jev", "decider", "shadow.jsonl"), encoding="utf-8") as f:
+        with open(os.path.join(real, "Local", "Hey Harry", "decider", "shadow.jsonl"), encoding="utf-8") as f:
             self.assertIn("open notepad", f.read())
 
 

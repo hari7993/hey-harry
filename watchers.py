@@ -27,7 +27,7 @@ POWER = ("shutdown", "sleep")  # asked about first with a clear yes, and never d
 THEN = ("tell", "lock") + POWER
 MOST = 8 * 3600  # a watch gives up after this long: a big download, or a long film
 GRACE = 60  # seconds' warning, from when she's said it, before a watch shuts the PC down or puts it to sleep
-LATE = 90  # seconds a look came after it was due that mean she wasn't watching: the PC slept, or Jev stopped
+LATE = 90  # seconds a look came after it was due that mean she wasn't watching: the PC slept, or Harry stopped
 EVERY = {"download": 10, "media": 8, "battery": 60, "closed": 8, "screen": 10}  # seconds between looks
 PARTIAL = (".crdownload", ".part", ".partial", ".download", ".opdownload", ".!qb", ".!ut")  # files still downloading
 FRESH = 600  # one of those written to in the last 10 minutes is a download going on; older is one left behind
@@ -523,7 +523,7 @@ def description(w, then, remind=""):
 
 def then_line(line, verdict, then, remind="", slept=False, unsure=False):
     """What she says once a watch is over: what happened, then what she's doing about it. slept: she couldn't watch
-    the whole time (the PC slept, or Jev stopped), so she doesn't power it off. unsure: all she saw was a window stop
+    the whole time (the PC slept, or Harry stopped), so she doesn't power it off. unsure: all she saw was a window stop
     changing, as Vision went off or it became one she doesn't show the model, so she doesn't power it off either."""
     line = line or "Time's up."
     if verdict != "done":

@@ -168,7 +168,7 @@ class Eyes(unittest.TestCase):
 def bare(**kw):
     """An island with no window: enough for its rules."""
     isl = object.__new__(island.DynamicIsland)
-    isl.jev, isl.enabled, isl.busy, isl.hide_full = None, True, False, True
+    isl.harry, isl.enabled, isl.busy, isl.hide_full = None, True, False, True
     isl.popups, isl.popup, isl.hover, isl.auto_hide = [], None, False, 5.0
     isl.lives, isl.always, isl.face_style = {}, True, "eyes"
     isl.k, isl.cw, isl.ch, isl.border, isl.theme_name, isl.light, isl.shapes = 1.5, 1200, 300, False, "amoled", False, {}
@@ -217,8 +217,8 @@ class Scenes(unittest.TestCase):
                                                                   "text": "Home by eight", "phone": False})
 
     def test_her_turn_comes_first(self):
-        isl = bare(jev={"state": "listening", "text": ""}, popups=[self.note()], busy=True)
-        self.assertEqual(isl._scene(time.time()), ("jev",))
+        isl = bare(harry={"state": "listening", "text": ""}, popups=[self.note()], busy=True)
+        self.assertEqual(isl._scene(time.time()), ("harry",))
 
     def test_a_popup_then_what_lasts_then_her_eyes(self):
         now = time.time()
@@ -327,14 +327,14 @@ class Cards(unittest.TestCase):
 
     def test_her_turn_shows_how_many_go_on_in_the_background(self):
         busy = tasks_card([{"title": "Install VLC", "state": "running"}], badge=1)
-        isl = fonted(self, jev={"state": "doing", "text": "Opening Settings"}, you="", since=time.time(), level=0.0,
+        isl = fonted(self, harry={"state": "doing", "text": "Opening Settings"}, you="", since=time.time(), level=0.0,
                      lives={"tasks": busy})
         isl._front_icon = lambda size: None
-        lay = isl._jev()
+        lay = isl._harry()
         self.assertEqual(lay.key[3], 1)
         drawn(lay)
         isl.lives = {}
-        self.assertEqual(isl._jev().key[3], 0)
+        self.assertEqual(isl._harry().key[3], 0)
 
     def test_her_turns_own_work_shows_live_over_her_face(self):
         """27 October, review: her face is up for her whole turn, so run_plan's "step 2 of 5" and a task in an app's
@@ -345,23 +345,23 @@ class Cards(unittest.TestCase):
                "buttons": [stop], "lines": ["Round 5 of 30, clicked"]}
         act = plugins.Activity("tasks", "card", {"rows": [row], "more": 0, "short": None, "badge": 1, "turn": row},
                                live=True)
-        isl = fonted(self, jev={"state": "doing", "text": "Turning on night light"}, you="", since=time.time(),
+        isl = fonted(self, harry={"state": "doing", "text": "Turning on night light"}, you="", since=time.time(),
                      level=0.0, lives={"tasks": act})
         isl._front_icon = lambda size: None
-        self.assertEqual(isl._scene(time.time()), ("jev",))
-        face_ = isl._make(("jev",), time.time())
-        self.assertEqual((face_.kind, face_.key[3], face_.key[4]), ("jev", 1, ("5/30", 4 / 30)))
+        self.assertEqual(isl._scene(time.time()), ("harry",))
+        face_ = isl._make(("harry",), time.time())
+        self.assertEqual((face_.kind, face_.key[3], face_.key[4]), ("harry", 1, ("5/30", 4 / 30)))
         drawn(face_)
         isl.hover = True
-        card = isl._make(("jev",), time.time())
+        card = isl._make(("harry",), time.time())
         self.assertIn(card.kind, island.CLICKABLE)
         self.assertEqual(card.press["b0"], ("tasks", "stop", {"key": "turn:1", "needs": ""}, False))
         drawn(card)
         row["buttons"] = []  # one that can't be stopped (a phone turn's): her face stays, pointed at or not
-        self.assertEqual(isl._make(("jev",), time.time()).kind, "jev")
+        self.assertEqual(isl._make(("harry",), time.time()).kind, "harry")
         isl.hover, isl.pinned = False, "tasks"  # nor does a card pinned before her turn cover her face
         row["buttons"] = [stop]
-        self.assertEqual(isl._make(("jev",), time.time()).kind, "jev")
+        self.assertEqual(isl._make(("harry",), time.time()).kind, "harry")
 
 
 class Clicks(unittest.TestCase):
@@ -503,7 +503,7 @@ class TasksPlugin(unittest.TestCase):
     def test_it_reads_memory_never_tasks_db(self):
         """Its poll reads activity.snapshot(), and a press goes to a thread of its own: Deny on a task waiting here
         cancels it in tasks.db from there, never from the plugins' thread."""
-        folder = tempfile.mkdtemp(prefix="heyjev-island-")
+        folder = tempfile.mkdtemp(prefix="heyharry-island-")
         self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
         store = tasks.Store(os.path.join(folder, "tasks.db"))
         task = store.create("Install VLC", "install", {"id": "VideoLAN.VLC"}, status="waiting_approval")
@@ -567,25 +567,28 @@ class Capsule(unittest.TestCase):
             isl._read_settings()
             self.assertEqual((isl.style, isl.panel), (style, panel), saved)
         isl.theme_name = "amoled"
-        self.assertIs(isl.theme(), island.GLASS["dark"])
+        self.assertTrue(settings.DEFAULTS["island_drop"])  # hanging from the top, 28 October 2026
+        self.assertIs(isl.theme(), island.GLASS["dark"])  # in the same dark glass
+        isl.drop = False
+        self.assertIs(isl.theme(), island.GLASS["dark"])  # floating
         isl.style = "pill"
         self.assertIs(isl.theme(), island.THEMES["amoled"])
 
     def card(self, state, text="", you="", asked=None, answered=None):
         isl = self.capsule(panel=True, you=you, _front_icon=lambda size: None, level=0.0, since=time.time())
         isl.island_max_h = isl.PANEL_MAX_H * isl.k
-        isl.jev, isl.asked_at, isl.answered_at = {"state": state, "text": text}, asked, answered
+        isl.harry, isl.asked_at, isl.answered_at = {"state": state, "text": text}, asked, answered
         return isl
 
     def test_the_answer_card_has_your_words_her_answer_how_long_and_try_again(self):
         """28 October 2026, as Atticus's box: her eyes and x on top, your words in a bubble, her answer, then how long
         it took and Try again."""
         now = time.time()
-        listening = self.card("listening", "Play Blinding Lights by")._jev()
+        listening = self.card("listening", "Play Blinding Lights by")._harry()
         self.assertEqual([h[0] for h in listening.hot], ["close"])
         self.assertIn("Play Blinding Lights by", listening.key)  # your words, as they come
         isl = self.card("speaking", "Playing Blinding Lights on Spotify.", "Play Blinding Lights", now - 2.23, now)
-        lay = isl._jev()
+        lay = isl._harry()
         self.assertEqual([h[0] for h in lay.hot], ["close", "words", "answer", "again"])
         self.assertIn("2.23 s", lay.key)
         self.assertGreater(lay.h, listening.h)
@@ -611,20 +614,20 @@ class Capsule(unittest.TestCase):
         now = time.time()
         isl = self.card("speaking", "It’s 24 degrees in Chennai.", "weather in chennai", now - 1.5, now)
         isl.root, isl._wake = mock.Mock(), lambda: None
-        timed = isl._jev()
+        timed = isl._harry()
         with mock.patch.object(island.win, "set_clipboard") as clip:
             isl._panel_press("answer")
         clip.assert_called_once_with("It’s 24 degrees in Chennai.")
-        lay = isl._jev()
+        lay = isl._harry()
         self.assertIs(lay.key[-2], True)
         self.assertEqual(lay.h, timed.h)  # "Copied" takes the time's place, nothing moves
         self.assertGreater(drawn(lay).max(), 0.5)
         isl.copied_at = now - 5
-        self.assertIs(isl._jev().key[-2], False)  # and gives it back
+        self.assertIs(isl._harry().key[-2], False)  # and gives it back
         isl.copied_at = 0.0
         with mock.patch.object(island.win, "set_clipboard", side_effect=RuntimeError("Couldn't open the clipboard")):
             isl._panel_press("answer")  # another app had it: no "Copied"
-        self.assertIs(isl._jev().key[-2], False)
+        self.assertIs(isl._harry().key[-2], False)
         opened = []
         isl.typing = mock.Mock(open=lambda text, near: opened.append((text, near)))
         isl.origin, isl.island_rect = SimpleNamespace(x=100, y=0), (20, 10, 560, 300)
@@ -650,16 +653,16 @@ class Capsule(unittest.TestCase):
         """28 October 2026, Atticus's receipts: a green line on the card, else a popup; never said."""
         now = time.time()
         isl = self.card("speaking", "Done.", "work mode", now - 1, now)
-        plain = isl._jev()
+        plain = isl._harry()
         isl.receipt = ("Learned", "Next time “work mode” is instant.", now)
-        lay = isl._jev()
+        lay = isl._harry()
         self.assertGreater(lay.h, plain.h)
         self.assertTrue(lay.animated)
         self.assertGreater(drawn(lay).max(), 0.5)
         isl.receipt = ("Learned", "old", now - 60)  # gone after its 9 s
-        self.assertEqual(isl._jev().h, plain.h)
+        self.assertEqual(isl._harry().h, plain.h)
         gone = self.card("listening")
-        gone.jev, gone.popups, gone.root = None, [], mock.Mock()
+        gone.harry, gone.popups, gone.root = None, [], mock.Mock()
         gone._wake = lambda: None
         gone.learned("Remembered", "About you: website careerid.in")
         self.assertEqual(gone.popups[-1].data["title"], "Remembered")
@@ -667,18 +670,18 @@ class Capsule(unittest.TestCase):
     def test_her_steps_show_as_rows_live_then_done(self):
         """28 October 2026, as Atticus lists its steps: a row each, the last few, "+N earlier" over them."""
         isl = self.card("doing", "Opening Spotify", "open spotify and play lofi")
-        isl.panel, isl.jev = True, {"state": "doing", "text": "Opening Spotify"}
+        isl.panel, isl.harry = True, {"state": "doing", "text": "Opening Spotify"}
         isl.root, isl.hide_job, isl._wake, isl._place = mock.Mock(), None, lambda: None, lambda *a: None
         isl.step("live", "Opening Spotify")
         self.assertEqual(isl.steps, [["Opening Spotify", "live"]])
         isl.step("done", "Opening Spotify")  # the same row, now done
         isl.step("live", "Searching Spotify: lofi")
         self.assertEqual(isl.steps, [["Opening Spotify", "done"], ["Searching Spotify: lofi", "live"]])
-        without = self.card("doing", "Opening Spotify", "open spotify and play lofi")._jev()
-        self.assertGreater(isl._jev().h, without.h)
+        without = self.card("doing", "Opening Spotify", "open spotify and play lofi")._harry()
+        self.assertGreater(isl._harry().h, without.h)
         for i in range(6):
             isl.step("done", f"step {i}")
-        self.assertEqual(isl._jev().key[-1], 4)  # eight steps: the last four shown, four earlier
+        self.assertEqual(isl._harry().key[-1], 4)  # eight steps: the last four shown, four earlier
         isl.show("listening")  # a new turn: no rows
         self.assertIsNone(isl.steps)
 
@@ -713,8 +716,8 @@ class Capsule(unittest.TestCase):
         self.assertGreater(drawn(idle).max(), 0.5)
         self.assertEqual(eyes._capsule_idle().rate, 0)  # her eyes draw nothing between blinks, as before
         for isl in (orb, eyes):
-            isl.jev, isl.you, isl.since = {"state": "listening", "text": ""}, "", time.time()
-        self.assertLess(orb._jev().w, eyes._jev().w)  # no dots beside the orb: it ripples with the voice itself
+            isl.harry, isl.you, isl.since = {"state": "listening", "text": ""}, "", time.time()
+        self.assertLess(orb._harry().w, eyes._harry().w)  # no dots beside the orb: it ripples with the voice itself
 
     def test_it_floats_under_the_top_with_round_ends(self):
         isl = self.capsule(align="center", off_x=0, off_y=0, visible_window=False)
@@ -805,10 +808,10 @@ class Capsule(unittest.TestCase):
         isl.eye = ("open", 1.0, 0.0, 0.0, False)
         self.assertLess((arcs.min(-1) > 0.9).sum(), (drawn(isl._idle()).min(-1) > 0.9).sum())
         for state, expr in (("listening", "open"), ("thinking", "think"), ("looking", "glasses"),
-                            ("doing", "focus"), ("error", "sad")):  # her turns look as on the pill (JEV)
-            isl.jev, isl.you, isl.since = {"state": state, "text": ""}, "", time.time()
+                            ("doing", "focus"), ("error", "sad")):  # her turns look as on the pill (HARRY)
+            isl.harry, isl.you, isl.since = {"state": state, "text": ""}, "", time.time()
             isl._front_icon = lambda size: None
-            lay = isl._make(("jev",), time.time())
+            lay = isl._make(("harry",), time.time())
             self.assertEqual((lay.eyes, lay.wander), (expr, False), state)
         self.assertEqual([island.TASK_LOOKS.get(s, "open") for s in ("running", "done", "failed", "waiting_yes")],
                          ["open", "happy", "sad", "surprised"])  # not "focus": its sway never rests
@@ -869,7 +872,7 @@ class Capsule(unittest.TestCase):
             for _ in range(5):
                 isl._hover_poll()
         self.assertEqual(len(wakes), 1)  # her eyes went to the pointer once, then nothing
-        isl.layout = island.Layout(("jev",), "jev", 200, 51, None, eyes="think", face=True, wander=False)
+        isl.layout = island.Layout(("harry",), "harry", 200, 51, None, eyes="think", face=True, wander=False)
         with mock.patch.object(island.win, "set_click_through", lambda hwnd, on: None), \
                 mock.patch.object(island.win, "cursor_pos", lambda: (950, 520)):
             isl._hover_poll()
@@ -931,17 +934,17 @@ class Capsule(unittest.TestCase):
                "buttons": [stop], "lines": []}
         act = plugins.Activity("tasks", "card", {"rows": [row], "more": 0, "short": None, "badge": 1, "turn": row},
                                live=True)
-        isl = self.capsule(jev={"state": "listening", "text": "Set a timer"}, you="", since=time.time(),
+        isl = self.capsule(harry={"state": "listening", "text": "Set a timer"}, you="", since=time.time(),
                            lives={"tasks": act})
         isl._front_icon = lambda size: None
-        lay = isl._make(("jev",), time.time())
-        self.assertEqual((lay.kind, lay.face, lay.animated, lay.key[3], lay.key[4]), ("jev", True, True, 1,
+        lay = isl._make(("harry",), time.time())
+        self.assertEqual((lay.kind, lay.face, lay.animated, lay.key[3], lay.key[4]), ("harry", True, True, 1,
                                                                                          ("5/30", 4 / 30)))
         self.assertIsNotNone(lay.cap)  # her words under it, as ever
         buf, _ = painted(isl, lay)
         self.assertTrue((buf[..., :3].max(-1) <= buf[..., 3]).all())
         isl.hover = True  # pointing at her: the card with Stop, on glass
-        self.assertEqual(isl._make(("jev",), time.time()).press["b0"][1], "stop")
+        self.assertEqual(isl._make(("harry",), time.time()).press["b0"][1], "stop")
 
     def test_the_other_plugins_on_glass(self):
         now = time.time()
@@ -967,6 +970,42 @@ class Capsule(unittest.TestCase):
         buf, (x0, y0, x1, y1) = painted(isl, lay)
         self.assertEqual(buf[int((y0 + y1) / 2), int(x1 - 5 * isl.k), 3], 255)  # solid black
         self.assertIsNone(isl._shape(x0, x1 - x0, y1 - y0, 10, y0)[3])  # and no line round it unless asked
+
+
+class Drop(unittest.TestCase):
+    """28 October 2026, the owner's pick from a MacBook's notch: the island hanging from the top of the screen."""
+
+    def test_it_meets_the_edge_square_and_curves_into_it(self):
+        xs = np.arange(0, 200, dtype=np.float32) + 0.5
+        ys = (np.arange(0, 60, dtype=np.float32) + 0.5)[:, None]
+        sd = island._drop(xs, ys, 50.0, 100.0, 40.0, 12.0, 10.0, 6.0)  # 100 wide from x 50, 40 tall from y 10
+        self.assertTrue((sd[:10] > 0).all())  # nothing above the edge: a screen over this one would show it
+        self.assertTrue(sd[10, 50] < 0 and sd[10, 149] < 0)  # square where it meets the edge
+        self.assertLess(sd[10, 47], 0)  # and curving out into it each side, a notch's shoulders
+        self.assertGreater(sd[14, 46], 0)  # only up there
+        self.assertGreater(sd[49, 50], 0)  # its bottom corners round
+        self.assertLess(sd[49, 100], 0)
+
+    def test_it_hangs_from_the_top_with_no_gap(self):
+        isl = bare(style="capsule", drop=True, m=30, cw=400, align="center", off_x=0, off_y=8,
+                   visible_window=False, area=None)
+        isl._place((0, 0, 1920, 1040))
+        self.assertEqual(isl.origin.y, -30)  # its top, m into its window, at the top of the screen
+        isl.drop = False
+        isl._place((0, 0, 1920, 1040))
+        self.assertEqual(isl.origin.y, round(isl.FLOAT * isl.k) - 30)  # the capsule floats under it
+
+    def test_its_the_old_glass_and_only_the_island_drops(self):
+        """The owner, the same day: "like our old island style", its see-through glass, not a black notch."""
+        isl = bare(style="capsule", drop=True, theme_name="light")
+        self.assertIs(isl.theme(), island.GLASS["light"])
+        sl, cover, _, edge = isl._shape(100.0, 80.0, 34.0, 12.0, 30.0, drop=True)
+        top, side = 30 - sl[0].start, int(100 - sl[1].start)  # the top of the screen, and its left side
+        self.assertGreater(cover[top, 40], 0.99)  # its top row is solid, at the edge
+        self.assertEqual(float(edge[top:top + 2].max()), 0.0)  # its hairline never runs along the top
+        self.assertGreater(float(edge[top + 17, side:side + 2].max()), 0.5)  # but down its sides, as on glass
+        floating = isl._shape(100.0, 80.0, 34.0, 12.0, 30.0)[1]  # your words' bar under it doesn't drop
+        self.assertLess(floating[30 - int(30 - 3 * isl.k - 1), 7], 0.5)
 
 
 class Drawing(unittest.TestCase):

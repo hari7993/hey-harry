@@ -398,16 +398,16 @@ class AnswerToHer(Turn):
 
 class ToSomeoneElse(Turn):
     def test_where_are_you_without_her_name_is_to_a_person(self):
-        """22 October, 21:26: "Where are you" got "I'm right here on Hari's laptop, Jev."."""
+        """22 October, 21:26: "Where are you" got "I'm right here on Hari's laptop, Harry."."""
         with mock.patch.object(siri, "think", lambda *a, **kw: self.fail("asked the model")):
             for words in ("Where are you?", "when are you coming home", "did you eat", "Are you coming?"):
                 self.assertFalse(siri.handle(words, gate="cold"), words)
         self.assertEqual(self.said, [])
 
     def test_she_never_calls_you_by_her_own_name(self):
-        self.assertEqual(siri.tidy("I'm right here on Hari's laptop, Jev."), "I'm right here on Hari's laptop.")
-        self.assertEqual(siri.tidy("Jev, it's five o'clock."), "It's five o'clock.")
-        for line in ("Hey, I'm Jev, what can I do for you?", 'Just say "Hey, Jev."', "I'm Jev."):
+        self.assertEqual(siri.tidy("I'm right here on Hari's laptop, Harry."), "I'm right here on Hari's laptop.")
+        self.assertEqual(siri.tidy("Harry, it's five o'clock."), "It's five o'clock.")
+        for line in ("Hey, I'm Harry, what can I do for you?", 'Just say "Hey, Harry."', "I'm Harry."):
             self.assertEqual(siri.tidy(line), line)
 
 
@@ -641,7 +641,7 @@ class YesOrNo(Turn):
         self.assertIsNone(siri.STAGED["ready"])
 
     def test_a_command_once_the_first_seconds_are_gone_is_no_no(self):
-        """"Jev, stop the music" 40 s after "Send it?" was taken as a no to the message, and the music played on."""
+        """"Harry, stop the music" 40 s after "Send it?" was taken as a no to the message, and the music played on."""
         paused = []
         with mock.patch.object(siri, "media", paused.append):
             self.ask(ago=40)

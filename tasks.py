@@ -1,4 +1,4 @@
-"""Hey Jev's small, durable background task queue.
+"""Hey Harry's small, durable background task queue.
 
 One SQLite file, one sleeping worker in siri.py, and a guarded hidden PowerShell runner. No job framework or shell
 library. Code, never the answer model, decides which commands may run.
@@ -20,6 +20,7 @@ import threading
 import time
 
 import activity
+import identity
 from winplatform import APPDATA_DIR, CREATE_NO_WINDOW, POWERSHELL
 
 DB_PATH = os.path.join(APPDATA_DIR, "tasks.db")
@@ -27,7 +28,7 @@ STATUSES = {"queued", "running", "waiting_approval", "completed", "failed", "can
 # watch: see watchers.py. agent: a job of several parts done in the background (27 October, siri.run_job), which may
 # work in apps, so it changes the PC as a command does
 KINDS = {"command", "reminder", "lookup", "research", "install", "code", "watch", "agent"}
-CHANGES_PC = {"command", "install", "code", "agent"}  # never re-run by themselves after Jev stopped part-way: asked again
+CHANGES_PC = {"command", "install", "code", "agent"}  # never re-run by themselves after Harry stopped part-way: asked again
 # Hermes Agent's cron rule (cron/jobs.py): a one-off job that comes due more than 2 minutes late, as after the PC was
 # off or asleep, doesn't run late by itself. One that changes the PC asks again; a reminder says when it was for
 LATE = 120.0
@@ -128,7 +129,7 @@ class Store:
                     again.append(row["id"])
                     con.execute("UPDATE tasks SET payload=?, status='waiting_approval', error=?, started=NULL, "
                                 "updated=? WHERE id=?", (json.dumps(payload, ensure_ascii=False),
-                                f"Jev stopped while this {'job' if row['kind'] == 'agent' else row['kind']} was "
+                                f"{identity.name()} stopped while this {'job' if row['kind'] == 'agent' else row['kind']} was "
                                 f"running; approve it to retry", now, row["id"]))
                 else:
                     con.execute("UPDATE tasks SET status='queued', started=NULL, updated=? WHERE id=?", (now, row["id"]))
@@ -141,7 +142,7 @@ class Store:
                     payload.pop("approved", None)
                     con.execute("UPDATE tasks SET payload=?, error=?, started=NULL, updated=? WHERE id=?",
                                 (json.dumps(payload, ensure_ascii=False),
-                                 f"Jev stopped while this {row['kind']} was asking about a step; approve it to retry",
+                                 f"{identity.name()} stopped while this {row['kind']} was asking about a step; approve it to retry",
                                  now, row["id"]))
                 elif row["kind"] == "agent" and payload.get("hold") and row["id"] not in again:
                     # a job's held step, in memory and gone with it (27 October): its old question's yes, an old
@@ -151,7 +152,7 @@ class Store:
                     again.append(row["id"])
                     con.execute("UPDATE tasks SET payload=?, error=?, started=NULL, updated=? WHERE id=?",
                                 (json.dumps(payload, ensure_ascii=False),
-                                 "Jev stopped while this job was waiting on your yes; approve it to start it again",
+                                 f"{identity.name()} stopped while this job was waiting on your yes; approve it to start it again",
                                  now, row["id"]))
         ASKS.clear()
         WAKE.set()
@@ -609,7 +610,7 @@ BLOCKED = (
     (r"(?:^|[\s&(])(?:cmd(?:\.exe)?\s+(?:/\S+\s+)*/[ckr]|powershell(?:\.exe)?\b|pwsh(?:\.exe)?\b)|[\\/'\"](?:cmd|powershell|pwsh)"
      r"\.exe\b|\b(?:invoke-command|icm|start-job|start-threadjob)\b|\[scriptblock\]|&\s*\{",
      "nested command shells are blocked"),
-    (r"\b(?:invoke-webrequest|iwr|curl|wget|scp|sftp|ftp|ssh|telnet|ncat|netcat)\b", "network transfers belong in Jev's browser tools, not commands"),
+    (r"\b(?:invoke-webrequest|iwr|curl|wget|scp|sftp|ftp|ssh|telnet|ncat|netcat)\b", "network transfers belong in Harry's browser tools, not commands"),
 )
 CONFIRM = re.compile(
     r"\b(?:set-content|add-content|out-file|new-item|remove-item|move-item|copy-item|rename-item|clear-content|start-process|"
@@ -750,7 +751,7 @@ def run_command(command, cwd, approved=False, timeout=120, cancelled=lambda: Fal
     if level == "confirm" and not approved:
         raise PermissionError(reason)
     timeout = max(1, min(120, int(timeout or 120)))
-    fd, path = tempfile.mkstemp(prefix="heyjev-command-", suffix=".log")
+    fd, path = tempfile.mkstemp(prefix="heyharry-command-", suffix=".log")
     os.close(fd)
     started = time.time()
     try:

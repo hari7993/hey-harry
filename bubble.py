@@ -748,7 +748,7 @@ class Island:
                 return text, you, False, 2  # what she's doing, over what you said
             return plain, you or text, False, 2
         if state == "speaking":
-            return (f"You: {you}" if you else "Jev"), text, False, 3
+            return (f"You: {you}" if you else "Harry"), text, False, 3
         if state == "window":
             return plain, "", False, 1
         if state == "note":

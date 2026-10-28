@@ -35,7 +35,7 @@ class Turn(unittest.TestCase):
 
     def setUp(self):
         # focused_on reads the real window in front: YouTube there makes every search a YouTube one
-        for name, value in (("skills_block", ""), ("memory_block", ""), ("context", ""), ("soul", "You are Jev."),
+        for name, value in (("skills_block", ""), ("memory_block", ""), ("context", ""), ("soul", "You are Harry."),
                             ("focused_on", False)):
             p = patch.object(siri, name, lambda *a, _v=value, **k: _v)
             p.start()
@@ -100,8 +100,8 @@ class CommandRetry(Turn):
         self.assertEqual(plan["steps"][0]["do"], "schedule")
 
     def test_git_status_on_its_own_gets_the_retry(self):
-        plan = self.think("git status in hey-jev", False, '{"steps": [], "say": "I will check it."}',
-                          '{"steps": [{"do": "command", "command": "git status", "cwd": "C:\\\\hey-jev"}], "say": ""}')
+        plan = self.think("git status in hey-harry", False, '{"steps": [], "say": "I will check it."}',
+                          '{"steps": [{"do": "command", "command": "git status", "cwd": "C:\\\\hey-harry"}], "say": ""}')
         self.assertEqual(len(self.asked_again()), 1)
         self.assertEqual(plan["steps"][0]["do"], "command")
 
@@ -125,7 +125,7 @@ class TaskSteps(Turn):
         return self.model.calls[0][0][0]["content"]
 
     def test_written_out_only_for_words_that_may_ask_for_one(self):
-        for words in ("run the tests in hey-jev", "every Monday at 9 check my C drive", "git status in hey-jev",
+        for words in ("run the tests in hey-harry", "every Monday at 9 check my C drive", "git status in hey-harry",
                       "remind me at 6 to call Mum", "add a dark mode toggle to my project", "cancel task 3",
                       "schedule a disk check for tomorrow",
                       # missed: a two-digit time, "each", a job, a server, an hour from now
@@ -141,9 +141,9 @@ class TaskSteps(Turn):
                 self.assertNotIn("destructive, admin and download commands are blocked", system)
 
     def test_a_request_the_words_miss_still_has_each_steps_fields(self):
-        """"add a dark mode toggle to the settings page in hey-jev" got only the steps' names, so the model guessed
+        """"add a dark mode toggle to the settings page in hey-harry" got only the steps' names, so the model guessed
         their fields and the code turned it down: "Say the project's full folder"."""
-        system = self.system("add a dark mode toggle to the settings page in hey-jev")
+        system = self.system("add a dark mode toggle to the settings page in hey-harry")
         self.assertNotIn(siri.TASK_STEPS, system)
         for field in ('"do":"code","task":', '"cwd":', '"task":{"kind":"reminder","text":', '"when":', '"repeat":',
                       '"do":"task_control","action":"cancel|approve","id":'):
@@ -158,7 +158,7 @@ class TaskSteps(Turn):
     def test_the_cached_start_is_the_same_whatever_was_asked(self):
         """27 October: TASK_STEPS took TASK_STUB's place inside PROMPT, and LIST_STEPS went in after the note line,
         so the start Haiku keeps (opencode.Cached) changed with the words. Both are written out after it now."""
-        plain, task, listed = (self.system(w) for w in ("open notepad", "run the tests in hey-jev",
+        plain, task, listed = (self.system(w) for w in ("open notepad", "run the tests in hey-harry",
                                                          "add milk to my to-do list"))
         self.assertEqual(plain[:plain.cache_at], task[:task.cache_at])
         self.assertEqual(plain[:plain.cache_at], listed[:listed.cache_at])
@@ -587,7 +587,7 @@ class Learning(Turn):
     def test_a_review_leaves_out_overheard_chat(self):
         """After a restart too: her history keeps which turns she heard without her name (its gate). The list of
         them in memory that this was before was gone once she restarted, and the room talk was looked back at."""
-        root = tempfile.mkdtemp(prefix="heyjev-planner-")
+        root = tempfile.mkdtemp(prefix="heyharry-planner-")
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         model = FakeModel('{"memory": [], "skills": [], "words": {}}')
         with patch.object(history, "DB", os.path.join(root, "history.db")), \

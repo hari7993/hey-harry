@@ -28,7 +28,8 @@
     "chatgpt": ["ChatGPT", "https://chatgpt.com"], "chat gpt": ["ChatGPT", "https://chatgpt.com"],
     "facebook": ["Facebook", "https://www.facebook.com"], "instagram": ["Instagram", "https://www.instagram.com"],
     "linkedin": ["LinkedIn", "https://www.linkedin.com"], "netflix": ["Netflix", "https://www.netflix.com"],
-    "twitter": ["X", "https://x.com"]
+    "twitter": ["X", "https://x.com"],
+    "zomato": ["Zomato", "https://www.zomato.com"], "swiggy": ["Swiggy", "https://www.swiggy.com"]
   },
   "_bare": ["chrome", "google chrome", "notepad", "spotify", "whatsapp", "calculator", "file explorer", "vs code",
             "visual studio code", "kiro", "outlook", "discord", "slack"]

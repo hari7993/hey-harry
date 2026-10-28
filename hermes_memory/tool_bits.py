@@ -2,7 +2,7 @@
 # https://github.com/NousResearch/hermes-agent, MIT License, see LICENSE in this folder.
 # Copied by sync_hermes.py; only the imports are changed, see UPSTREAM.json. Don't edit by hand.
 
-"""Pieces of Hermes Agent's tool calling for Hey Jev's agent: a tool's registry entry, its bounded JSON errors
+"""Pieces of Hermes Agent's tool calling for Hey Harry's agent: a tool's registry entry, its bounded JSON errors
 and results, and a call's arguments cut to what its handler takes (tools/registry.py); the tools safe to run
 side by side and the line asking a model to batch them (agent/tool_dispatch_helpers.py,
 agent/prompt_builder.py); and the wrapper that marks text from outside as data, never instructions

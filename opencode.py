@@ -299,7 +299,7 @@ def explain(error):
 
 
 def check_model(key, model, timeout=25):
-    """(True, seconds) if the model answers Hey Jev, (False, reason) if not."""
+    """(True, seconds) if the model answers Hey Harry, (False, reason) if not."""
     t = time.time()
     try:
         chat(key, [{"role": "user", "content": "Reply with the word OK."}], max_tokens=200, timeout=timeout, model=model)

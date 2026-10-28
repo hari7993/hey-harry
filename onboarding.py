@@ -1,7 +1,7 @@
-"""Her walkthrough, the first time Hey Jev opens (28 October 2026, the owner's ask, after Atticus's setup window): a
+"""Her walkthrough, the first time Hey Harry opens (28 October 2026, the owner's ask, after Atticus's setup window): a
 640 px window that slides from page to page with dots under it, Back and Skip All.
 
-Meet Jev (her eyes, and the Right Alt key pressing itself), what she needs (her voice, her brain, the microphone and
+Meet Harry (her eyes, and the Right Alt key pressing itself), what she needs (her voice, her brain, the microphone and
 her ears, each turning into a green tick as it's ready), Try it now (the key lights up as you hold it and goes green
 when she hears you), a short tour with a scripted preview on each page, and You're all set, with things to say
 floating out of her eyes. Settings > Walkthrough shows it again.
@@ -14,6 +14,7 @@ import time
 import tkinter as tk
 import tkinter.font as tkfont
 
+import identity
 import providers
 import settings
 import winplatform as win
@@ -50,7 +51,7 @@ class Pill(tk.Canvas):
         self.bind("<space>", lambda e: self._press())
 
     def set_text(self, text):
-        self.text = text
+        self.text = text = identity.named(text)
         w = tkfont.Font(root=self, font=self.font).measure(text) + self.px(36 if self.kind != "quiet" else 8)
         self.configure(width=w, height=self.px(34))
         self._paint(self.hover)
@@ -133,9 +134,9 @@ class Keycap(tk.Canvas):
     (green, she heard you)."""
 
     def __init__(self, parent, label, app, big=False, bg=BG):
-        self.app, self.label, self.big = app, label, big
+        self.app, self.label, self.big = app, identity.named(label), big
         self.font = ("Segoe UI Semibold", 20 if big else 11)
-        tw = tkfont.Font(root=parent, font=self.font).measure(label)
+        tw = tkfont.Font(root=parent, font=self.font).measure(self.label)
         w, h = tw + app.px(56 if big else 34), app.px(86 if big else 46)
         super().__init__(parent, width=w, height=h, bg=bg, highlightthickness=0, bd=0)
         self.w, self.h, self.state, self.down = w, h, "up", 0.0
@@ -178,7 +179,7 @@ class Walkthrough:
     def __init__(self, app):
         self.app, px = app, app.px
         top = self.top = tk.Toplevel(app.root, bg=BG)
-        top.title("Set up Hey Jev")
+        top.title(identity.named("Set up Hey Harry"))
         top.transient(app.root)
         top.resizable(False, False)
         w, h = px(W), px(H)
@@ -290,10 +291,11 @@ class Walkthrough:
     def _heading(self, parent, kicker, head, sub, wrap=500):
         px = self.app.px
         if kicker:
-            tk.Label(parent, text=kicker.upper(), font=self.f_kick, fg=ACCENT, bg=BG).pack(pady=(0, px(6)))
-        tk.Label(parent, text=head, font=self.f_head, fg=TEXT, bg=BG).pack()
+            tk.Label(parent, text=identity.named(kicker).upper(), font=self.f_kick, fg=ACCENT, bg=BG).pack(
+                pady=(0, px(6)))
+        tk.Label(parent, text=identity.named(head), font=self.f_head, fg=TEXT, bg=BG).pack()
         if sub:
-            tk.Label(parent, text=sub, font=self.f_sub, fg=MUTED, bg=BG, wraplength=px(wrap),
+            tk.Label(parent, text=identity.named(sub), font=self.f_sub, fg=MUTED, bg=BG, wraplength=px(wrap),
                      justify="center").pack(pady=(px(6), 0))
 
     def _buttons(self, parent, primary, command, secondary=None, second_command=None):
@@ -307,23 +309,46 @@ class Walkthrough:
         main.pack(side="left")
         return main
 
-    # ------------------------------------------------------------------ 1: Meet Jev
+    # ------------------------------------------------------------------ 1: Meet Harry
     def _mode_words(self):
-        return ("Say “Hey Jev” and what you need. Your PC does the rest." if settings.get("mode") == "wake"
-                else "Hold Right Alt, say what you need, let go. Your PC does the rest.")
+        return identity.named("Say “Hey Harry” and what you need. Your PC does the rest."
+                              if settings.get("mode") == "wake" else
+                              "Hold Right Alt, say what you need, let go. Your PC does the rest.")
 
     def _build_welcome(self):
         px = self.app.px
         f = self._frame()
         Eyes(f.inner, self.app, px(150), px(76)).pack(pady=(0, px(26)))
-        self._heading(f.inner, "", "Meet Jev", self._mode_words())
+        self._heading(f.inner, "", "Meet Harry", self._mode_words())
         keys = tk.Frame(f.inner, bg=BG)
         keys.pack(pady=(px(22), 0))
-        self.welcome_key = Keycap(keys, "“Hey Jev”" if settings.get("mode") == "wake" else "Right Alt", self.app)
+        self.welcome_key = Keycap(keys, "“Hey Harry”" if settings.get("mode") == "wake" else "Right Alt", self.app)
         self.welcome_key.pack()
-        self._buttons(f.inner, "Get Started", self.next)
+        # her name, the first thing you give her, as OpenClaw asks for its agent's (28 October 2026): Harry, or yours
+        named = tk.Frame(f.inner, bg=BG)
+        named.pack(pady=(px(18), 0))
+        tk.Label(named, text="Call her", font=self.f_body, fg=MUTED, bg=BG).pack(side="left")
+        self.name_box = tk.Entry(named, width=14, font=self.f_body, relief="solid", bd=1, justify="center")
+        self.name_box.insert(0, identity.name())
+        self.name_box.pack(side="left", padx=(px(8), 0))
+        self.name_box.bind("<Return>", lambda e: self._named())
+        self.name_note = tk.Label(f.inner, text="", font=self.f_small, fg=ORANGE, bg=BG)
+        self.name_note.pack(pady=(px(4), 0))
+        self._buttons(f.inner, "Get Started", self._named)
         self._act_out()
         return f
+
+    def _named(self):
+        """Get Started: the name in the box hers from now on (identity.rename, which redoes the window too), then on."""
+        try:
+            identity.rename(" ".join(self.name_box.get().split()) or identity.DEFAULT)
+        except ValueError:
+            self.name_note.configure(text="One to three words, letters only, like Friday or Max.")
+            return
+        except OSError as exc:
+            self.name_note.configure(text=f"Couldn’t save her name: {exc}")
+            return
+        self.next()
 
     def _act_out(self):
         """The key presses itself, holds and lets go, as Atticus's keycaps act out its shortcut, every 3.6 s."""
@@ -338,14 +363,14 @@ class Walkthrough:
     def _build_ready(self):
         px = self.app.px
         f = self._frame()
-        self._heading(f.inner, "", "Give Jev what she needs",
+        self._heading(f.inner, "", "Give Harry what she needs",
                       "A few things she uses to hear you, think and talk. You can change them any time.")
         box = tk.Frame(f.inner, bg=CARD, padx=px(4), pady=px(4), highlightthickness=1, highlightbackground=LINE)
         box.pack(pady=(px(18), 0))
         self.rows_box = box
         rows = (("voice", "", "#ff9f0a", "Her voice", "Fish Audio speaks her replies: a free key."),
                 ("brain", "", "#7c5cff", "Her brain", "The answer model that works out what you asked."),
-                ("mic", "", "#ff375f", "Microphone", "She listens only while you hold Right Alt or say Jev."),
+                ("mic", "", "#ff375f", "Microphone", identity.named("She listens only while you hold Right Alt or say Harry.")),
                 ("ears", "", "#0a84ff", "Her ears", "Speech-to-text, on this PC. Set up once, at the start."))
         for i, (key, icon, colour, name, why) in enumerate(rows):
             self.ready_rows[key] = self._ready_row(box, i, icon, colour, name, why)
@@ -491,7 +516,7 @@ class Walkthrough:
         self._heading(f.inner, "", "Try it now",
                       "Say her name anywhere, then what you need." if wake else
                       "Hold Right Alt anywhere, say what you need, then let go. Try one now.")
-        self.try_key = Keycap(f.inner, "Hey Jev" if wake else "Right Alt", self.app, big=True)
+        self.try_key = Keycap(f.inner, "Hey Harry" if wake else "Right Alt", self.app, big=True)
         self.try_key.pack(pady=(px(30), px(18)))
         self.try_hint = tk.Label(f.inner, text="", font=self.f_sub, fg=MUTED, bg=BG)
         self.try_hint.pack()
@@ -507,8 +532,9 @@ class Walkthrough:
         if not self.app.worker_started or self.app.status.cget("text") == "Starting":
             self.try_hint.configure(text="She’s still getting ready. Give her a moment…", fg=MUTED)
         else:
-            self.try_hint.configure(text="Say “Hey Jev, open Calculator”." if settings.get("mode") == "wake"
-                                    else "Hold Right Alt and say “open Calculator”.", fg=MUTED)
+            self.try_hint.configure(text=identity.named("Say “Hey Harry, open Calculator”.") if
+                                    settings.get("mode") == "wake" else "Hold Right Alt and say “open Calculator”.",
+                                    fg=MUTED)
 
     def status(self, state, detail=""):
         """From the window, as she goes: the key lights up while she listens and goes green once she's heard you."""
@@ -521,7 +547,7 @@ class Walkthrough:
             self.heard = True
             self.try_key.press(False)
             self.try_key.set_state("done")
-            self.try_hint.configure(text="That’s it. Jev is on it.", fg=GREEN)
+            self.try_hint.configure(text=identity.named("That’s it. Harry is on it."), fg=GREEN)
             self.try_next.set_text("Next")
         elif state == "Ready" and self.try_key.state == "lit":
             self.try_key.press(False)
@@ -557,7 +583,7 @@ class Walkthrough:
 
     def _build_dictate(self):
         return self._tour("Dictate anywhere", "Talk instead of typing",
-                          "Say “Hey Jev, transcribe”, talk, then “stop transcribing”. She tidies it "
+                          "Say “Hey Harry, transcribe”, talk, then “stop transcribing”. She tidies it "
                           "up and pastes it where your cursor is.",
                           ("Fillers go", "“Scratch that”", "“Actually…”"), self._preview_dictate)
 
@@ -576,7 +602,7 @@ class Walkthrough:
                           self._preview_learn)
 
     def _build_phone(self):
-        return self._tour("On your phone", "Jev on Telegram",
+        return self._tour("On your phone", "Harry on Telegram",
                           "Pair your own bot in Settings › Phone, then message her from anywhere. Only you can "
                           "talk to her there.",
                           ("“What’s on my screen?”", "“Any new messages?”"),
@@ -696,7 +722,7 @@ class Walkthrough:
         t %= 5.5
         c.create_polygon(ui.rounded(w / 2 - px(80), px(8), w / 2 + px(80), px(182), px(18)), smooth=True,
                          fill="#ffffff", outline=LINE, width=2)
-        c.create_text(w / 2, px(24), text="Jev", font=self.f_bold, fill=TEXT)
+        c.create_text(w / 2, px(24), text=identity.name(), font=self.f_bold, fill=TEXT)
         if t > 0.6:
             e = ui.ease(min(1.0, (t - 0.6) / 0.3))
             c.create_polygon(ui.rounded(w / 2 - px(10), px(46), w / 2 + px(70), px(74), px(10)), smooth=True,
@@ -719,11 +745,12 @@ class Walkthrough:
         self.bloom = tk.Canvas(f.inner, width=px(520), height=px(250), bg=BG, highlightthickness=0, bd=0)
         self.bloom.pack()
         self.bloom.started = None
-        self.done_head = tk.Label(f.inner, text="Go use Jev. Be great.", font=self.f_head, fg=TEXT, bg=BG)
+        self.done_head = tk.Label(f.inner, text=identity.named("Go use Harry. Be great."), font=self.f_head, fg=TEXT,
+                                  bg=BG)
         self.done_head.pack(pady=(px(6), 0))
         self.done_sub = tk.Label(f.inner, text="", font=self.f_sub, fg=MUTED, bg=BG, wraplength=px(480))
         self.done_sub.pack(pady=(px(6), 0))
-        self.done_button = self._buttons(f.inner, "Start Using Jev", self.finish)
+        self.done_button = self._buttons(f.inner, "Start Using Harry", self.finish)
         return f
 
     def _enter_done(self):
@@ -737,9 +764,9 @@ class Walkthrough:
             self.done_button.set_text("Finish Setup Later")
         else:
             self.done_pill.configure(text="✔  You’re all set", fg=GREEN, bg="#e3f6ea")
-            self.done_sub.configure(text="Say “Hey Jev” anywhere and try one." if settings.get("mode") ==
-                                    "wake" else "Hold Right Alt anywhere and try one.")
-            self.done_button.set_text("Start Using Jev")
+            self.done_sub.configure(text=identity.named("Say “Hey Harry” anywhere and try one.") if
+                                    settings.get("mode") == "wake" else "Hold Right Alt anywhere and try one.")
+            self.done_button.set_text("Start Using Harry")
         self.bloom.started = time.time()
 
     def _draw_bloom(self, now):

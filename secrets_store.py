@@ -4,13 +4,15 @@ OpenCode Zen and Kilo Gateway (answers, free models only), Fish Audio (her voice
 Claude Haiku, the one paid model, billed to your own Anthropic account.
 """
 import os
+from contextlib import suppress
 
 import keyring
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))  # works from the shortcut too
 
-SERVICE = "Hey Jev"  # shows up in Credential Manager > Windows Credentials
+SERVICE = "Hey Harry"  # shows up in Credential Manager > Windows Credentials
+OLD_SERVICE = "Hey Jev"  # her keys till 28 October 2026: one found only there is copied to SERVICE (vault_value)
 KEY_NAMES = ("OPENCODE_ZEN_API_KEY", "FISH_AUDIO_API_KEY", "KILO_API_KEY", "TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY")
 # OpenCode Zen's and Kilo Gateway's models, like any provider's, only needed when one of theirs is picked in Settings
 # (see providers.py); your own Telegram bot, for your phone; Anthropic, for Claude. Only Fish, her voice, is needed
@@ -26,7 +28,13 @@ ALIASES = {"OPENCODE_ZEN_API_KEY": ("OPENCODE_API_KEY",), "GEMINI_API_KEY": ("GO
 
 def vault_value(name):
     try:
-        return keyring.get_password(SERVICE, name)
+        value = keyring.get_password(SERVICE, name)
+        if value is None:
+            value = keyring.get_password(OLD_SERVICE, name)
+            if value is not None:  # saved by Hey Jev: kept under her new name from now on, the old one left as it was
+                with suppress(Exception):
+                    keyring.set_password(SERVICE, name, value)
+        return value
     except Exception:
         return None
 

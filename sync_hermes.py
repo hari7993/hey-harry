@@ -1,4 +1,4 @@
-"""Brings the Hermes Agent code in hermes_memory\\ to the commit of a Hermes checkout. Never imported by Hey Jev.
+"""Brings the Hermes Agent code in hermes_memory\\ to the commit of a Hermes checkout. Never imported by Hey Harry.
 
     python sync_hermes.py <path to a hermes-agent checkout>            show what changed upstream, write nothing
     python sync_hermes.py <path to a hermes-agent checkout> --write    copy it over and record the new commit
@@ -86,7 +86,7 @@ def main():
     if sha != upstream["commit"]:
         diff = subprocess.run(["git", "-C", hermes, "diff", "--stat", upstream["commit"], sha, "--", *sources],
                               capture_output=True, text=True).stdout
-        print(f"Upstream {upstream['commit'][:10]} -> {sha[:10]}, changes in the files Hey Jev takes:\n{diff or '  none'}")
+        print(f"Upstream {upstream['commit'][:10]} -> {sha[:10]}, changes in the files Hey Harry takes:\n{diff or '  none'}")
     for spec in upstream["files"]:
         text = build(spec, hermes, sha)
         path = os.path.join(TARGET, spec["to"])

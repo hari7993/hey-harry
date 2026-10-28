@@ -355,7 +355,7 @@ class LongInstruction(Case):
 
     def test_named_instruction_isnt_cut_at_max_turn_with_parakeet(self):
         """Her name at the start, heard early on the first seconds (check_partial): let run to MAX_TURN_HERS."""
-        self.assertEqual(self.run_speech("Hey Jev, open Notepad and write the whole plan for Monday"), [])
+        self.assertEqual(self.run_speech("Hey Harry, open Notepad and write the whole plan for Monday"), [])
 
     def test_room_talk_is_still_cut_at_max_turn(self):
         phrases = self.run_speech("so the match yesterday went on and on and on")
@@ -363,20 +363,20 @@ class LongInstruction(Case):
         self.assertLess(phrases[0], 15.5)
 
 
-# --------------------------------------------------------------------------- T1: "Hello [700 ms] Jev" with Parakeet
+# --------------------------------------------------------------------------- T1: "Hello [700 ms] Harry" with Parakeet
 class BareGreeting(Case):
     @staticmethod
-    def hello_jev(audio):
-        return "Hello Jev." if segments(audio) > 1 else "Hello."
+    def hello_harry(audio):
+        return "Hello Harry." if segments(audio) > 1 else "Hello."
 
     def test_hello_then_her_name_after_a_breath_is_one_turn_with_parakeet(self):
-        ear, phrases = listener(FakeEars(write=self.hello_jev), hold_for=siri.wait_for_rest)
+        ear, phrases = listener(FakeEars(write=self.hello_harry), hold_for=siri.wait_for_rest)
         for block in blocks(0.5, 0.0) + blocks(0.4, 1.0) + blocks(0.7, 0.0) + blocks(0.3, 1.0) + blocks(1.5, 0.0):
             ear.feed(block)
-        self.assertEqual([p[2] for p in phrases], ["Hello Jev."])
+        self.assertEqual([p[2] for p in phrases], ["Hello Harry."])
 
     def test_a_bare_greeting_ends_after_the_longest_wait_written_once(self):
-        ears = FakeEars(write=self.hello_jev)
+        ears = FakeEars(write=self.hello_harry)
         ear, phrases = listener(ears, hold_for=siri.wait_for_rest)
         for block in blocks(0.5, 0.0) + blocks(0.4, 1.0) + blocks(2.0, 0.0):
             ear.feed(block)
@@ -452,12 +452,12 @@ class PatientWait(Case):
         self.assertEqual(siri.settings.DEFAULTS["turn_wait"], "patient")
 
     def test_in_the_loop_a_pause_mid_request_is_one_turn(self):
-        """As the loop hears it, with no Smart Turn: "Jev, open settings [0.6 s] and Windows update"."""
+        """As the loop hears it, with no Smart Turn: "Harry, open settings [0.6 s] and Windows update"."""
         def write(audio):
-            return " ".join((["Jev, open settings"] if np.any(np.isclose(audio, 0.9)) else []) +
+            return " ".join((["Harry, open settings"] if np.any(np.isclose(audio, 0.9)) else []) +
                             (["and Windows update."] if np.any(np.isclose(audio, 0.8)) else []))
-        for wait, heard in (("patient", ["Jev, open settings and Windows update."]),
-                            ("quick", ["Jev, open settings", "and Windows update."])):
+        for wait, heard in (("patient", ["Harry, open settings and Windows update."]),
+                            ("quick", ["Harry, open settings", "and Windows update."])):
             with self.subTest(wait=wait):
                 a = self.assistant(ears=FakeEars(write=write), wait=wait)
                 acted = []
@@ -494,7 +494,7 @@ class CatchUp(Case):
             ran.append(words)
             a.queue(blocks(secs, 0.0))
         a.put("run_turn", run_turn)
-        fake = FakeListener(lambda n: n == 1 and a.var("act_on")("Hey Jev, what time is it?", "other", 100))
+        fake = FakeListener(lambda n: n == 1 and a.var("act_on")("Hey Harry, what time is it?", "other", 100))
         a.put("listener", fake)
         a.queue(blocks(0.1, 0.0))
         a.listen()
@@ -527,10 +527,10 @@ class WhileSheThinks(Case):
         self.assertEqual(fake.fed, 2 * n)
         self.assertEqual(fake.resets, [0, n])  # at the start, and at the break while she talked
 
-    FIRST, SECOND = "Hey Jev, who directed Iron Man?", "Hey Jev, also set a timer for five minutes."
+    FIRST, SECOND = "Hey Harry, who directed Iron Man?", "Hey Harry, also set a timer for five minutes."
 
     def two_requests(self, said_meanwhile, second=SECOND, gates=None):
-        """'Hey Jev, who directed Iron Man?', and while the model thinks, said_meanwhile is queued (0.8 for the second
+        """'Hey Harry, who directed Iron Man?', and while the model thinks, said_meanwhile is queued (0.8 for the second
         request's speech, written as second), then she answers. What reached handle(), and in gates how it came."""
         a = self.assistant(ears=FakeEars(write=lambda audio: second if np.any(np.isclose(audio, 0.8))
                                          else self.FIRST))
@@ -550,7 +550,7 @@ class WhileSheThinks(Case):
         return handled
 
     def test_a_second_request_said_while_she_thinks_is_acted_on(self):
-        """'Hey Jev, also set a timer for five minutes.' said while she thought: her answer to the first used to throw
+        """'Hey Harry, also set a timer for five minutes.' said while she thought: her answer to the first used to throw
         it away."""
         handled = self.two_requests(blocks(0.5, 0.0) + blocks(2.0, 0.8) + blocks(1.5, 0.0))
         self.assertEqual(handled, [self.FIRST, self.SECOND])
@@ -574,7 +574,7 @@ class WhileSheThinks(Case):
                 a.rec.sync_mic()
         for what, breaks in (("right Alt", lambda a: (a.rec.start(), a.rec.stop())), ("mode", mode)):
             with self.subTest(what=what):
-                a = self.assistant(ears=FakeEars(write=lambda audio: "Hey Jev, what time is it?"))
+                a = self.assistant(ears=FakeEars(write=lambda audio: "Hey Harry, what time is it?"))
                 handled = []
                 with mock.patch.object(siri, "handle", lambda text, *args, **kw: handled.append(str(text))):
                     a.speak(blocks(0.5, 0.0) + blocks(1.5, 0.9) + blocks(0.3, 0.0))
@@ -644,11 +644,11 @@ class TalkOver(Case):
     """In Windows' speech mode the mic keeps listening while she talks (Recorder.keeps): what you say over her last
     words, or as she finishes, is heard whole and acted on once her turn is over, more strictly than after an answer,
     so a TV talking over her isn't taken for a request."""
-    FIRST = "Hey Jev, what's the weather?"
+    FIRST = "Hey Harry, what's the weather?"
     REPLY = "It's sunny and thirty one degrees in Chennai today."
 
     def turns(self, over=(), after=(), words="", result="chat", speech_mode=True, no_name=True, before=(), cut=False):
-        """'Hey Jev, what's the weather?', and she answers REPLY: the mic hears over while she says it (after
+        """'Hey Harry, what's the weather?', and she answers REPLY: the mic hears over while she says it (after
         before, while she thinks), then after once her turn is over. The second phrase (0.8 in its audio) is written
         as words, if at least 1.2 s of it was heard, else only its end, "pad". cut: those words stopped her as she
         talked (overhear). What reached handle(), as (text, gate)."""
@@ -855,9 +855,9 @@ class Overhearing(Case):
 # --------------------------------------------------------------------------- A7: the rest of a held phrase
 class HeldPhrase(Case):
     def test_held_phrase_waits_while_its_continuation_is_still_going(self):
-        """'Hey Jev, search [pause] for flights to Delhi [0.4 s] next Friday': one request, not 'search' alone."""
+        """'Hey Harry, search [pause] for flights to Delhi [0.4 s] next Friday': one request, not 'search' alone."""
         def write(audio):
-            parts = (["Hey Jev, search."] if np.any(np.isclose(audio, 0.9)) else []) + \
+            parts = (["Hey Harry, search."] if np.any(np.isclose(audio, 0.9)) else []) + \
                 (["for flights to Delhi next Friday."] if np.any(np.isclose(audio, 0.8)) else [])
             return " ".join(parts)
         a = self.assistant(ears=FakeEars(write=write))
@@ -875,8 +875,8 @@ class HeldPhrase(Case):
         a.speak(blocks(0.5, 0.0) + blocks(0.6, 0.9) + blocks(0.6, 0.0))
         a.then(the_rest)
         a.listen()
-        self.assertEqual(waited, ["Hey Jev, search."])
-        self.assertEqual(acted, ["Hey Jev, search. for flights to Delhi next Friday."])
+        self.assertEqual(waited, ["Hey Harry, search."])
+        self.assertEqual(acted, ["Hey Harry, search. for flights to Delhi next Friday."])
 
 
 # --------------------------------------------------------------------------- A5: she doesn't talk over you
@@ -908,7 +908,7 @@ class NotOverYou(Case):
         10 s on that every time."""
         a = self.assistant(mode="ptt")
         said = []
-        a.listener.session, a.var("held")[0] = object(), ("Hey Jev, search", "other", 100, 0.0)
+        a.listener.session, a.var("held")[0] = object(), ("Hey Harry, search", "other", 100, 0.0)
         with mock.patch.object(siri, "say", lambda line, notify: said.append(line)), \
                 mock.patch.object(siri.win, "chime", lambda name: None), contextlib.redirect_stdout(a.out):
             start = time.time()
@@ -920,14 +920,14 @@ class NotOverYou(Case):
         self.wait_then_talk(lambda a: a.timer_done({"label": "", "line": "Your pasta is ready.", "secs": 60}))
 
     def test_not_over_a_dictation_you_started_while_it_waited(self):
-        """What you were saying was "Hey Jev, transcribe": the heads-up and the timer are told once it stops."""
+        """What you were saying was "Hey Harry, transcribe": the heads-up and the timer are told once it stops."""
         t = {"label": "", "line": "Your pasta is ready.", "secs": 60}
         for what, start in (("heads-up", lambda a: a.var("tell")("New message from Mum on WhatsApp.", "heads-up")),
                             ("timer", lambda a: a.timer_done(t))):
             with self.subTest(what=what):
                 a = self.assistant()
                 said, told = [], []
-                a.listener.session = object()  # you're half way through "Hey Jev, transcribe"
+                a.listener.session = object()  # you're half way through "Hey Harry, transcribe"
                 with mock.patch.object(siri, "say", lambda line, notify: said.append(line)), \
                         mock.patch.object(siri.history, "add", lambda *args: None), \
                         mock.patch.object(siri.win, "chime", lambda name: None), contextlib.redirect_stdout(a.out):
@@ -994,7 +994,7 @@ class DuringDictation(Case):
         self.assertEqual(told, ["Reminder: call Mum."])
 
     def test_one_held_back_by_a_dictation_you_started_is_told_after_it(self):
-        """tell() waited while you said "Hey Jev, transcribe", so it didn't say it: once it stops, it does."""
+        """tell() waited while you said "Hey Harry, transcribe", so it didn't say it: once it stops, it does."""
         a, told = self.assistant(), []
 
         def tell(line, said_for, kept=None):
@@ -1137,12 +1137,12 @@ class DictationStart(Case):
         self.assertEqual(len(ran), 3)
 
     def test_with_her_name_it_starts_straight_away(self):
-        started, handled = self.run_turn("Hey Jev, transcribe.", "transcribe", False)
+        started, handled = self.run_turn("Hey Harry, transcribe.", "transcribe", False)
         self.assertEqual((started, handled), ([True], []))
 
     def test_the_stop_phrase_goes_whatever_her_name_came_out_as(self):
-        """Nemotron writes 'Hey Jev' as 'Hello' and Parakeet runs it together as 'Heijev': neither is pasted."""
-        for stop in ("Hello, stop transcribing.", "Heijev, stop transcribing.", "Hey Jev, stop transcribing."):
+        """Nemotron may write 'Hey Harry' as 'Hello' and Parakeet run it together as 'Heyharry': neither is pasted."""
+        for stop in ("Hello, stop transcribing.", "Heyharry, stop transcribing.", "Hey Harry, stop transcribing."):
             with self.subTest(stop=stop):
                 d = siri.Dictation(siri.NAMES)
                 d.start()
@@ -1176,7 +1176,7 @@ class MicTrouble(Case):
 class IslandTap(Case):
     """Approve or Deny on the island for her question (siri.island_answer): a turn of hers, started off the controls
     loop, and ended in the audio as any turn is. 27 October, review: she said "Sent." with the mic listening, its
-    start was marked and her turn's end never was, so all said after, "Hey Jev" too, waited as said over her."""
+    start was marked and her turn's end never was, so all said after, "Hey Harry" too, waited as said over her."""
 
     def tap(self, a, says):
         def answer(yes, ask, notify=None):

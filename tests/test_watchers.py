@@ -92,7 +92,7 @@ class Downloads(unittest.TestCase):
     """A download: files still downloading in the Downloads folder, then a new file."""
 
     def setUp(self):
-        self.dir = fresh_dir(self, "heyjev-tests-")
+        self.dir = fresh_dir(self, "heyharry-tests-")
         patch = mock.patch.object(watchers, "download_folders", lambda: [self.dir])
         patch.start()
         self.addCleanup(patch.stop)
@@ -437,8 +437,8 @@ class WithWatches(unittest.TestCase):
     """A fresh task list, and the PC's power, lock and Downloads folder stood in for."""
 
     def setUp(self):
-        self.store = StopsWorker(os.path.join(fresh_dir(self, "heyjev-worker-"), "tasks.db"))
-        self.downloads = fresh_dir(self, "heyjev-tests-")
+        self.store = StopsWorker(os.path.join(fresh_dir(self, "heyharry-worker-"), "tasks.db"))
+        self.downloads = fresh_dir(self, "heyharry-tests-")
         self.said, self.shut, self.slept, self.locked = queue.Queue(), [], [], []
         for target, name, value in ((siri, "TASK_STORE", self.store), (siri, "ANNOUNCE", self.said),
                                     (siri.win, "shutdown", lambda delay=10: self.shut.append(delay)),
@@ -538,7 +538,7 @@ class Worker(WithWatches):
         self.assertEqual(self.shut, [])
 
     def test_never_after_she_couldnt_watch(self):
-        """The PC slept, or Jev was off, past when it was due: told, never powered off."""
+        """The PC slept, or Harry was off, past when it was due: told, never powered off."""
         task = self.watch({"kind": "time", "at": time.time() - 200}, "shutdown")
         self.run_worker()
         line = self.said.get(timeout=5)
@@ -694,7 +694,7 @@ class Asking(Turns):
             self.assertEqual(self.quick("tell me when hero is done")["say"], "I couldn't find an open window called hero.")
             self.assertEqual(self.quick("shut down the PC when Kiro is done")["say"],
                              "Should I shut down the computer when Kiro is done?")
-        with self.windows(front=(5, r"C:\heyjev\.venv\Scripts\pythonw.exe", "Hey Jev")):
+        with self.windows(front=(5, r"C:\heyharry\.venv\Scripts\pythonw.exe", "Hey Harry")):
             self.assertEqual(self.quick("tell me when it's done")["say"],
                              "Which window should I watch? Say its name, like tell me when Kiro is done.")
 

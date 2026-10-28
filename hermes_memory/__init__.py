@@ -1,4 +1,4 @@
-"""Hermes Agent's built-in memory, for Hey Jev: MEMORY.md (her notes) and USER.md (who you are), small and bounded,
+"""Hermes Agent's built-in memory, for Hey Harry: MEMORY.md (her notes) and USER.md (who you are), small and bounded,
 read into every request she makes.
 
 memory_store.py and threat_patterns.py are Hermes Agent's own code (MIT, see LICENSE), changed only where marked.
@@ -18,14 +18,14 @@ __all__ = ["ENTRY_DELIMITER", "MEMORY_BLOCK_HEADERS", "MemoryStore", "get_hermes
            "set_memory_dir",
            "memory_tool", "store", "USER_CHAR_LIMIT", "MEMORY_CHAR_LIMIT"]
 
-# Hey Jev: USER.md was full at Hermes' 1,375 letters by 22 October, and everything new she learned about you was
+# Hey Harry: USER.md was full at Hermes' 1,375 letters by 22 October, and everything new she learned about you was
 # dropped ("not kept: Memory at 1,357/1,375 chars"), while MEMORY.md used 53 of its 2,200. The room goes where she
 # writes: the same 3,575 letters in all, so her prompt stays within its budget (tests/test_learning.py)
 USER_CHAR_LIMIT, MEMORY_CHAR_LIMIT = 2000, 1575
 
 
 def store() -> MemoryStore:
-    """Her memory, with Hey Jev's limits: use this, not MemoryStore(), so every reader and writer agrees on them."""
+    """Her memory, with Hey Harry's limits: use this, not MemoryStore(), so every reader and writer agrees on them."""
     return MemoryStore(memory_char_limit=MEMORY_CHAR_LIMIT, user_char_limit=USER_CHAR_LIMIT)
 
 _STORE_ACTIONS = {

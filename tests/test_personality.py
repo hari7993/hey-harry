@@ -1,4 +1,4 @@
-"""28 October 2026, Atticus's way of answering in Jev's voice: answer first, a done task in one sentence of what's now
+"""28 October 2026, Atticus's way of answering in Harry's voice: answer first, a done task in one sentence of what's now
 true, and a failure that says what to do (siri.fail_line). An untouched SOUL.md moves to the new default; one you
 edited stays yours. No model, voice or network."""
 import os
@@ -13,7 +13,7 @@ import requests
 
 class Soul(unittest.TestCase):
     def setUp(self):
-        folder = tempfile.mkdtemp(prefix="heyjev-soul-")
+        folder = tempfile.mkdtemp(prefix="heyharry-soul-")
         self.path = os.path.join(folder, "SOUL.md")
         p = mock.patch.object(siri, "SOUL_PATH", self.path)
         p.start()

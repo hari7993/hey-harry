@@ -1,4 +1,4 @@
-"""Check Settings > Answer without her name: which phrases said near the PC, with no "Hey Jev", she takes as for her,
+"""Check Settings > Answer without her name: which phrases said near the PC, with no "Hey Harry", she takes as for her,
 and what she'd do. The real local filter (siri.could_be_request), quick path and answer model decide, but nothing is
 done on the PC: no steps run, nothing is said out loud, and nothing is kept in her history.
 

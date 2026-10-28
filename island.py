@@ -14,6 +14,10 @@ the colour of what she's doing, and nothing else beside them when nothing's on; 
 drawn exactly as it was. A small cartoon face was tried in the capsule first and put away the same day: the owner found the
 eyes more alive.
 
+The drop (28 October 2026, the owner's pick from a MacBook's notch, on by default): the capsule and the answer card
+hang from the top of the screen in the same glass, square where they meet it and curving into it each side, with no
+gap above (_drop) and no hairline along the top. The bar of your words still floats under them.
+
 It's one layered window drawn with numpy, like bubble.Island: clicks go through it except while you point at its
 buttons, it never takes the focus, and it's left out of her screenshots, so the model never sees its buttons. Between
 blinks nothing is drawn, and a long job moves once a second.
@@ -53,7 +57,7 @@ THEMES = {  # body, the bar under it, words, quieter words, eyes, eyes glow, a b
               "shadow": 0.2, "track": (0.82, 0.82, 0.85)},
 }
 # Her own turns: (how her eyes look, the dots' colour, what the dots do, the bars by the words)
-JEV = {
+HARRY = {
     "listening": ("open", BLUE, "voice", BLUE), "read": ("open", ORANGE, "voice", ORANGE),
     "again": ("side", ORANGE, "voice", ORANGE), "window": ("open", ORANGE, "ring", None),
     "dictating": ("open", GREEN, "voice", GREEN), "thinking": ("think", VIOLET, "busy", None),
@@ -74,7 +78,7 @@ GLASS = {
 }
 # Her eyes in the capsule for how a task is going (face.MOODS), as the pill's _compact has them: ^ ^ when done,
 # drooping when it failed, wide open while it waits on you, else open and glancing about. Not "focus" while one
-# runs: its sway never rests, a frame every 16 ms for as long as a job lasts. Her own turns take JEV's
+# runs: its sway never rests, a frame every 16 ms for as long as a job lasts. Her own turns take HARRY's
 TASK_LOOKS = {"done": "happy", "failed": "sad", "waiting_yes": "surprised"}
 # the capsule's eyes glow in the colour of what's going on: a reaction while it lasts (done, a notification,
 # something wrong), else her turn's or the task's own. White eyes, a tinted glow round them: the eyes stay hers
@@ -86,7 +90,7 @@ GAZE_REACH = 220  # logical px from her eyes at which she looks as far as she ca
 BLINKS = {"open", "surprised", "focus", "think", "glasses", "headphones", "sleepy", "side"}  # as face.Eyes blinks
 MIC_STATES = {"listening", "read", "again", "dictating"}
 HINTS = ("Say \u201cstop", "Say \"stop", "Go ahead", "Let go")  # the window's hints, not words you said
-# what the answer card's top line says she's at (_panel_jev); while she works, what she's doing, if it says
+# what the answer card's top line says she's at (_panel_harry); while she works, what she's doing, if it says
 PANEL_STATUS = {"listening": "Listening", "window": "Still listening", "dictating": "Dictating", "read": "Read this out",
                 "again": "Once more", "thinking": "Thinking", "looking": "Looking at the screen", "doing": "Working",
                 "finishing": "Finishing", "error": "Something went wrong", "phone": "Phone"}
@@ -112,6 +116,18 @@ def _union(a, b):
     if b is None:
         return a
     return min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])
+
+
+def _drop(xs, ys, x0, W, H, r, y_top, s):
+    """A box hanging from the top of the screen at y_top, as signed distances: square where it meets the edge,
+    its bottom corners round (r), and each side curving out into the edge over s px, a notch's shoulders. Nothing
+    above y_top: a screen over this one would show it."""
+    body = face.rbox(xs, ys, x0 + W / 2, y_top + (H - r) / 2, W / 2, (H + r) / 2, r)  # its top corners above
+    for corner in ((x0 - s, x0 + W + s) if s > 0 else ()):  # between its side and the edge, less a circle
+        side = np.maximum(face.rbox(xs, ys, (corner + (x0 if corner < x0 else x0 + W)) / 2, y_top + s / 2, s / 2,
+                                    s / 2, 0.0), -face.circle(xs, ys, corner, y_top + s, s))
+        body = np.minimum(body, side)
+    return np.maximum(body, y_top - ys)
 
 
 def _spread(part, i0, i1):
@@ -160,9 +176,12 @@ class DynamicIsland:
     # the capsule (27 October 2026): how far it floats under the top at least, how wide its row gets at most, and
     # the glass cards' corners. Her eyes are the pill's small ones (SMALL_EYES), as big against its height
     FLOAT, CAPSULE_MAX_W, GLASS_CORNER = 10, 330, 18
+    # the drop (28 October 2026): its bottom corners while nothing's on, and the curves into the top of the screen
+    DROP_CORNER, DROP_SHOULDER = 12, 6
     # the answer card (28 October 2026): its width, its tallest, and how long it stays once she's answered, in ms
     PANEL_W, PANEL_MAX_H, PANEL_LINGER = 360, 380, 8000
     panel = False  # her turns in the answer card, else as the capsule or pill has them
+    drop = False  # hanging from the top of the screen like a notch, with no gap above it (_read_settings)
     asked_at = answered_at = None  # this turn: when your words ended and when she answered, for the card's "2.23 s"
     receipt = None  # (Learned or Remembered, what, when): a line under her answer for RECEIPT_FOR seconds
     steps = None  # her turn's steps, [label, live|done|failed], newest last (step); the card shows the last few
@@ -180,7 +199,7 @@ class DynamicIsland:
         self._read_settings()
         self._build()
         self.eyes = face.Eyes()
-        self.jev, self.you, self.hide_job, self.since = None, "", None, 0.0
+        self.harry, self.you, self.hide_job, self.since = None, "", None, 0.0
         self.popups, self.popup, self.lives = [], None, {}
         self.hover, self.hover_at, self.away_at, self.hover_job, self.look_at = False, 0.0, 0.0, None, None
         self.pinned = None  # the plugin whose card a click keeps open after the pointer's gone
@@ -210,6 +229,7 @@ class DynamicIsland:
         # the answer card is the capsule but for her turns, which it shows as Atticus's box does
         self.panel = g("island_style") not in ("capsule", "pill")
         self.style = "pill" if g("island_style") == "pill" else "capsule"
+        self.drop = bool(g("island_drop"))  # hanging from the top of the screen, a notch, with no gap above it
         self.face_style = g("island_face") if g("island_face") in ("orb", "eyes", "wave") else "eyes"
         self.theme_name = g("island_theme") if g("island_theme") in ("system", "light", "dark", "amoled") else "amoled"
         self.border = bool(g("island_border"))
@@ -227,7 +247,7 @@ class DynamicIsland:
         if name == "system":
             name = "light" if self.light else "dark"
         if self.style == "capsule":
-            return GLASS["light" if name == "light" else "dark"]
+            return GLASS["light" if name == "light" else "dark"]  # the drop too: the same glass, hanging
         return THEMES[name]
 
     def reload(self):
@@ -250,7 +270,7 @@ class DynamicIsland:
     def preview(self):
         """A notification for a look at how they come out."""
         self.popups.append(plugins.Activity("notifications", "notification", {
-            "app": "Hey Jev", "app_id": "", "title": "This is how a notification looks",
+            "app": "Hey Harry", "app_id": "", "title": "This is how a notification looks",
             "text": "Pick which apps show here in the Island tab.", "phone": False}, mood="surprised"))
         self.dirty = True
         self._wake()
@@ -320,8 +340,8 @@ class DynamicIsland:
             x = right - (16 + self.off_x) * k - self.cw + m
         else:
             x = (left + right) / 2 + self.off_x * k - self.cw / 2
-        # the capsule floats: never closer to the top than FLOAT, whatever Down says
-        down = max(self.off_y, self.FLOAT) if self.style == "capsule" else self.off_y
+        # the drop hangs from the very top; the capsule floats, never closer to it than FLOAT, whatever Down says
+        down = 0 if self.drop else max(self.off_y, self.FLOAT) if self.style == "capsule" else self.off_y
         self.origin = wt.POINT(int(round(x)), int(round(top + down * k - m)))
         if self.visible_window:
             win.show_no_activate(self.hwnd, self.origin.x, self.origin.y, self.cw, self.ch)
@@ -365,41 +385,41 @@ class DynamicIsland:
             self.asked_at = time.time()  # your words are in
         if state == "speaking" and self.answered_at is None:
             self.answered_at = time.time()
-        if not self.jev or self.jev["state"] != state:
+        if not self.harry or self.harry["state"] != state:
             self.since = time.time()
             if state in ("error", "note"):  # hearts from a moment ago don't go with something going wrong
                 self.eyes.mood = None
-        if not self.jev:
+        if not self.harry:
             self.icon_for = None  # the app you're in now, for the dots
             self._place(win.work_area())
         self.eyes.wake(time.time())
-        self.jev = {"state": state, "text": text}
+        self.harry = {"state": state, "text": text}
         self.dirty = True
         self._wake()
 
     def caption(self, text):
         self.you = " ".join(str(text or "").split())
-        if self.jev:
+        if self.harry:
             self.dirty = True
             self._wake()
 
     def hide(self, delay=0):
         if delay:
-            if self.panel and self.jev and self.jev["state"] in ("speaking", "error"):
+            if self.panel and self.harry and self.harry["state"] in ("speaking", "error"):
                 delay = max(delay, self.PANEL_LINGER)  # the answer card stays a while, to read or try again
-            if self.jev and not self.hide_job:
+            if self.harry and not self.hide_job:
                 self.hide_job = self.root.after(delay, self._hide_later)
             return
         self.hide_job = None
-        if self.jev is None:
+        if self.harry is None:
             return
-        self.jev, self.you = None, ""
+        self.harry, self.you = None, ""
         self.dirty = True
         self._wake()
 
     def _hide_later(self):
         self.hide_job = None
-        if self.panel and self.hover and self.jev:  # not while you point at the answer card
+        if self.panel and self.hover and self.harry:  # not while you point at the answer card
             self.hide_job = self.root.after(1500, self._hide_later)
             return
         self.hide()
@@ -409,7 +429,7 @@ class DynamicIsland:
         its bubble and none of the last turn's steps."""
         self.you = " ".join(str(text or "").split())
         self.asked_at, self.answered_at, self.steps = time.time(), None, None
-        if self.jev:
+        if self.harry:
             self.dirty = True
             self._wake()
 
@@ -420,7 +440,7 @@ class DynamicIsland:
             self.typing = askbox.AskBox(self.root, self._typed, self._box_colours, self.k)
         self.typing.k = self.k  # as big as her card, after a change in the Island tab too
         x0, y0, x1, y1 = getattr(self, "island_rect", (0, 0, 0, 0))
-        near = (self.origin.x + x0, self.origin.y + y1, x1 - x0) if under and self.jev and x1 > x0 else None
+        near = (self.origin.x + x0, self.origin.y + y1, x1 - x0) if under and self.harry and x1 > x0 else None
         self.typing.open(text, near)
 
     def _typed(self, text):
@@ -443,19 +463,19 @@ class DynamicIsland:
         else:
             rows.append([label, state])
         self.steps = rows[-12:]
-        if self.panel and self.jev:
+        if self.panel and self.harry:
             self.dirty = True
             self._wake()
 
     def learned(self, kind, text):
         """What she learned or remembered (siri.receipt): a line on her answer card while it's up, else a popup."""
         self.receipt = (kind, text, time.time())
-        if self.panel and self.jev:
+        if self.panel and self.harry:
             self.dirty = True
             self.root.after(int(self.RECEIPT_FOR * 1000) + 60, self._receipt_gone)
         else:
             self.popups.append(plugins.Activity("notifications", "notification", {
-                "app": "Hey Jev", "app_id": "", "title": kind, "text": text, "phone": False}, mood="happy"))
+                "app": "Hey Harry", "app_id": "", "title": kind, "text": text, "phone": False}, mood="happy"))
             self.popups = self.popups[-6:]
             self.dirty = True
         self._wake()
@@ -500,7 +520,7 @@ class DynamicIsland:
     @property
     def visible(self):
         """Her own popup is up (not just her eyes, or a plugin's)."""
-        return self.jev is not None
+        return self.harry is not None
 
     # ------------------------------------------------------------------ the plugins
     def _events(self):
@@ -525,7 +545,7 @@ class DynamicIsland:
                 self.busy = event[1]
             elif kind == "place":
                 self.area = event[1]
-                if self.jev is None:
+                if self.harry is None:
                     self._place(self.area)
             elif kind == "light":
                 self.light = event[1]
@@ -537,8 +557,8 @@ class DynamicIsland:
 
     def _scene(self, now):
         """What to show now: her turn, a popup, what stays while it lasts, her eyes, or nothing."""
-        if self.jev:
-            return ("jev",)
+        if self.harry:
+            return ("harry",)
         if not self.enabled or (self.busy and self.hide_full):
             return None
         while self.popups:
@@ -565,11 +585,11 @@ class DynamicIsland:
     def _make(self, scene, now):
         if scene is None:
             return None
-        if scene[0] == "jev":  # pointing at her face while her turn's own row can be stopped: its card, with Stop.
+        if scene[0] == "harry":  # pointing at her face while her turn's own row can be stopped: its card, with Stop.
             act, turn = self._turn()  # only while you point: a card pinned earlier never covers her face for a turn
             if turn and turn.get("buttons") and self.hover:
                 return self._card(act)
-            return self._jev()
+            return self._harry()
         if scene[0] == "idle":
             return self._idle()
         act = scene[1]
@@ -618,19 +638,19 @@ class DynamicIsland:
         turn = act.data.get("turn") if act is not None and isinstance(act.data, dict) else None
         return (act, turn) if turn else (None, None)
 
-    def _jev(self):
+    def _harry(self):
         k, th = self.k, self.theme()
-        state, text = self.jev["state"], self.jev["text"]
-        expr, colour, mode, bars = JEV.get(state, JEV["listening"])
+        state, text = self.harry["state"], self.harry["text"]
+        expr, colour, mode, bars = HARRY.get(state, HARRY["listening"])
         colour = colour or th["muted" if state == "note" else "text"]
         cap = self._caption(state, text, bars)
         badge = sum(int(a.data.get("badge") or 0) for a in self.lives.values() if isinstance(a.data, dict))
         turn = self._turn()[1]  # how far her turn's got (step 3/5, round 5/30), beside her dots
         if self.panel:
-            return self._panel_jev(state, expr, colour)
+            return self._panel_harry(state, expr, colour)
         if self.style == "capsule":  # her eyes or the orb (the Face setting); the Siri wave is the pill's alone
-            return self._capsule_jev(state, expr, colour, mode, cap, badge, turn)
-        key = ("jev", state, self.face_style, badge, turn and (turn.get("status"), turn.get("progress")))
+            return self._capsule_harry(state, expr, colour, mode, cap, badge, turn)
+        key = ("harry", state, self.face_style, badge, turn and (turn.get("status"), turn.get("progress")))
         if self.face_style == "wave":
             W, H = self.WAVE[0] * k, self.WAVE[1] * k
             kind_, source, tint, _ = LOOKS.get(state, LOOKS["listening"])
@@ -650,7 +670,7 @@ class DynamicIsland:
                 sl = cv.region(x0, y0, x0 + aw, y0 + ah)
                 if sl:
                     cv.col[sl[0]] += cv._part(img, sl[0], x0, y0) * a
-            return Layout(key, "jev", W, H, draw, cap=cap, animated=True)
+            return Layout(key, "harry", W, H, draw, cap=cap, animated=True)
         W, H = self.FACE[0] * k, self.FACE[1] * k
         size = self.EYES * k
         icon = self._front_icon(round(17 * k))
@@ -691,10 +711,10 @@ class DynamicIsland:
                 self._glyph(cv, gx_, row_y, gr, turn, now, a)
             if badge:  # how many go on meanwhile, her turn's row too, in the corner: point at her for the card
                 self._badge(cv, ox + Wn - 13 * k, oy + 13 * k, badge, a)
-        return Layout(key, "jev", W, H, draw, cap=cap, eyes=expr, animated=state not in ("error", "note", "phone"),
+        return Layout(key, "harry", W, H, draw, cap=cap, eyes=expr, animated=state not in ("error", "note", "phone"),
                       wander=False)
 
-    def _panel_jev(self, state, expr, colour):
+    def _panel_harry(self, state, expr, colour):
         """Her turn as Atticus's box has it (28 October 2026, the owner's pick, her own eyes kept): her eyes and what
         she's doing at the top, with x to close it; what you said in a bubble on the right, the words coming in as
         you say them; her answer under it, coming in line by line; and once she's answered, how long it took and Try
@@ -704,7 +724,7 @@ class DynamicIsland:
         inner = W - 2 * pad
         f_status, f_q = self._text(round(12.5 * k), 500), self._text(round(13.5 * k), 400)
         f_a, f_foot = self._text(round(15 * k), 400), self._text(round(10.5 * k), 400)
-        text = self.jev["text"]
+        text = self.harry["text"]
         live = state in MIC_STATES or state == "window"
         busy = state in ("thinking", "looking", "doing", "finishing")
         own = LOOKS.get(state, LOOKS["listening"])[3].rstrip("\u2026").strip()
@@ -837,9 +857,9 @@ class DynamicIsland:
                 cv.text(f_got.render(label), ox + pad - 2, oy + y_r, GREEN, fade)
                 rest = f_got.fit(got[1], max(20 * k, Wn - 2 * pad - lw - 10 * k))
                 cv.text(f_got.render(rest), ox + pad + lw + 6 * k, oy + y_r, th["muted"], fade)
-        key = ("jev", state, "panel", heard, answer, status, took, round(H), full, got and got[2],
+        key = ("harry", state, "panel", heard, answer, status, took, round(H), full, got and got[2],
                tuple(tuple(r) for r in rows), copied, earlier)
-        return Layout(key, "jev", W, H, draw, radius=self.GLASS_CORNER * k, hot=hot, eyes=expr, wander=False,
+        return Layout(key, "harry", W, H, draw, radius=self.GLASS_CORNER * k, hot=hot, eyes=expr, wander=False,
                       animated=state not in ("error", "note", "phone") or bool(a_lines) or bool(got), face=True)
 
     def _panel_press(self, name):
@@ -849,9 +869,9 @@ class DynamicIsland:
             self.hide()
         elif name == "words" and self.you:
             self.ask(self.you)
-        elif name == "answer" and self.jev and self.jev["text"]:
+        elif name == "answer" and self.harry and self.harry["text"]:
             try:
-                win.set_clipboard(self.jev["text"])
+                win.set_clipboard(self.harry["text"])
             except RuntimeError as exc:  # another app kept the clipboard: nothing says Copied
                 print(f"  island: not copied, {exc}")
                 return
@@ -1432,8 +1452,8 @@ class DynamicIsland:
             return tuple(c * 0.72 for c in colour)
         return colour
 
-    def _capsule_jev(self, state, expr, colour, mode, cap, badge, turn):
-        """Her turn in the capsule: her eyes as the pill has them for it (JEV), glowing in its colour, the app you're
+    def _capsule_harry(self, state, expr, colour, mode, cap, badge, turn):
+        """Her turn in the capsule: her eyes as the pill has them for it (HARRY), glowing in its colour, the app you're
         in, the dots that move with a voice, how far her turn's got and how many go on meanwhile, the words under
         it as ever."""
         k = self.k
@@ -1444,7 +1464,7 @@ class DynamicIsland:
         if icon is not None:
             parts.append((icon.shape[1], lambda cv, x, cy, a, now: cv.image(icon, x, cy - icon.shape[0] / 2, a)))
 
-        def dots(cv, x, cy, a, now):  # as the pill has them (_jev)
+        def dots(cv, x, cy, a, now):  # as the pill has them (_harry)
             t = now - self.t0
             if mode == "ring":
                 total = float(getattr(sys.modules.get("siri"), "FOLLOW_UP", 8.0))
@@ -1462,9 +1482,9 @@ class DynamicIsland:
         if badge:
             br = self._badge_r(badge)
             parts.append((2 * br, lambda cv, x, cy, a, now: self._badge(cv, x + br, cy, badge, a)))
-        key = ("jev", state, "capsule", badge, turn and (turn.get("status"), turn.get("progress")))
+        key = ("harry", state, "capsule", badge, turn and (turn.get("status"), turn.get("progress")))
         # her eyes do as her turn says (looking up while she thinks, about while she works), as on the pill
-        return self._capsule(key, "jev", parts, animated=state not in ("error", "note", "phone"), cap=cap,
+        return self._capsule(key, "harry", parts, animated=state not in ("error", "note", "phone"), cap=cap,
                              wander=False)
 
     def _badge_r(self, n):
@@ -1719,7 +1739,7 @@ class DynamicIsland:
             self._hover_poll()
         self.fade = 1
         old = self.layout
-        if old is not None and (new.key == old.key or old.kind == new.kind == "jev" or
+        if old is not None and (new.key == old.key or old.kind == new.kind == "harry" or
                                 (old.kind == new.kind == "card" and old.key[:2] == new.key[:2])):
             self.layout = new  # the same scene with its words moved on, her next step, a card's: straight away
         elif old is None:
@@ -1757,9 +1777,9 @@ class DynamicIsland:
         lay = self.layout or self.prev
         if lay is not None and lay.eyes is not None:  # once a frame, whatever's fading in or out
             self.eye = self.eyes.update(now, dt, lay.eyes, wander=lay.wander, look_at=self.look_at)
-        if lay is not None and lay.kind == "jev":
-            src = "mic" if self.jev and self.jev["state"] in MIC_STATES else \
-                "voice" if self.jev and self.jev["state"] == "speaking" else None
+        if lay is not None and lay.kind == "harry":
+            src = "mic" if self.harry and self.harry["state"] in MIC_STATES else \
+                "voice" if self.harry and self.harry["state"] == "speaking" else None
             self.level = bubble.loudness(src, self.level) if src else self.level * 0.85
         try:
             t = time.perf_counter()
@@ -1807,18 +1827,19 @@ class DynamicIsland:
     def _theme_name(self):
         return ("light" if self.light else "dark") if self.theme_name == "system" else self.theme_name
 
-    def _shape(self, x0, W, H, r, y_top):
+    def _shape(self, x0, W, H, r, y_top, drop=False):
         """(patch slices, cover, alpha with the shadow, the border's cover or None) of a rounded rectangle. Its
         shadow reaches 5.5k past its sides and 8.5k below it, so the patch goes no further; and once inside the
         corners every column is alike, so the middle is worked out once (a 700 px bar costs what a 90 px one
         does)."""
         key = (round(x0 * 2), round(W * 2), round(H * 2), round(r * 2), round(y_top * 2), self._theme_name(),
-               self.border, self.style)
+               self.border, self.style, drop)
         hit = self.shapes.get(key)
         if hit is not None:
             return hit
         k = self.k
-        X0, X1 = max(0, int(x0 - 6 * k - 1)), min(self.cw, int(math.ceil(x0 + W + 6 * k + 1)))
+        s = self.DROP_SHOULDER * k if drop else 0.0
+        X0, X1 = max(0, int(x0 - 6 * k - s - 1)), min(self.cw, int(math.ceil(x0 + W + 6 * k + s + 1)))
         Y0, Y1 = max(0, int(y_top - 3 * k - 1)), min(self.ch, int(math.ceil(y_top + H + 9 * k + 1)))
         xs = np.arange(X0, X1, dtype=np.float32) + 0.5
         ys = np.arange(Y0, Y1, dtype=np.float32)[:, None] + 0.5
@@ -1829,14 +1850,19 @@ class DynamicIsland:
         if len(mid) > 4:
             i0, i1 = int(mid[0]), int(mid[-1]) + 1
             xs = np.concatenate([xs[:i0], np.asarray([cx], np.float32), xs[i1:]])
-        sd = face.rbox(xs, ys, cx, cy, W / 2, H / 2, r)
+        if drop:
+            # its shadow from the box alone: from the shoulders too, it ringed their curves in grey
+            sd, far = _drop(xs, ys, x0, W, H, r, y_top, s), _drop(xs, ys - 3 * k, x0, W, H, r, y_top, 0.0)
+        else:
+            sd, far = face.rbox(xs, ys, cx, cy, W / 2, H / 2, r), face.rbox(xs, ys - 3 * k, cx, cy, W / 2, H / 2, r)
         cover = np.clip(0.5 - sd, 0.0, 1.0)
-        far = face.rbox(xs, ys - 3 * k, cx, cy, W / 2, H / 2, r)
         shadow = self.theme()["shadow"] * np.clip(0.5 - far / (11 * k), 0.0, 1.0) ** 2
         alpha = cover + shadow * (1 - cover)
         if self.style == "capsule":  # glass always has its hairline, about a pixel just inside its edge
             lw = max(1.0, k)
             edge = np.clip(0.5 - (np.abs(sd + 0.5 * lw) - 0.5 * lw), 0.0, 1.0) * cover
+            if drop:  # round its sides and bottom, never along the top of the screen it hangs from
+                edge *= np.clip((ys - y_top - lw) / lw, 0.0, 1.0)
         else:
             edge = np.clip(0.5 - (np.abs(sd + 0.7 * k) - 0.6 * k), 0.0, 1.0) if self.border else None
         if i0 is not None:
@@ -1991,12 +2017,14 @@ class DynamicIsland:
         lay = self.layout or self.prev
         if lay is not None and lay.radius:
             r = lay.radius
+        elif self.drop:  # a notch's corners, not the capsule's round ends
+            r = self.DROP_CORNER * k
         elif self.style == "capsule":  # fully round ends
             r = H / 2
         else:
             r = min(H / 2, self.corner * k)
         r = min(r, H / 2)
-        sl, cover, alpha, edge = self._shape(x0, W, H, r, y0)
+        sl, cover, alpha, edge = self._shape(x0, W, H, r, y0, self.drop)
         ox, oy = x0 - sl[1].start, y0 - sl[0].start
         self.patch_at = (sl[1].start, sl[0].start)  # where her face is drawn from, in the window (_face)
         items = [(lambda cv, a, L=L: L.draw(cv, ox, oy, W, H, a, now), la) for L, la in
@@ -2020,7 +2048,7 @@ class DynamicIsland:
         x0, y0, x1, y1 = getattr(self, "island_rect", (0, 0, 0, 0))
         near = x0 - 6 <= x <= x1 + 6 and y0 - 6 <= y <= y1 + 6
         lay = self.layout
-        clickable = lay is not None and (lay.kind in CLICKABLE or (lay.kind == "jev" and bool(lay.hot)))
+        clickable = lay is not None and (lay.kind in CLICKABLE or (lay.kind == "harry" and bool(lay.hot)))
         if (px, py) != self.rest_pos:  # moved: Approve waits for it to rest again (_steady)
             self.rest_pos, self.rest_at = (px, py), now
         if near:
@@ -2036,8 +2064,8 @@ class DynamicIsland:
                 self.dirty = True
                 self._wake()
         win.set_click_through(self.hwnd, not (self.hover and clickable))
-        if lay is not None and lay.face and lay.kind != "jev":  # the capsule's eyes look at the pointer while it
-            self._follow(x, y, now)  # moves, wherever it is; on her turn they do as it says (JEV), as on the pill
+        if lay is not None and lay.face and lay.kind != "harry":  # the capsule's eyes look at the pointer while it
+            self._follow(x, y, now)  # moves, wherever it is; on her turn they do as it says (HARRY), as on the pill
         elif self.hover and lay is not None and lay.kind == "idle":  # her eyes follow the mouse
             cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
             self.look_at = (max(-1.0, min(1.0, (x - cx) / max(1.0, (x1 - x0) / 2))),
@@ -2081,7 +2109,7 @@ class DynamicIsland:
             self.runner.do("media", name)
         elif lay.kind == "card":
             self._press(lay.press.get(name), right)
-        elif lay.kind == "jev" and name and not right:  # the answer card's x and Try again
+        elif lay.kind == "harry" and name and not right:  # the answer card's x and Try again
             self._panel_press(name)
 
     def _press(self, what, right):
@@ -2128,3 +2156,31 @@ def _resize(rgba, size):
     ys = np.minimum((np.arange(size) * h / size).astype(int), h - 1)
     xs = np.minimum((np.arange(size) * w / size).astype(int), w - 1)
     return rgba[ys][:, xs].astype(np.float32)
+
+
+def logo(h, open_=1.0, back=None, look=(0.0, 0.0)):
+    """Her island as a picture (28 October 2026, the owner's ask): the glass capsule with her glowing eyes, as it floats
+    at the top of the screen with nothing on, h px tall and as wide as it is there. The window's logo, and her icon.
+    back: the colour behind it, (r, g, b) 0 to 1, for straight colours (h, w, 3); None for a picture with its own alpha
+    (h, w, 4), premultiplied as island_art's are, its glass solid. open_: how open her eyes are, 0 to 1, for a blink;
+    look: where they look, -1 to 1 across and down."""
+    th, k = GLASS["dark"], h / DynamicIsland.COMPACT_H
+    w = int(round((2 * 16 + 3.2 * DynamicIsland.SMALL_EYES) * k))  # her eyes in the round ends (_capsule, _eyes_w)
+    xs = np.arange(w, dtype=np.float32) + 0.5
+    ys = (np.arange(h, dtype=np.float32) + 0.5)[:, None]
+    sd = face.rbox(xs, ys, w / 2, h / 2, w / 2 - 0.5, h / 2 - 0.5, h / 2)
+    cover = np.clip(0.5 - sd, 0.0, 1.0)[..., None]
+    lw = max(1.0, k)  # the hairline, about a pixel just inside its edge (_shape)
+    edge = np.clip(0.5 - (np.abs(sd + 0.5 * lw) - 0.5 * lw), 0.0, 1.0)[..., None] * cover * th["line_a"]
+    body = np.asarray(th["body"], np.float32)
+    if back is not None:  # the glass, a little of what's behind it showing through
+        body = body * th["fill"] + np.asarray(back, np.float32) * (1 - th["fill"])
+    col = np.empty((h, w, 3), np.float32)
+    col[:] = body
+    col += (np.asarray(th["line"], np.float32) - col) * edge
+    face.draw_eyes(face.Canvas(col), w / 2, h / 2, DynamicIsland.SMALL_EYES * k, "open", open_, look,
+                   colour=th["eyes"], glow=th["glow"])
+    np.clip(col, 0.0, 1.0, out=col)
+    if back is None:
+        return np.concatenate([col * cover, cover], axis=2).astype(np.float32)
+    return (col * cover + np.asarray(back, np.float32) * (1 - cover)).astype(np.float32)

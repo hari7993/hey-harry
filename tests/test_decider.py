@@ -1,4 +1,4 @@
-"""The decider (decider.py): its heads, its levels, its Jev-shaped answers, and in act_on only ever letting plain room
+"""The decider (decider.py): its heads, its levels, its Harry-shaped answers, and in act_on only ever letting plain room
 talk go, and only when it's on. A fake encoder stands in for the model."""
 import os
 import sys
@@ -44,7 +44,7 @@ class SureNo:
 
 
 class Heads(unittest.TestCase):
-    def test_it_learns_requests_from_room_talk_and_answers_like_jev(self):
+    def test_it_learns_requests_from_room_talk_and_answers_like_harry(self):
         d = trained()
         with mock.patch.object(decider, "available", lambda: True):
             out = d.decide({"said": "open chrome", "kind": "cold"}, {"for_me": {"type": "noul"}, "nope": {}})
@@ -185,8 +185,8 @@ class InHerEars(unittest.TestCase):
                       "the second one", "aur kal?", "phir se bolo", "awaaz badhao"):
             handled, logged = self.run_cold(a, words, "on", SureNo, kind="follow_up")
             self.assertEqual((handled, logged[0]["verdict"]), ([words], "no"), words)
-        handled, _ = self.run_cold(a, "say that again, Jev", "on", SureNo)  # her name, not sure of it
-        self.assertEqual(handled, ["say that again, Jev"])
+        handled, _ = self.run_cold(a, "say that again, Harry", "on", SureNo)  # her name, not sure of it
+        self.assertEqual(handled, ["say that again, Harry"])
 
     def test_a_question_another_test_left_in_history_changes_nothing_here(self):
         """run_cold read asked_last from the shared test history: a "...?" reply any other test wrote within 28 s

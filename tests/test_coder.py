@@ -58,7 +58,7 @@ FAKE_OPENCODE = textwrap.dedent('''
 
 
 def git_folder():
-    folder = tempfile.mkdtemp(prefix="heyjev-code-")
+    folder = tempfile.mkdtemp(prefix="heyharry-code-")
     subprocess.run(["git", "-C", folder, "init", "-q"], check=True)
     return folder
 
@@ -179,7 +179,7 @@ class Snapshots(unittest.TestCase):
         self.assertIn("git restore --source", line)
         git(self.folder, "restore", "--source", snap.split(":")[1][:10], "--worktree", ".")  # as the line says
         self.assertEqual((self.read("notes.md"), self.read("app.py")), ("my notes\n", "print(2)\n"))
-        self.assertIn(snap.split(":")[1], git(self.folder, "for-each-ref", "refs/heyjev"))  # kept from git's clean-up
+        self.assertIn(snap.split(":")[1], git(self.folder, "for-each-ref", "refs/heyharry"))  # kept from git's clean-up
 
     def test_tracked_changes_alone_are_a_stash_as_before(self):
         self.write("app.py", "print(2)\n")
@@ -246,7 +246,7 @@ class Snapshots(unittest.TestCase):
                 args + ["--no-such-option"] if "ls-files" in args else args, **kw)):
             with self.assertRaisesRegex(RuntimeError, "not started"):
                 coder.snapshot(self.folder)
-        self.assertEqual(git(self.folder, "for-each-ref", "refs/heyjev"), "")
+        self.assertEqual(git(self.folder, "for-each-ref", "refs/heyharry"), "")
 
     def test_files_only_staged_in_a_repo_with_no_commits_are_kept(self):
         """With no commit yet stash create fails, and files you'd only git added were kept nowhere: "head:", no undo."""
@@ -268,7 +268,7 @@ class Snapshots(unittest.TestCase):
         with mock.patch.object(coder, "SNAPSHOT_MAX_BYTES", 2000):
             with self.assertRaisesRegex(RuntimeError, "venv"):
                 coder.snapshot(self.folder)
-        self.assertEqual(git(self.folder, "for-each-ref", "refs/heyjev"), "")
+        self.assertEqual(git(self.folder, "for-each-ref", "refs/heyharry"), "")
         self.assertEqual(git(self.folder, "count-objects").split()[0], "3")  # the first commit's, nothing more
         with mock.patch.object(coder, "SNAPSHOT_MAX_FILES", 1):
             with self.assertRaisesRegex(RuntimeError, "too many new files"):
@@ -276,7 +276,7 @@ class Snapshots(unittest.TestCase):
         self.assertTrue(coder.snapshot(self.folder).startswith("files:"))  # small enough: kept as before
 
     def test_only_the_last_ways_back_are_kept_and_the_real_index_is_reused(self):
-        """Snapshots stayed under refs/heyjev for ever. And read-tree gave the spare index none of the real one's
+        """Snapshots stayed under refs/heyharry for ever. And read-tree gave the spare index none of the real one's
         file times, so every tracked file was hashed again for each job."""
         real, calls, stamps = subprocess.run, [], iter(f"2026010{n}-000000" for n in range(1, 10))
 
@@ -289,7 +289,7 @@ class Snapshots(unittest.TestCase):
             for n in range(3):
                 self.write("notes.md", f"notes {n}\n")
                 snaps.append(coder.snapshot(self.folder).split(":")[1])
-        kept = git(self.folder, "for-each-ref", "--format=%(objectname)", "refs/heyjev").split()
+        kept = git(self.folder, "for-each-ref", "--format=%(objectname)", "refs/heyharry").split()
         self.assertEqual(sorted(kept), sorted(snaps[1:]))
         self.assertFalse([c for c in calls if "read-tree" in c])
         self.assertEqual(git(self.folder, "status", "--porcelain"), "?? notes.md")  # the real index untouched
@@ -315,7 +315,7 @@ class OverTheProtocol(unittest.TestCase):
 
 class Steps(unittest.TestCase):
     def test_a_code_step_asks_first_and_a_yes_queues_it(self):
-        store = tasks.Store(os.path.join(tempfile.mkdtemp(prefix="heyjev-tasks-"), "tasks.db"))
+        store = tasks.Store(os.path.join(tempfile.mkdtemp(prefix="heyharry-tasks-"), "tasks.db"))
         folder = git_folder()
         with mock.patch.object(siri, "TASK_STORE", store), mock.patch.object(coder, "NOT_HERE", ()):
             plan = siri.prepare_task_steps({"steps": [{"do": "code", "task": "add a dark mode toggle", "cwd": folder}],
@@ -374,7 +374,7 @@ class Late(unittest.TestCase):
             worker.join(5)
 
     def test_a_late_command_doesnt_run_and_a_late_reminder_says_when_it_was_for(self):
-        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyjev-worker-"), "tasks.db"))
+        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyharry-worker-"), "tasks.db"))
         said = queue.Queue()
         with mock.patch.object(siri, "TASK_STORE", store), mock.patch.object(siri, "ANNOUNCE", said), \
                 mock.patch.object(siri.tasking, "run_command", lambda *a, **k: self.fail("ran late")):
@@ -389,7 +389,7 @@ class Late(unittest.TestCase):
     def stopped_job(self, why, cancel=False):
         """A coding job that changed two files, then stopped with why (and was cancelled first, with cancel): what's
         said, and what's kept in Tasks."""
-        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyjev-worker-"), "tasks.db"))
+        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyharry-worker-"), "tasks.db"))
         said = queue.Queue()
 
         class Stopped:
@@ -420,7 +420,7 @@ class Late(unittest.TestCase):
         self.assertEqual(line, f"Task {task} was cancelled: Add a toggle. It changed 2 files first. {undo}")
 
     def test_a_task_asked_on_the_phone_reports_back_there(self):
-        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyjev-worker-"), "tasks.db"))
+        store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyharry-worker-"), "tasks.db"))
         said, sent = queue.Queue(), queue.Queue()
         with mock.patch.object(siri, "TASK_STORE", store), mock.patch.object(siri, "ANNOUNCE", said), \
                 mock.patch.dict(siri.PHONE, {"send": lambda chat, line: sent.put((chat, line)) or True}),                 mock.patch.dict(siri.settings._load(), {"telegram_owner": 7}):

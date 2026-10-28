@@ -1,4 +1,4 @@
-"""Jev on your phone (telegram_bot.py and the phone turns in siri): pairing, only your account, nothing late, her
+"""Harry on your phone (telegram_bot.py and the phone turns in siri): pairing, only your account, nothing late, her
 questions answered only by a tap there, and a yes at the PC never answering a phone question. Telegram is faked."""
 import asyncio
 import contextlib

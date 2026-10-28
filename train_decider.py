@@ -1,7 +1,7 @@
 """Trains the decider's heads (decider.py) on her own past turns: python train_decider.py
 
 for_me, "was this said to her?", from the hand labels of 4 to 7 October 2026 (487 turns: U for her, N not, B a
-filler like "mm-hmm") and the 1,411 room phrases she let go, all kept in %LOCALAPPDATA%\\Hey Jev\\decider\\labels-*.
+filler like "mm-hmm") and the 1,411 room phrases she let go, all kept in %LOCALAPPDATA%\\Hey Harry\\decider\\labels-*.
 A request said with her name counts too, with the name taken off, since that's how it would sound without it.
 Later turns logged in shadow mode (shadow.jsonl) are added once you've labelled them there ("label": "U" or "N").
 

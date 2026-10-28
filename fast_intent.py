@@ -12,13 +12,14 @@ import difflib
 import re
 from typing import List, Optional
 
-# Filler prefixes and polite suffixes that speech-to-text adds
-FILLERS_START = re.compile(
-    r"^(?:(?:hey|hi|hello|ok|okay|yo)\s+(?:jev|jarvis|jeff|joe|jim|jill)\s*,?\s*)?"
+import identity
+
+# Filler prefixes and polite suffixes that speech-to-text adds. @NAMES@: her names as they're heard now (identity)
+FILLERS_START = (
+    r"^(?:(?:hey|hi|hello|ok|okay|yo)\s+(?:@NAMES@)\s*,?\s*)?"
     r"(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:just\s+)?|"
     r"(?:please\s+)?(?:just\s+)?(?:go\s+ahead\s+and\s+|i\s+(?:want|need|would\s+like)\s+you\s+to\s+|"
-    r"let(?:'s|s)\s+|kindly\s+)?)+",
-    re.I
+    r"let(?:'s|s)\s+|kindly\s+)?)+"
 )
 
 FILLERS_END = re.compile(
@@ -60,7 +61,7 @@ def clean_text(text: str) -> str:
     t = text.lower().replace("\u2019", "'").strip()
     t = " ".join(re.sub(r"[^\w\s'%.-]|\.(?!\w)|(?<!\w)-|-(?!\w)", " ", t).split())
     # Strip start and end fillers
-    t = FILLERS_START.sub("", t).strip()
+    t = re.sub(FILLERS_START.replace("@NAMES@", "|".join(identity.wake_words())), "", t, flags=re.I).strip()
     t = FILLERS_END.sub("", t).strip()
     # Repair the slips of more than one word on the whole line first: looked up a word at a time, "note pad", "you
     # tube" and the other nine of them could never match (found 27 October)

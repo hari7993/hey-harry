@@ -31,7 +31,7 @@ class Briefing(unittest.TestCase):
     """What she says, from a fixed morning, with everything there is to say."""
 
     def setUp(self):
-        self.store = tasks.Store(os.path.join(tempfile.mkdtemp(prefix="heyjev-tests-brief-"), "tasks.db"))
+        self.store = tasks.Store(os.path.join(tempfile.mkdtemp(prefix="heyharry-tests-brief-"), "tasks.db"))
         self.config = {"name": "Hari", "notifications": True}
         get = siri.settings.get
         self.messages = mock.Mock(return_value=[MUM])

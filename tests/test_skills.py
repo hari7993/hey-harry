@@ -146,7 +146,7 @@ class Format(Fresh):
     def test_a_junction_in_a_skill_is_never_walked(self):
         """27 October: rglob walked into a junction inside a skill, every 5 s on the voice path."""
         folder = write(skills.SKILLS_DIR / skills.IMPORTED / "linked", CLEAN.replace("{name}", "linked"))
-        outside = Path(tempfile.mkdtemp(prefix="heyjev-outside-"))
+        outside = Path(tempfile.mkdtemp(prefix="heyharry-outside-"))
         for i in range(5):
             (outside / f"{i}.txt").write_text("x", encoding="utf-8")
         (folder / "references").mkdir()
@@ -452,7 +452,7 @@ class Slots(Fresh):
     def test_a_trigger_ending_in_a_slot_takes_your_words(self):
         self.teach(["search amazon for {query}"], [{"do": "website", "url": "https://www.amazon.in/s?k={query}"}],
                    "Looking for {query}.")
-        plan = siri.quick("Jev, search Amazon for running shoes & socks".split(", ", 1)[1])
+        plan = siri.quick("Harry, search Amazon for running shoes & socks".split(", ", 1)[1])
         self.assertEqual(plan["steps"], [{"do": "website", "url": "https://www.amazon.in/s?k=running%20shoes%20socks"}])
         self.assertEqual(plan["say"], "Looking for running shoes socks.")
         self.assertIsNone(siri.slot_routine("search amazon for running shoes", "cold"))  # not from across the room

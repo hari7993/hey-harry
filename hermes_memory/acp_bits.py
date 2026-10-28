@@ -2,7 +2,7 @@
 # https://github.com/NousResearch/hermes-agent, MIT License, see LICENSE in this folder.
 # Copied by sync_hermes.py; only the imports are changed, see UPSTREAM.json. Don't edit by hand.
 
-"""Pieces of Hermes Agent's ACP client (agent/acp_client.py) Hey Jev uses to drive the OpenCode CLI in
+"""Pieces of Hermes Agent's ACP client (agent/acp_client.py) Hey Harry uses to drive the OpenCode CLI in
 coder.py: its JSON-RPC replies, and picking the session's model from the ones it offers."""
 
 from collections.abc import Callable

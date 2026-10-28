@@ -1,4 +1,4 @@
-"""Her to-do list, kept on this PC in %APPDATA%\\Hey Jev\\todo.json: "add milk to my to-do list", "what's on my
+"""Her to-do list, kept on this PC in %APPDATA%\\Hey Harry\\todo.json: "add milk to my to-do list", "what's on my
 to-do list?", "cross off milk". An idea from Nixi (heynixi.com), which keeps one.
 
 Things you tick off stay in the file a week, marked done, so "what did I get done?" has an answer and a tick by

@@ -1,14 +1,14 @@
-r"""Hermes Agent's skills, for Hey Jev: procedural memory she writes herself, so she gets better at what you ask her
+r"""Hermes Agent's skills, for Hey Harry: procedural memory she writes herself, so she gets better at what you ask her
 often. A skill is a folder with a SKILL.md: YAML frontmatter with a name and a description, then how to do the task,
 in the agentskills.io format Hermes Agent uses.
 
 The rules and checks are Hermes' tools/skill_manager_tool.py, tools/skills_tool.py, agent/skill_utils.py and
-agent/prompt_builder.py (MIT, see LICENSE), cut down to what Hey Jev needs. Changes are marked "Hey Jev:". Left
+agent/prompt_builder.py (MIT, see LICENSE), cut down to what Hey Harry needs. Changes are marked "Hey Harry:". Left
 out: categories, the skills hub and linting. Hermes' own usage tracking and curator are copied in whole
 (skill_usage.py, curator.py): a skill she wrote herself that goes unused is marked stale after 14 days and archived
 after 30, never deleted; one you taught her is never touched.
 
-Hey Jev: a skill can also have `triggers`, phrases that start it, and a ```json plan of steps in its body, so a
+Hey Harry: a skill can also have `triggers`, phrases that start it, and a ```json plan of steps in its body, so a
 routine you taught her ("when I say work mode, ...") runs straight away, without asking the model. One trigger may
 end in a slot for your own words, "search amazon for {query}" (siri.slot_routine).
 
@@ -46,16 +46,16 @@ MAX_SKILL_CONTENT_CHARS = 100_000   # ~36k tokens at 2.75 chars/token
 VALID_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9._-]*$')  # filesystem-safe, URL-friendly
 _FRONTMATTER_END_RE = re.compile(r'\n---\s*\n')
 _NAME_RULE = "Use lowercase letters, numbers, hyphens, dots, and underscores."
-_PLAN_RE = re.compile(r"```json\s*\n(.*?)\n\s*```", re.S)  # Hey Jev: a routine's steps
-SKILLS_DIR = Path.home() / ".hermes" / "skills"  # Hey Jev: set with set_skills_dir()
-IMPORTED = "imported"  # Hey Jev: SKILLS_DIR\imported, skills the owner drops in by hand (see the top of this file)
+_PLAN_RE = re.compile(r"```json\s*\n(.*?)\n\s*```", re.S)  # Hey Harry: a routine's steps
+SKILLS_DIR = Path.home() / ".hermes" / "skills"  # Hey Harry: set with set_skills_dir()
+IMPORTED = "imported"  # Hey Harry: SKILLS_DIR\imported, skills the owner drops in by hand (see the top of this file)
 SUPPORT_DIRS = ("references", "templates", "assets", "scripts")  # agentskills.io's folders beside a SKILL.md
 MAX_FILE_BYTES = 256 * 1024  # the most of one support file skill_view reads
 MOST_FILES = 40  # support files a skill_view lists, at most
 # How the model reads a support file: in a skill_view's result when the skill has some, and in siri.ARG_NAMES, so a
 # file_path=... tool-call argument (Ling's way of asking) is read as one
 SKILL_FILE_STEP = '{"do":"skill_view","name":"...","file_path":"references/..."}'
-JEV_MARKS = ("agent", "learn")  # skill_usage's created_by for a skill create_skill wrote: hers, or one you taught her
+HARRY_MARKS = ("agent", "learn")  # skill_usage's created_by for a skill create_skill wrote: hers, or one you taught her
 WINDOWS = {"windows", "win32", "win", "win64"}  # what platforms or metadata.openclaw.os call this PC
 CHECKS_LAST = 60  # seconds a program on PATH or a key found (or not) is taken as still so
 # Set by siri: a key from Credential Manager or .env (secrets_store.get_secret), a Settings value (settings.get), and
@@ -80,7 +80,7 @@ def _err(message: str) -> Dict[str, Any]:
 def parse_frontmatter(content: str) -> Tuple[Dict[str, Any], str]:
     """Parse YAML frontmatter from markdown; returns (frontmatter_dict, body).
     A leading UTF-8 BOM (Windows editors) is stripped first or it would defeat the ``---`` fence check.
-    Hey Jev: YAML first, as Hermes does, for OpenClaw's nested metadata and folded descriptions; a scalar YAML reads
+    Hey Harry: YAML first, as Hermes does, for OpenClaw's nested metadata and folded descriptions; a scalar YAML reads
     as something else (yes, 2024, a date) is kept as its line says it, so a name or a description stays words. YAML
     that won't parse, often a JSON5 metadata block with a trailing comma or a comment, has that block read as JSON5
     and the rest split line by line, as before."""
@@ -215,13 +215,13 @@ def _line_frontmatter(yaml_content: str) -> Dict[str, Any]:
         if ":" in line:
             key, value = line.split(":", 1)
             value = value.strip()
-            if value[:1] in ('"', "["):  # Hey Jev: written as JSON by build_content, which YAML reads the same
+            if value[:1] in ('"', "["):  # Hey Harry: written as JSON by build_content, which YAML reads the same
                 try:
                     frontmatter[key.strip()] = json.loads(value)
                     continue
                 except (ValueError, RecursionError):  # brackets nested deeper than json can go: words
                     pass
-            frontmatter[key.strip()] = value.strip("'\"")  # Hey Jev: quotes off
+            frontmatter[key.strip()] = value.strip("'\"")  # Hey Harry: quotes off
     return frontmatter
 
 
@@ -258,7 +258,7 @@ def _validate_frontmatter(content: str) -> Optional[str]:
 
 
 def _validate_same_name(name: str, content: str) -> Optional[str]:
-    """Hey Jev: the frontmatter name is the folder's, as agentskills.io, OpenClaw and Hermes all require. Hermes'
+    """Hey Harry: the frontmatter name is the folder's, as agentskills.io, OpenClaw and Hermes all require. Hermes'
     archive_skill finds a skill by its frontmatter name and this file by its folder, so one whose names differed
     couldn't be archived, and delete_skill deleted it for good instead (found 27 October)."""
     said = str(parse_frontmatter(content)[0].get("name") or "").strip()  # a BOM is taken off there
@@ -275,33 +275,33 @@ def _validate_content_size(content: str, label: str = "SKILL.md") -> Optional[st
 
 
 def _security_scan(content: str) -> Optional[str]:
-    """Hey Jev: Hermes' threat patterns in the scope it uses for memory and skills, in place of skills_guard."""
+    """Hey Harry: Hermes' threat patterns in the scope it uses for memory and skills, in place of skills_guard."""
     return first_threat_message(content, scope="strict")
 
 
 # --- Core actions (tools/skill_manager_tool.py) -------------------------------
 
 def find_skill(name: str) -> Optional[Path]:
-    """Hey Jev: one of hers (or yours), never one in skills\\imported, so nothing that writes through this (edit,
+    """Hey Harry: one of hers (or yours), never one in skills\\imported, so nothing that writes through this (edit,
     patch, her review, the curator) can change a skill dropped in by hand."""
     path = SKILLS_DIR / name / "SKILL.md"
     return path if _validate_name(name) is None and name != IMPORTED and path.exists() else None
 
 
 def imported_path(name: str) -> Optional[Path]:
-    """Hey Jev: the SKILL.md of a skill dropped into skills\\imported, or None."""
+    """Hey Harry: the SKILL.md of a skill dropped into skills\\imported, or None."""
     path = SKILLS_DIR / IMPORTED / name / "SKILL.md"
     return path if _validate_name(name) is None and path.is_file() else None
 
 
 def is_imported(name: str) -> bool:
-    """Hey Jev: name is a skill dropped in by hand, with none of hers by that name to win over it."""
+    """Hey Harry: name is a skill dropped in by hand, with none of hers by that name to win over it."""
     return find_skill(name) is None and imported_path(name) is not None
 
 
 def create_skill(name: str, content: str, agent_created: bool = False) -> Dict[str, Any]:
     """agent_created: her learning review wrote it, so the curator looks after it; one you taught her, it doesn't."""
-    if name == IMPORTED:  # Hey Jev: the folder skills dropped in by hand go in
+    if name == IMPORTED:  # Hey Harry: the folder skills dropped in by hand go in
         return _err(f"'{IMPORTED}' is kept for skills dropped in by hand. Pick another name.")
     if err := (_validate_name(name) or _validate_frontmatter(content) or _validate_same_name(name, content)
                or _validate_content_size(content) or _security_scan(content)):
@@ -337,7 +337,7 @@ def edit_skill(name: str, content: str) -> Dict[str, Any]:
 
 
 def _spaced_span(content: str, old_string: str) -> Optional[Tuple[int, int]]:
-    """Hey Jev: where old_string is in content with its runs of spaces and line breaks read as any run of them, or
+    """Hey Harry: where old_string is in content with its runs of spaces and line breaks read as any run of them, or
     None unless that's exactly one place. A model quoting a skill puts a line break back as a space, or two spaces as
     one, and its patch matched nothing (found mapping her learning review, 27 October). Never Hermes' fuzzy match,
     which can pick a line that only looks like the one meant."""
@@ -349,7 +349,7 @@ def _spaced_span(content: str, old_string: str) -> Optional[Tuple[int, int]]:
 
 
 def patch_skill(name: str, old_string: str, new_string: str) -> Dict[str, Any]:
-    """Targeted find-and-replace in SKILL.md, unique match. Hey Jev: an exact match, not Hermes' fuzzy one; when
+    """Targeted find-and-replace in SKILL.md, unique match. Hey Harry: an exact match, not Hermes' fuzzy one; when
     there's none, once more with the spacing read loosely (_spaced_span), still only where it's one place."""
     if not old_string:
         return _err("old_string is required.")
@@ -363,7 +363,7 @@ def patch_skill(name: str, old_string: str, new_string: str) -> Dict[str, Any]:
         return _err(f"old_string matched {count} times in skill '{name}'. It must match exactly once.")
     new_content = content.replace(old_string, new_string or "") if count == 1 else \
         content[:span[0]] + (new_string or "") + content[span[1]:]
-    # Hey Jev: nor give it a name other than its folder's, though a line of one that had one already may be fixed
+    # Hey Harry: nor give it a name other than its folder's, though a line of one that had one already may be fixed
     if err := (_validate_content_size(new_content) or _validate_frontmatter(new_content) or
                (_validate_same_name(name, new_content) if _validate_same_name(name, content) is None else None)):
         return _err(f"Patch would break SKILL.md structure: {err}")
@@ -375,7 +375,7 @@ def patch_skill(name: str, old_string: str, new_string: str) -> Dict[str, Any]:
 
 
 def delete_skill(name: str, really: bool = False, imported: bool = False) -> Dict[str, Any]:
-    """Hey Jev: archived (skills\\.archive, Hermes' way, restorable), unless really: forgotten for good, as from the
+    """Hey Harry: archived (skills\\.archive, Hermes' way, restorable), unless really: forgotten for good, as from the
     Memory tab's Forget this. One that can't be archived is kept, never deleted in its place: one whose frontmatter
     name wasn't its folder's was deleted for good that way (see _validate_same_name), and Hermes only archives.
     One dropped into skills\\imported goes only when really (you asked in the Memory tab): archiving refuses it, as
@@ -400,25 +400,25 @@ def delete_skill(name: str, really: bool = False, imported: bool = False) -> Dic
 
 
 def used(name: str) -> None:
-    """A skill was really used: a routine ran, a procedure ran, or the model loaded it with skill_view. Hey Jev: not
+    """A skill was really used: a routine ran, a procedure ran, or the model loaded it with skill_view. Hey Harry: not
     when it was only the best fit and written out in her prompt, which counted as use until 27 October, so Hermes'
     curator judged a skill by how often it looked relevant, never by whether it was run."""
     _usage(skill_usage.bump_use, name)
 
 
 def viewed(name: str) -> None:
-    """Hey Jev: a skill shaped what she did without being run: a note she wrote, written out in her prompt for a turn
+    """Hey Harry: a skill shaped what she did without being run: a note she wrote, written out in her prompt for a turn
     that then acted, or an app's lessons shown to a task there. Hermes' view count, not use: it keeps the curator's
     clock (latest_activity_at) going, so a note in use every day isn't archived 30 days after it was written, and
     her outcome counts stay for runs only."""
     _usage(skill_usage.bump_view, name)
 
 
-VERSIONS_KEPT = 10  # Hey Jev: earlier SKILL.md files kept for each skill, as OpenClaw's Workshop keeps 10
+VERSIONS_KEPT = 10  # Hey Harry: earlier SKILL.md files kept for each skill, as OpenClaw's Workshop keeps 10
 
 
 def keep_version(name: str) -> Optional[Path]:
-    """Hey Jev: a copy of a skill's SKILL.md as it is now, in skills\\.versions\\<name>, before something changes it
+    """Hey Harry: a copy of a skill's SKILL.md as it is now, in skills\\.versions\\<name>, before something changes it
     on its own (her curator pass), the last VERSIONS_KEPT kept. Named by the time, never SKILL.md, so no scanner
     takes one for a skill. The copy, or None if there's no such skill."""
     path = find_skill(name)
@@ -435,7 +435,7 @@ def keep_version(name: str) -> Optional[Path]:
 
 
 def versions(name: str) -> List[Path]:
-    """Hey Jev: the kept copies of a skill (keep_version), oldest first."""
+    """Hey Harry: the kept copies of a skill (keep_version), oldest first."""
     folder = SKILLS_DIR / ".versions" / name
     return sorted(folder.glob("*.md")) if _validate_name(name) is None and folder.is_dir() else []
 
@@ -444,7 +444,7 @@ def versions(name: str) -> List[Path]:
 
 def list_skills(hidden: bool = False, wait: bool = True) -> List[Dict[str, Any]]:
     """name, description, triggers and plan of every skill, by name: hers first, then the ones dropped into
-    skills\\imported. Hey Jev: each also has "imported", "model" (False: disable-model-invocation, so it's left out
+    skills\\imported. Hey Harry: each also has "imported", "model" (False: disable-model-invocation, so it's left out
     of her prompt), "invocable" (False: user-invocable false, so no words start it), "emoji", "tags", "category",
     "related" and "path". One that's hidden (why_hidden: another OS, something missing, the scan blocked it, or one of
     hers has its name) is left out, unless hidden, when it comes with "hidden", why, for the Memory tab.
@@ -504,7 +504,7 @@ def _entry(fm: Dict[str, Any], body: str, folder: Path, imported: bool) -> Dict[
     """One skill as list_skills gives it. One dropped in by hand is knowledge only: no triggers and no plan, so it
     never runs as a routine or a procedure. One that isn't user-invocable has no triggers either."""
     triggers = fm.get("triggers") or ""
-    triggers = triggers if isinstance(triggers, list) else str(triggers).split(",")  # Hey Jev: old comma lists
+    triggers = triggers if isinstance(triggers, list) else str(triggers).split(",")  # Hey Harry: old comma lists
     meta = skill_meta(fm)
     invocable = _truthy(fm.get("user-invocable"), True)
     return {"name": str(fm.get("name") or folder.name), "dir": folder.name,
@@ -605,7 +605,7 @@ def _tools() -> Optional[set]:
 
 
 def _marked(name: str, usage: list) -> bool:
-    """Hey Jev: create_skill wrote this skill (skill_usage's created_by "agent" or "learn"), so it was checked as it
+    """Hey Harry: create_skill wrote this skill (skill_usage's created_by "agent" or "learn"), so it was checked as it
     went in. usage: [] to fill with Hermes' usage records on first need, read once per list_skills."""
     if not usage:
         try:
@@ -613,7 +613,7 @@ def _marked(name: str, usage: list) -> bool:
         except Exception:
             usage.append({})
     record = usage[0].get(name)
-    return isinstance(record, dict) and record.get("created_by") in JEV_MARKS
+    return isinstance(record, dict) and record.get("created_by") in HARRY_MARKS
 
 
 _scans: Dict[str, Tuple[tuple, str]] = {}  # skill folder: (its files' names, sizes and times, why it's blocked)
@@ -697,7 +697,7 @@ def as_data(source: str, text: str) -> str:
 
 
 def skill_view(name: str, file_path: Optional[str] = None) -> Dict[str, Any]:
-    """The full SKILL.md of a skill, or an error listing the ones there are. Hey Jev: either root, hers winning a
+    """The full SKILL.md of a skill, or an error listing the ones there are. Hey Harry: either root, hers winning a
     name both have; never one that's hidden (why_hidden), saying why. The text comes wrapped as data (as_data), with
     the skill's support files listed and how to read one. file_path: one of those files instead (support_file)."""
     found = {}
@@ -781,7 +781,7 @@ def support_file(name: str, folder: Path, file_path: str) -> Dict[str, Any]:
     return out
 
 
-# --- Hey Jev: routines, and SKILL.md from what the model sends -----------------
+# --- Hey Harry: routines, and SKILL.md from what the model sends -----------------
 
 def plan_of(body: str) -> Optional[Dict[str, Any]]:
     """The ```json plan in a skill's body, {"steps": [...], "say": "..."}, or None. The last one: build_content puts
@@ -805,7 +805,7 @@ def plan_of(body: str) -> Optional[Dict[str, Any]]:
 
 def build_content(name: str, description: str, notes: str = "", triggers=(), steps=None, say: str = "",
                   procedure: Optional[Dict[str, Any]] = None, hidden: bool = False) -> str:
-    """A SKILL.md in Hermes' format from the parts the model sends. Hey Jev: each value written as JSON, which YAML
+    """A SKILL.md in Hermes' format from the parts the model sends. Hey Harry: each value written as JSON, which YAML
     reads the same way, so Hermes' parser takes it whatever it holds (a bare "on" is a boolean to YAML 1.1); the
     description cut to Hermes' 60 letters for a new skill; triggers under "When to Use", where Hermes keeps them.
     procedure: one of her procedures (agent.py), kept in the plan with no steps of its own. hidden: left out of the
@@ -833,18 +833,18 @@ def build_content(name: str, description: str, notes: str = "", triggers=(), ste
 # --- The system prompt (agent/prompt_builder.py, build_skills_system_prompt) ---
 
 DETAIL_CHARS = 900  # the most of one skill's notes written out in her prompt
-MOST_PROCEDURES = 15  # Hey Jev: procedures listed, the ones used last first; the rest she does from scratch again
-MOST_DESCRIBED = 6  # Hey Jev: skills listed with what they do, the request's best fits; the rest by name only
+MOST_PROCEDURES = 15  # Hey Harry: procedures listed, the ones used last first; the rest she does from scratch again
+MOST_DESCRIBED = 6  # Hey Harry: skills listed with what they do, the request's best fits; the rest by name only
 
 
 def _procedure(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Hey Jev: the procedure in a skill (agent.py), or None. siri.routines() moves it out of the plan."""
+    """Hey Harry: the procedure in a skill (agent.py), or None. siri.routines() moves it out of the plan."""
     proc = entry["procedure"] if "procedure" in entry else (entry.get("plan") or {}).get("procedure")
     return proc if isinstance(proc, dict) else None
 
 
 def _last_used(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Hey Jev: entries, the one used most lately first (Hermes' usage records)."""
+    """Hey Harry: entries, the one used most lately first (Hermes' usage records)."""
     try:
         usage = skill_usage.load_usage()
     except Exception:
@@ -854,14 +854,14 @@ def _last_used(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def system_prompt_block(entries: Optional[List[Dict[str, Any]]] = None, detail=(), fits=None) -> str:
-    """The skills index for her prompt. Hey Jev: Hermes' wording, shortened, and its 60-letter descriptions; the
+    """The skills index for her prompt. Hey Harry: Hermes' wording, shortened, and its 60-letter descriptions; the
     skills in detail (the ones that fit this request, see siri.skills_block) are written out in full, so the model
     needn't ask for them with skill_view, a whole extra round trip; the rest by name and description. fits: names,
     the request's best fit first: only the first MOST_DESCRIBED are described, the rest named, so 40 skills keep her
     prompt in its budget, and none is left out (Hermes #2045: a skill missing from the list isn't found again). Her
     procedures (agent.py) are listed with their slots and how to run one, never with the words that start them, which
     only code matches.
-    Hey Jev: a skill with disable-model-invocation isn't listed at all (OpenClaw's way: only asked for by name, see
+    Hey Harry: a skill with disable-model-invocation isn't listed at all (OpenClaw's way: only asked for by name, see
     siri.asked_skill), and one dropped in by hand is never written out, only listed: the model loads it with
     skill_view, which hands it over wrapped as data (as_data). The list stays this compact one: OpenClaw's
     <skill><name>... form costs about 97 characters more for each skill."""
@@ -881,7 +881,7 @@ def system_prompt_block(entries: Optional[List[Dict[str, Any]]] = None, detail=(
             slots = ", ".join(str(s) for s in (proc.get("slots") or {}))
             said = f" (procedure{', slots: ' + slots if slots else ''})"
         else:
-            said = f" (the user says: {', '.join(e['triggers'])})" if e["triggers"] else ""  # Hey Jev: no fixed name
+            said = f" (the user says: {', '.join(e['triggers'])})" if e["triggers"] else ""  # Hey Harry: no fixed name
         lines.append(f"    - {e['dir']}: {extract_skill_description({'description': e['description']})}{said}")
         if e["dir"] in detail and e.get("notes"):
             full.append(f"### {e['dir']}\n{e['notes'][:DETAIL_CHARS]}")

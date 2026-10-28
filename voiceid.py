@@ -1,8 +1,8 @@
 """Only your voice: she answers you, not other people, the TV or a video.
 
 Each turn's speech becomes a voice print (speech.Speaker, 3D-Speaker's CAM++ through sherpa-onnx, on this PC), and
-it's compared with yours from 20 sentences you read once ("Hey Jev, learn my voice"). The prints and recordings stay
-in %LOCALAPPDATA%\\Hey Jev\\voice and never leave the PC.
+it's compared with yours from 20 sentences you read once ("Hey Harry, learn my voice"). The prints and recordings stay
+in %LOCALAPPDATA%\\Hey Harry\\voice and never leave the PC.
 
 Settings "voice_id":
     "off"       everyone counts, as before
@@ -13,9 +13,9 @@ Settings "voice_id":
     "on"        a turn that isn't your voice is let go silently
 
 Measured on this PC (7 Oct 2026): a second or more of speech tells voices apart, your clips 0.64 to 0.90 against
-Windows' David and Zira 0.06 to 0.39. Under a second it doesn't: a bare "Hey Jev" in their voices scored 0.84 to
+Windows' David and Zira 0.06 to 0.39. Under a second it doesn't: a bare "Hey Harry" in their voices scored 0.84 to
 0.97 against yours, since it's then the words that match, not the voice. So shorter turns aren't checked; ones
-with her name, after a bare "Hey Jev" or just after she spoke count as yours, and others are let go while "on".
+with her name, after a bare "Hey Harry" or just after she spoke count as yours, and others are let go while "on".
 """
 import json
 import os
@@ -25,10 +25,10 @@ import time
 import numpy as np
 
 import settings
-from winplatform import own_data
+from winplatform import home
 
 MIN_SPEECH = 1.0  # seconds of speech a turn needs to be checked, see above
-# Levels before calibration, from the clips above: with her name said (or straight after a bare "Hey Jev") a lower
+# Levels before calibration, from the clips above: with her name said (or straight after a bare "Hey Harry") a lower
 # one, since the name is a good sign it's you; without it a higher one, so the room never reaches the model
 NAMED, STRICT = 0.40, 0.50
 LEVELS = {"named": (0.30, 0.55), "strict": (0.38, 0.62)}  # how far calibration may move each
@@ -51,15 +51,15 @@ ENROL_AGREE, ENROL_KEEP = 0.55, 12
 # Short enough for the popup, and mostly what you say to her anyway: commands, questions, a yes, and more without her
 # name than with it, since that's how you talk to her
 SENTENCES = (
-    "Hey Jev, open Chrome and play some music.",
-    "Hey Jev, what's the weather like today?",
-    "Hey Jev, set a timer for five minutes.",
-    "Hey Jev, turn the volume down a little.",
-    "Hey Jev, search YouTube for lofi songs.",
+    "Hey Harry, open Chrome and play some music.",
+    "Hey Harry, what's the weather like today?",
+    "Hey Harry, set a timer for five minutes.",
+    "Hey Harry, turn the volume down a little.",
+    "Hey Harry, search YouTube for lofi songs.",
     "Remind me in twenty minutes to call Mum.",
-    "Hey Jev, close this tab and go back.",
+    "Hey Harry, close this tab and go back.",
     "What's on my screen right now?",
-    "Hey Jev, pause the video, please.",
+    "Hey Harry, pause the video, please.",
     "Scroll down and read the next part to me.",
     "Open YouTube and play the next video.",
     "Turn on the night light, please.",
@@ -76,7 +76,7 @@ _lock = threading.Lock()
 
 
 def folder():
-    return own_data(os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "Hey Jev", "voice"))
+    return os.path.join(home("LOCALAPPDATA"), "voice")
 
 
 def mode():
@@ -229,7 +229,7 @@ def keep_alike(prints):
 
 
 def level(named, kind):
-    """Which level a turn is held to: "named" with her name in it or just after a bare "Hey Jev", else "strict"."""
+    """Which level a turn is held to: "named" with her name in it or just after a bare "Hey Harry", else "strict"."""
     return "named" if named or kind == "armed" else "strict"
 
 
@@ -240,7 +240,7 @@ def judge(profile, score, speech_secs, named, kind):
     if mode() == "off" or not profile.ready:
         return True, "off"
     if score is None or speech_secs < MIN_SPEECH:
-        # too short to tell voices apart: her name, a bare "Hey Jev" before it, or just after she spoke means you
+        # too short to tell voices apart: her name, a bare "Hey Harry" before it, or just after she spoke means you
         if named or kind in ("armed", "follow_up") or mode() == "learning":
             return True, "short"
         return False, "short, without her name"
