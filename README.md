@@ -13,7 +13,7 @@
 
 ```
 git clone https://github.com/hari7993/hey-harry.git
-cd heyharry
+cd hey-harry
 powershell -ExecutionPolicy Bypass -File setup.ps1
 ```
 
