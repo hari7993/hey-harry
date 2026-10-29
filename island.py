@@ -18,6 +18,12 @@ The drop (28 October 2026, the owner's pick from a MacBook's notch, on by defaul
 hang from the top of the screen in the same glass, square where they meet it and curving into it each side, with no
 gap above (_drop) and no hairline along the top. The bar of your words still floats under them.
 
+Paper (29 October 2026, the owner's pick, her window's own look, now the theme to start with): white glass that's
+all but solid, near-black words and eyes, and on an opened card the faint dots her window has. And pointing at what's
+playing, a timer, the battery or a notification on the capsule opens it the way an iPhone's island opens (the owner's
+pictures): what it's from and the time along its top with her eyes in the middle where a phone has its camera, then
+big figures, a bar, and round buttons in the app's own colour (_live_head).
+
 It's one layered window drawn with numpy, like bubble.Island: clicks go through it except while you point at its
 buttons, it never takes the focus, and it's left out of her screenshots, so the model never sees its buttons. Between
 blinks nothing is drawn, and a long job moves once a second.
@@ -55,6 +61,10 @@ THEMES = {  # body, the bar under it, words, quieter words, eyes, eyes glow, a b
     "light": {"body": (0.965, 0.965, 0.975), "cap": (1.0, 1.0, 1.0), "text": (0.07, 0.07, 0.08),
               "muted": (0.42, 0.42, 0.45), "eyes": (0.11, 0.11, 0.12), "glow": False, "line": (0.8, 0.8, 0.83),
               "shadow": 0.2, "track": (0.82, 0.82, 0.85)},
+    # paper (29 October 2026, her window's look): white, near-black words and eyes, and on a card her window's dots
+    "paper": {"body": (1.0, 1.0, 1.0), "cap": (1.0, 1.0, 1.0), "text": (0.04, 0.04, 0.04),
+              "muted": (0.45, 0.45, 0.45), "eyes": (0.06, 0.06, 0.07), "glow": False, "line": (0.9, 0.9, 0.9),
+              "shadow": 0.18, "track": (0.9, 0.9, 0.91), "dots": True},
 }
 # Her own turns: (how her eyes look, the dots' colour, what the dots do, the bars by the words)
 HARRY = {
@@ -67,7 +77,8 @@ HARRY = {
     "note": ("side", None, "still", None),
 }
 # The glass capsule's themes (27 October 2026): see-through ("fill", how opaque the glass is) with a hairline round it
-# ("line" at "line_a"). AMOLED and dark are dark glass; light is light glass. No blur: it would cost every frame.
+# ("line" at "line_a"). AMOLED and dark are dark glass; light is light glass; paper is white glass all but solid,
+# with her window's dots on a card ("dots", _dots). No blur: it would cost every frame.
 GLASS = {
     "dark": {"body": (0.12, 0.12, 0.14), "cap": (0.12, 0.12, 0.14), "fill": 0.78, "text": (0.96, 0.96, 0.97),
              "muted": (0.66, 0.66, 0.7), "eyes": (0.97, 0.97, 0.98), "glow": True, "line": (1.0, 1.0, 1.0),
@@ -75,6 +86,9 @@ GLASS = {
     "light": {"body": (0.98, 0.98, 0.99), "cap": (0.98, 0.98, 0.99), "fill": 0.85, "text": (0.07, 0.07, 0.08),
               "muted": (0.38, 0.38, 0.41), "eyes": (0.11, 0.11, 0.12), "glow": False, "line": (0.0, 0.0, 0.0),
               "line_a": 0.12, "shadow": 0.2, "track": (0.8, 0.8, 0.83)},
+    "paper": {"body": (1.0, 1.0, 1.0), "cap": (1.0, 1.0, 1.0), "fill": 0.97, "text": (0.04, 0.04, 0.04),
+              "muted": (0.45, 0.45, 0.45), "eyes": (0.06, 0.06, 0.07), "glow": False, "line": (0.0, 0.0, 0.0),
+              "line_a": 0.1, "shadow": 0.18, "track": (0.9, 0.9, 0.91), "dots": True},
 }
 # Her eyes in the capsule for how a task is going (face.MOODS), as the pill's _compact has them: ^ ^ when done,
 # drooping when it failed, wide open while it waits on you, else open and glancing about. Not "focus" while one
@@ -231,7 +245,8 @@ class DynamicIsland:
         self.style = "pill" if g("island_style") == "pill" else "capsule"
         self.drop = bool(g("island_drop"))  # hanging from the top of the screen, a notch, with no gap above it
         self.face_style = g("island_face") if g("island_face") in ("orb", "eyes", "wave") else "eyes"
-        self.theme_name = g("island_theme") if g("island_theme") in ("system", "light", "dark", "amoled") else "amoled"
+        themes = ("paper", "system", "light", "dark", "amoled")
+        self.theme_name = g("island_theme") if g("island_theme") in themes else "paper"
         self.border = bool(g("island_border"))
         self.align = g("island_align") if g("island_align") in ("left", "center", "right") else "center"
         self.off_x, self.off_y = int(g("island_x") or 0), int(g("island_y") if g("island_y") is not None else 8)
@@ -246,8 +261,8 @@ class DynamicIsland:
         name = self.theme_name
         if name == "system":
             name = "light" if self.light else "dark"
-        if self.style == "capsule":
-            return GLASS["light" if name == "light" else "dark"]  # the drop too: the same glass, hanging
+        if self.style == "capsule":  # the drop too: the same glass, hanging
+            return GLASS[name if name in ("light", "paper") else "dark"]
         return THEMES[name]
 
     def reload(self):
@@ -597,10 +612,11 @@ class DynamicIsland:
             return self._notification(act)
         if act.kind == "media":
             return self._media_card(act) if self.hover else self._media(act)
+        opened = self.hover and self.style == "capsule"  # as a phone's island opens (_live_head)
         if act.kind == "battery":
-            return self._battery(act)
+            return self._glass_battery(act) if opened else self._battery(act)
         if act.kind == "timer":
-            return self._timer(act)
+            return self._glass_timer(act) if opened else self._timer(act)
         if isinstance(act.data, dict) and (act.data.get("rows") or act.data.get("title")):  # any plugin's card
             return self._card(act) if self.hover or self.pinned == act.plugin else self._compact(act)
         return self._idle()
@@ -1125,6 +1141,8 @@ class DynamicIsland:
                          rate=15 if d["playing"] else 0)
 
     def _media_card(self, act):
+        if self.style == "capsule":
+            return self._glass_media(act)
         k, th = self.k, self.theme()
         d = act.data
         W = self.CARD_W * k
@@ -1178,6 +1196,8 @@ class DynamicIsland:
                       radius=self._corner(), hot=hot, rate=2)
 
     def _notification(self, act):
+        if self.style == "capsule":
+            return self._glass_note(act)
         k, th = self.k, self.theme()
         d = act.data
         W = self.CARD_W * k
@@ -1448,7 +1468,7 @@ class DynamicIsland:
     def _ink(self, colour):
         """A colour for words on the glass: as it is on dark glass, darker on light glass, where amber "40%" was
         hard to read (27 October previews)."""
-        if self.theme() is GLASS["light"]:
+        if self.theme()["body"][0] > 0.5:  # light glass, or paper
             return tuple(c * 0.72 for c in colour)
         return colour
 
@@ -1561,9 +1581,10 @@ class DynamicIsland:
                              press={"pin": (act.plugin, "pin", None, False)}, under=under)
 
     def _glass_card(self, act):
-        """A plugin's card on the capsule, open while you point at it or after a click on it: a glass panel with
-        her face and "2 tasks" (or the card's title) at its top, then each row's title, its note and a bar in its
-        colour, with Stop or Deny as on the pill: the same places to click, doing the same."""
+        """A plugin's card on the capsule, open while you point at it or after a click on it: a glass panel with "2
+        tasks" (or the card's title) at its top, her eyes in the middle of it and the time at its right, as a phone's
+        island opens (29 October 2026), then each row's title, its note and a bar in its colour, with Stop or Deny as
+        on the pill: the same places to click, doing the same."""
         k, th = self.k, self.theme()
         d = act.data
         rows, more = self._card_rows(d)
@@ -1576,8 +1597,7 @@ class DynamicIsland:
             head = d.get("short") or d.get("title") or (f"{n} tasks" if n != 1 else "1 task")
         else:  # the card is its one row: its plugin's name over it, not its title twice
             head = act.plugin.replace("_", " ").capitalize()
-        tx = pad + ew + 8 * k
-        head = self.f_title.fit(str(head), W - tx - pad)
+        head = self.f_title.fit(str(head), W / 2 - ew / 2 - pad - 8 * k)  # left of her eyes
         me = self._face(TASK_LOOKS.get(lead.get("state"), "open"), self._glass_colour(lead))
         hot, press, parts, y = [], {}, [], pad + head_h + 8 * k
         for row in rows:
@@ -1591,8 +1611,10 @@ class DynamicIsland:
 
         def draw(cv, ox, oy, Wn, Hn, a, now):
             hy = oy + pad + head_h / 2
-            me[1](cv, ox + pad, hy, a, now)
-            cv.text(self.f_title.render(head), ox + tx - 2, hy - self.f_title.line / 2 - 1, th["text"], a)
+            cv.text(self.f_title.render(head), ox + pad - 2, hy - self.f_title.line / 2 - 1, th["text"], a)
+            me[1](cv, ox + Wn / 2 - ew / 2, hy, a, now)
+            clock = self.f_label.render(_now())
+            cv.text(clock, ox + Wn - pad - clock.shape[1] + 2, hy - self.f_label.line / 2 - 1, th["muted"], a)
             for draw_row in parts:
                 draw_row(cv, ox, oy, a, now)
             if tail:
@@ -1639,10 +1661,9 @@ class DynamicIsland:
             if words:
                 cover = small.render(words)
                 cv.text(cover, ox + right - cover.shape[1] + 2, oy + cy - small.line / 2 - 1, colour, a)
-            for b, text, bx0, bx1 in buttons:
-                approve = b.get("name") == "approve"
-                fill, ink = (GREEN, (0.02, 0.02, 0.03)) if approve else \
-                    (th["track"], RED if b.get("name") == "stop" else th["text"])
+            for b, text, bx0, bx1 in buttons:  # Approve green, Stop red as a call's end is, Deny grey
+                fill, ink = (GREEN, (0.02, 0.02, 0.03)) if b.get("name") == "approve" else \
+                    (RED, (1.0, 1.0, 1.0)) if b.get("name") == "stop" else (th["track"], th["text"])
                 bx, by, bw = ox + (bx0 + bx1) / 2, oy + cy, (bx1 - bx0) / 2
                 cv.shape(lambda xs, ys, bx=bx, by=by, bw=bw: face.rbox(xs, ys, bx, by, bw, bh / 2, bh / 2),
                          (ox + bx0 - 1, by - bh / 2 - 1, ox + bx1 + 1, by + bh / 2 + 1), fill, a)
@@ -1655,6 +1676,179 @@ class DynamicIsland:
             if state is not None or done is not None:
                 self._line(cv, ox + tx, ox + W - pad, ly + 5 * k, 3 * k, frac, colour, now, th["track"], a)
         return h, draw
+
+    # ------------------------------------------------------------------ opened, as a phone's island (29 October 2026)
+    def _live_head(self, W, name, icon, expr, tint=None, right=None):
+        """The top of a card opened on the capsule, the way an iPhone's island opens (the owner's pictures): what
+        it's from on the left, its icon (icon(cv, x, cy, a, now), 18 px) and its name, her eyes in the middle where
+        a phone has its camera, glowing in tint, and the time on the right, or right's words. (its height, draw(cv,
+        ox, oy, Wn, a, now), how her eyes look)"""
+        k, th = self.k, self.theme()
+        pad, h, small = self.CARD_PAD * k, 26 * k, self.f_label
+        me = self._face(expr, tint)
+        words = small.render(small.fit(str(name), W / 2 - me[0] / 2 - pad - 34 * k))
+
+        def draw(cv, ox, oy, Wn, a, now):
+            cy = oy + pad + h / 2
+            x = ox + pad
+            if icon is not None:
+                icon(cv, x, cy, a, now)
+                x += 25 * k
+            cv.text(words, x - 2, cy - small.line / 2 - 1, th["muted"], a)
+            me[1](cv, ox + Wn / 2 - me[0] / 2, cy, a, now)
+            say = _now() if right is None else right
+            if say:
+                tail = small.render(say)
+                cv.text(tail, ox + Wn - pad - tail.shape[1] + 2, cy - small.line / 2 - 1, th["muted"], a)
+        return h, draw, me[2]
+
+    def _logo(self, app):
+        """An app's round badge for a card's top, 18 px, and what draws it there."""
+        size = round(18 * self.k)
+        pic = art.badge(app, size, self._text)
+        return lambda cv, x, cy, a, now: cv.image(pic, x, cy - size / 2, a)
+
+    def _glass_media(self, act):
+        """What's playing, opened on the capsule while you point at it, as the iPhone's Spotify card is: the player
+        and her eyes at the top, the cover with the song and who it's by, how far it's got, then back, play or pause
+        in a round button of the player's own colour, and next. The same places to click as before."""
+        k, th = self.k, self.theme()
+        d = act.data
+        W, pad, small = self.CARD_W * k, self.CARD_PAD * k, self.f_small
+        tint = art.brand(d["app"])
+        head_h, head, expr = self._live_head(W, d["app"] or "Now playing", self._logo(d["app"]),
+                                             "headphones" if d["playing"] else "open", tint if d["playing"] else None)
+        art_s = round(56 * k)
+        pic = art.rounded(_resize(d["art"], art_s), 10 * k) if d.get("art") is not None else None
+        if pic is None:
+            pic = art.badge(d["app"], art_s, self._text)
+        y_art = pad + head_h + 10 * k
+        tx = pad + art_s + 12 * k
+        tw = W - tx - pad - 26 * k
+        title = self.f_title.fit(d["title"], tw)
+        sub = self.f_label.fit(" \u00b7 ".join(x for x in (d["artist"], d["app"]) if x), tw)
+        y_bar = y_art + art_s + 14 * k
+        y_btn, r = y_bar + small.line + 12 * k, 19 * k
+        H = y_btn + 2 * r + pad
+        cx, gap = W / 2, 64 * k
+        hot = [("previous", cx - gap - r, y_btn, cx - gap + r, y_btn + 2 * r),
+               ("toggle", cx - r, y_btn, cx + r, y_btn + 2 * r),
+               ("next", cx + gap - r, y_btn, cx + gap + r, y_btn + 2 * r),
+               ("open", 0, 0, W, y_bar - 4 * k)]
+
+        def draw(cv, ox, oy, Wn, Hn, a, now):
+            head(cv, ox, oy, Wn, a, now)
+            cv.image(pic, ox + pad, oy + y_art, a)
+            mid = oy + y_art + art_s / 2
+            cv.text(self.f_title.render(title), ox + tx - 2, mid - self.f_title.line + 1, th["text"], a)
+            cv.text(self.f_label.render(sub), ox + tx - 2, mid + 2 * k, th["muted"], a)
+            lvl = getattr(self.runner.plugin("media"), "level", 0.0) if d["playing"] else 0.0
+            face.equalizer(cv, ox + Wn - pad - 18 * k, mid, 14 * k, tint if d["playing"] else th["muted"],
+                           min(1.0, lvl * 2.2) if d["playing"] else 0.0, now - self.t0, a)
+            pos = d["position"] + ((now - d["at"]) if d["playing"] else 0.0)
+            dur = d["duration"]
+            if dur > 0:  # how far it's got, with the time gone and the time to go either side
+                el, rest = small.render(_clock(pos)), small.render("-" + _clock(max(0.0, dur - pos)))
+                x0, x1, ty = ox + pad, ox + Wn - pad, oy + y_bar
+                cv.text(el, x0 - 2, ty, th["muted"], a)
+                cv.text(rest, x1 - rest.shape[1] + 2, ty, th["muted"], a)
+                self._line(cv, x0 + el.shape[1] + 8 * k, x1 - rest.shape[1] - 8 * k, ty + small.line / 2, 4 * k,
+                           max(0.0, min(1.0, pos / dur)), tint, now, th["track"], a)
+            by = oy + y_btn + r
+            face.skip_glyph(cv, ox + cx - gap, by, 15 * k, False, th["text"], a)
+            cv.shape(lambda xs, ys: face.circle(xs, ys, ox + cx, by, r),
+                     (ox + cx - r - 1, by - r - 1, ox + cx + r + 1, by + r + 1), tint, a)
+            face.play_glyph(cv, ox + cx + (0 if d["playing"] else 1.5 * k), by, 17 * k, d["playing"],
+                            (1.0, 1.0, 1.0), a)
+            face.skip_glyph(cv, ox + cx + gap, by, 15 * k, True, th["text"], a)
+        return Layout(("media-card", d["title"], d["artist"], d["playing"], id(d.get("art"))), "media", W, H, draw,
+                      radius=self._corner(), hot=hot, eyes=expr, rate=15 if d["playing"] else 2, face=True)
+
+    def _glass_note(self, act):
+        """A notification on the capsule, as a phone's island shows one: the app's badge and name at the top, her
+        eyes in the middle and "now", or x to dismiss it while you point at it, then who it's from and what it
+        says."""
+        k, th = self.k, self.theme()
+        d = act.data
+        W, pad = self.CARD_W * k, self.CARD_PAD * k
+        name = d["app"] + (" \u00b7 on your phone" if d.get("phone") else "")
+        head_h, head, expr = self._live_head(W, name, self._logo(d["app"]), "open", art.brand(d["app"]),
+                                             right="" if self.hover else "now")
+        tw = W - 2 * pad
+        title = self.f_title.fit(d["title"] or d["app"], tw)
+        lines = self.f_label.wrap(d["text"], tw, 2) if d.get("text") else []
+        y_t = pad + head_h + 8 * k
+        H = y_t + self.f_title.line + (2 * k + self.f_label.line * len(lines) if lines else 0) + pad
+        hot = [("dismiss", W - 34 * k, 0, W, pad + head_h + 4 * k), ("open", 0, 0, W, H)]
+
+        def draw(cv, ox, oy, Wn, Hn, a, now):
+            head(cv, ox, oy, Wn, a, now)
+            if self.hover:
+                face.close_glyph(cv, ox + Wn - pad - 6 * k, oy + pad + head_h / 2, 12 * k, th["muted"], a)
+            y = oy + y_t
+            cv.text(self.f_title.render(title), ox + pad - 2, y, th["text"], a)
+            y += self.f_title.line + 2 * k
+            for line in lines:
+                cv.text(self.f_label.render(line), ox + pad - 2, y, th["text"], a * 0.86)
+                y += self.f_label.line
+        return Layout(("note", d["app"], d["title"], d.get("text", ""), id(act)), "notification", W, H, draw,
+                      radius=self._corner(), hot=hot, eyes=expr, face=True)
+
+    def _glass_timer(self, act):
+        """A timer opened on the capsule while you point at it: what it's for and her eyes at the top, how long's
+        left in big orange figures, and a line going down with it."""
+        k, th = self.k, self.theme()
+        d = act.data
+        W, pad = self.CARD_W * k, self.CARD_PAD * k
+
+        def ring(cv, x, cy, a, now):
+            face.ring(cv, x + 9 * k, cy, 7 * k, 2.4 * k, max(0.0, (d["end"] - now) / d["total"]), ORANGE,
+                      th["track"], a)
+        head_h, head, expr = self._live_head(W, d["label"] or "Timer", ring, "open", ORANGE)
+        big = self._text(round(30 * k), 300)
+        y_big = pad + head_h + 6 * k
+        y_line = y_big + big.line + 8 * k
+        H = y_line + 4 * k + pad
+        of = self.f_label.render(f"of {_clock(d['total'])}")
+
+        def draw(cv, ox, oy, Wn, Hn, a, now):
+            head(cv, ox, oy, Wn, a, now)
+            cv.text(big.render(_clock(max(0, math.ceil(d["end"] - now)))), ox + pad - 2, oy + y_big, ORANGE, a)
+            cv.text(of, ox + Wn - pad - of.shape[1] + 2, oy + y_big + big.line - self.f_label.line - 6 * k,
+                    th["muted"], a)
+            left = max(0.0, (d["end"] - now) / d["total"])
+            self._line(cv, ox + pad, ox + Wn - pad, oy + y_line + 2 * k, 4 * k, left, ORANGE, now, th["track"], a)
+        return Layout(("timer-card", d["label"], d["end"]), "timer", W, H, draw, radius=self._corner(), eyes=expr,
+                      rate=1, face=True)
+
+    def _glass_battery(self, act):
+        """The battery opened on the capsule while you point at it: Battery and her eyes at the top, how full it is
+        in big figures in its colour, whether it's charging, and a bar as full as it is."""
+        k, th = self.k, self.theme()
+        d = act.data
+        pct, charging, event = d["percent"], d["charging"], d["event"]
+        fill = RED if pct <= 20 and not charging else GREEN if charging else th["text"]
+        W, pad = self.CARD_W * k, self.CARD_PAD * k
+
+        def glyph(cv, x, cy, a, now):
+            face.battery(cv, x, cy, 9 * k, pct, th["text"], fill, charging, a)
+        head_h, head, expr = self._live_head(W, "Battery", glyph, "sad" if event == "low" else "open",
+                                             None if fill is th["text"] else fill)
+        big = self._text(round(30 * k), 300)
+        says = self.f_title.render({"full": "Full", "low": "Low: plug it in"}.get(event) or
+                                   ("Charging" if charging else "On battery"))
+        y_big = pad + head_h + 6 * k
+        y_line = y_big + big.line + 8 * k
+        H = y_line + 4 * k + pad
+
+        def draw(cv, ox, oy, Wn, Hn, a, now):
+            head(cv, ox, oy, Wn, a, now)
+            cv.text(big.render(f"{pct}%"), ox + pad - 2, oy + y_big, fill, a)
+            cv.text(says, ox + Wn - pad - says.shape[1] + 2, oy + y_big + big.line - self.f_title.line - 6 * k,
+                    th["text"] if fill is th["text"] else fill, a)
+            self._line(cv, ox + pad, ox + Wn - pad, oy + y_line + 2 * k, 4 * k, pct / 100, fill, now, th["track"], a)
+        return Layout(("battery-card", pct, charging, event), "battery", W, H, draw, radius=self._corner(),
+                      eyes=expr, face=True)
 
     def _capsule_wait(self, now, lay, moving):
         """Seconds till the capsule's next frame: at once while it moves, she blinks or her eyes are on their way
@@ -1874,18 +2068,30 @@ class DynamicIsland:
         self.shapes[key] = hit
         return hit
 
-    def _paint(self, sl, cover, alpha, edge, body, items, a, over=None):
+    def _paint(self, sl, cover, alpha, edge, body, items, a, over=None, dots=False):
         """A rounded box and what's on it into the window's picture. over: the rows of the patch (from, to) that
-        land on something drawn already this frame, which it goes over; the rest was cleared, so it's written."""
+        land on something drawn already this frame, which it goes over; the rest was cleared, so it's written.
+        dots: paper's dots on it, if it's as tall as a card (_dots)."""
         h, w = cover.shape
         col = np.empty((h, w, 3), np.float32)
         col[:] = body
+        if dots and self.theme().get("dots") and h > 70 * self.k:
+            self._dots(col, sl)
         op = self._glass(col, cover)
         cv = face.Canvas(col, op=op)
         for draw, ia in items:
             if ia > 0.01:
                 draw(cv, min(ia, 1.0))
         self._compose(self.buf[sl], col, cover, alpha, edge, a, over, op)
+
+    def _dots(self, col, sl):
+        """Paper's dots, as her window has them (29 October 2026): black at 15% every 20 px, in step across the
+        island's window whatever's open, under all that's drawn on the card."""
+        gap, d = max(6, round(20 * self.k)), max(1, round(1.4 * self.k))
+        ys = np.nonzero((np.arange(sl[0].start, sl[0].start + col.shape[0]) - gap // 2) % gap < d)[0]
+        xs = np.nonzero((np.arange(sl[1].start, sl[1].start + col.shape[1]) - gap // 2) % gap < d)[0]
+        if len(ys) and len(xs):
+            col[np.ix_(ys, xs)] *= 0.85
 
     def _glass(self, col, cover):
         """On the capsule, how opaque its glass is at each pixel, with col (its body's colour) made premultiplied by
@@ -2032,7 +2238,7 @@ class DynamicIsland:
         over = None
         if cap_rows is not None:  # where its shadow falls on the bar
             over = (max(sl[0].start, cap_rows[0]) - sl[0].start, min(sl[0].stop, cap_rows[1]) - sl[0].start)
-        self._paint(sl, cover, alpha, edge, th["body"], items, self.alpha, over)
+        self._paint(sl, cover, alpha, edge, th["body"], items, self.alpha, over, dots=True)
         self._grow(sl)
         self.island_rect = (x0, y0, x0 + W, y0 + H)
         return _union(old, self.drawn)
@@ -2136,6 +2342,11 @@ class DynamicIsland:
         if agent is not None and (agent.ACT.locked() or agent.RUNNING.is_set()):
             return False
         return win.cursor_pos() == self.rest_pos and now - self.rest_at >= REST
+
+
+def _now():
+    """The time as an opened card's top has it: 4:41."""
+    return time.strftime("%I:%M").lstrip("0")
 
 
 def _clock(secs):

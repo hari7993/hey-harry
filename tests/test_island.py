@@ -969,6 +969,53 @@ class Capsule(unittest.TestCase):
                                                                   "text": "Home by eight", "phone": False})
         self.assertEqual(isl._make(("popup", note), now).radius, 18 * isl.k)
 
+    def test_pointing_at_one_opens_it_the_way_a_phones_island_does(self):
+        """29 October 2026, the owner's pictures of an iPhone's island: what's playing, a timer, the battery and a
+        notification open while you point at one, with what it's from at the top, her eyes in the middle of it where
+        a phone has its camera, and the time; the same places to click as before where there are any."""
+        now = time.time()
+        isl = self.capsule(hover=True, runner=SimpleNamespace(plugin=lambda pid: None))
+        song = plugins.Activity("media", "media", {"title": "Song", "artist": "Band", "app": "Spotify",
+                                                   "playing": True, "position": 30.0, "duration": 200.0, "at": now,
+                                                   "art": None}, live=True)
+        timer = plugins.Activity("timers", "timer", {"label": "Tea", "end": now + 60, "total": 90.0}, live=True)
+        low = plugins.Activity("battery", "battery", {"percent": 18, "charging": False, "event": "low"})
+        note = plugins.Activity("notifications", "notification", {"app": "WhatsApp", "app_id": "", "title": "Mum",
+                                                                  "text": "Home by eight", "phone": False})
+        for scene, kind, hot in ((("live", song), "media", ["previous", "toggle", "next", "open"]),
+                                 (("live", timer), "timer", []), (("popup", low), "battery", []),
+                                 (("popup", note), "notification", ["dismiss", "open"])):
+            lay = isl._make(scene, now)
+            self.assertEqual((lay.kind, lay.face, [h[0] for h in lay.hot]), (kind, True, hot), kind)
+            self.assertGreater(lay.h, 2 * isl.COMPACT_H * isl.k, kind)  # opened, not the small island
+            self.assertLessEqual(lay.h, isl.island_max_h, kind)
+            isl.face_at = None
+            drawn(lay)
+            self.assertAlmostEqual(isl.face_at[0], 2 + lay.w / 2, delta=2, msg=kind)  # her eyes in the middle
+        isl.hover = False  # not pointing at it: small again, as before
+        self.assertEqual(isl._make(("live", timer), now).h, isl.COMPACT_H * isl.k)
+        pill = fonted(self, hover=True)
+        self.assertFalse(pill._make(("live", song), now).face)  # the black pill's own card, as it was
+
+    def test_paper_is_white_and_an_opened_card_has_her_windows_dots(self):
+        """29 October 2026, the owner's pick: the island in her window's look, the theme it starts with: white glass
+        all but solid, near-black eyes with no glow, and on an opened card the faint dots her window has."""
+        self.assertEqual(settings.DEFAULTS["island_theme"], "paper")
+        isl = self.capsule(theme_name="paper", hover=True)
+        self.assertIs(isl.theme(), island.GLASS["paper"])
+        timer = plugins.Activity("timers", "timer", {"label": "Tea", "end": time.time() + 60, "total": 90.0},
+                                 live=True)
+        buf, (x0, y0, x1, y1) = painted(isl, isl._make(("live", timer), time.time()))
+        self.assertTrue((buf[..., :3].max(-1) <= buf[..., 3]).all())  # premultiplied, as Windows needs
+        inside = buf[int(y0 + 6 * isl.k):int(y1 - 6 * isl.k), int(x0 + 6 * isl.k):int(x1 - 6 * isl.k)]
+        shades = np.asarray([straight(px)[0].mean() for px in inside.reshape(-1, 4)[::5]])
+        self.assertGreater((np.abs(shades - 0.85) < 0.03).sum(), 5)  # the dots
+        self.assertGreater((shades > 0.97).mean(), 0.5)  # on white
+        isl.theme_name = "amoled"
+        buf, (x0, y0, x1, y1) = painted(isl, isl._make(("live", timer), time.time()))
+        inside = buf[int(y0 + 6 * isl.k):int(y1 - 6 * isl.k), int(x0 + 6 * isl.k):int(x1 - 6 * isl.k)]
+        self.assertLess(np.median([straight(px)[0].mean() for px in inside.reshape(-1, 4)[::5]]), 0.3)  # dark
+
     def test_the_pill_is_as_it_was(self):
         isl = fonted(self)
         self.assertIs(isl.theme(), island.THEMES["amoled"])
