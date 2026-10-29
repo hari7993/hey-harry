@@ -78,7 +78,7 @@ DEFAULTS = {
     # eyes (Nixi's, her own: the owner wants them, 28 October 2026), orb (a ring of dashes, there to pick) or
     # wave (the Siri wave, the pill's alone)
     "island_face": "eyes",
-    "island_theme": "amoled",  # system, light, dark or amoled (pure black)
+    "island_theme": "paper",  # paper (white, her window's look, 29 October 2026), system, light, dark or amoled
     "island_border": False,  # a thin line round it
     "island_align": "center",  # left, center or right of the screen's top
     # hanging from the top of the screen like a notch, in the same glass, no gap above it (28 October 2026, the owner's

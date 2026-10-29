@@ -1,6 +1,7 @@
 """Hey Harry's window on Windows: status on top, sidebar tabs for stats, the dictionary, apps, history, settings and keys."""
 import datetime
 import json
+import math
 import os
 import traceback
 import queue
@@ -55,7 +56,8 @@ POPUP_STYLES = {"island": "Her island at the top", "card": "The iPhone card at t
                 "pill": "The Siri pill at the bottom"}
 ISLAND_STYLES = {"panel": "Answer card", "capsule": "Glass capsule", "pill": "Black pill"}
 ISLAND_FACES = {"eyes": "Her eyes", "orb": "The orb", "wave": "The Siri wave"}
-ISLAND_THEMES = {"amoled": "AMOLED black", "dark": "Dark", "light": "Light", "system": "Like Windows"}
+ISLAND_THEMES = {"paper": "Paper, like her window", "amoled": "AMOLED black", "dark": "Dark", "light": "Light",
+                 "system": "Like Windows"}
 ISLAND_ALIGN = {"center": "In the middle", "left": "On the left", "right": "On the right"}
 hermes_memory.set_memory_dir(os.path.join(win.APPDATA_DIR, "memories"))  # the same places siri.py keeps them
 hermes_memory.set_home(win.APPDATA_DIR)
@@ -222,18 +224,34 @@ KEY_GROUPS = (
      "hears you in Settings > Speech to text; what it costs is billed to your account there.", VOICE_KEY_ROWS),
 )
 
-BG, SIDE, LINE = "#ffffff", "#f3f3f3", "#e3e3e3"
-# the sidebar, dark like her island, beside the light pages; GLOW is her eyes' colour
-NAV, NAV_HOVER, NAV_ON, NAV_TEXT, NAV_MUTED, GLOW = "#0f1116", "#1a1d24", "#252a34", "#c7cbd3", "#7c828d", "#5ee7f2"
-ACCENT_SOFT = "#e6f0fa"  # a selected row, a card under the mouse
+# Her window's look (29 October 2026, the owner's pick, a designer's page: hero-03 on 21st.dev): white, with a faint
+# grid of dots behind the sidebar and the top, near-black words, the tabs grey till you're on one, each page's name in
+# big thin capitals, black for what's on, and one orange, for the tab you're on and the links
+BG, SIDE, LINE, EDGE = "#ffffff", "#fafafa", "#e5e5e5", "#d4d4d4"  # EDGE: round a box or a button
+FAINT, DOTS, ORANGE = "#99a1af", "#d9d9d9", "#f54a00"  # the tabs you're not on; the dots, black at 15% on white
+DOT_GAP = 20  # logical px from one dot to the next, as the page has them
+ACCENT_SOFT = "#f5f5f5"  # a button under the mouse
+# a few colours, soft (29 October 2026, the owner: "add minimal color, not only white and black"): each part of a
+# page, each Home card and the tab you're on has one, its icon in it on a tint of it
+TINTS = {"orange": ("#f54a00", "#fff1e8"), "blue": ("#2563eb", "#edf3ff"), "green": ("#16a34a", "#e9f9ef"),
+         "violet": ("#7c3aed", "#f3eeff"), "rose": ("#e11d48", "#fff0f3"), "teal": ("#0891b2", "#e7f7fb"),
+         "amber": ("#d97706", "#fff6e5"), "slate": ("#475569", "#f1f5f9")}
+TAB_TINTS = {"home": "orange", "todo": "green", "tasks": "blue", "contacts": "teal", "dict": "amber", "apps": "violet",
+             "hist": "slate", "mem": "rose", "priv": "teal", "island": "violet", "settings": "blue", "keys": "amber"}
 ICONS = {"home": "\ue80f", "todo": "\ue9d5", "tasks": "\ue823", "contacts": "\ue716", "dict": "\ue82d",
          "apps": "\ue71d", "hist": "\ue81c", "mem": "\ue8f1", "priv": "\ue72e", "island": "\ue7f4",
          "settings": "\ue713", "keys": "\ue8d7"}  # Segoe Fluent Icons, Segoe MDL2 Assets on Windows 10
 STAT_ICONS = ("\ue916", "\ue720", "\ue70f", "\ue945", "\ue71d", "\ue897")  # the Home cards, in their order
+STAT_TINTS = ("orange", "blue", "violet", "green", "teal", "rose")
+# the Island tab's parts and the Keys tab's, a card each: (name, colour, icon)
+ISLAND_PARTS = (("Look", "violet", "\ue790"), ("Place", "blue", "\ue718"), ("Behaviour", "green", "\ue9e9"),
+                ("Plugins", "orange", "\ue74c"), ("Notifications", "amber", "\uea8f"))
+KEY_PARTS = (("Needed", "amber", "\ue8d7"), ("Answer models", "green", "\ue99a"),
+             ("Voice and hearing", "violet", "\ue720"))
 # while she's at one of these her dot pulses
 BUSY = {"Listening", "Still listening", "Transcribing", "Thinking", "Looking", "Doing it", "Speaking", "Dictating",
         "Finishing"}
-TEXT, MUTED, ACCENT, ERROR, TEAL = "#1b1b1b", "#5c5c5c", "#0067c0", "#c42b1c", "#0f766e"
+TEXT, MUTED, ACCENT, ERROR, TEAL = "#0a0a0a", "#737373", ORANGE, "#c42b1c", "#0f766e"
 STATUS_COLORS = {
     "Starting": "#d97706", "Ready": "#16a34a", "Listening": "#dc2626", "Transcribing": "#2563eb",
     "Thinking": "#7c3aed", "Looking": "#0891b2", "Doing it": "#ea580c", "Speaking": "#0d9488",
@@ -308,6 +326,42 @@ def rounded(x1, y1, x2, y2, r):
     return (x1 + r, y1, x1 + r, y1, x2 - r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y1 + r, x2, y2 - r, x2, y2 - r,
             x2, y2, x2 - r, y2, x2 - r, y2, x1 + r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y2 - r, x1, y1 + r,
             x1, y1 + r, x1, y1)
+
+
+def caps(text):
+    """text as a page's name is at the top of the window: in capitals, a hair's breadth between the letters, as the
+    page has its big words."""
+    return "\u200a".join(text.upper())
+
+
+def _to_line(x, y, a, b):
+    """How far x, y is from the line from a to b."""
+    (x0, y0), (x1, y1) = a, b
+    dx, dy = x1 - x0, y1 - y0
+    t = max(0.0, min(1.0, ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)))
+    return math.hypot(x - x0 - t * dx, y - y0 - t * dy)
+
+
+class Item:
+    """Words on a canvas, told what they say and their colour as a label is (configure, cget), so the sidebar's and the
+    top's change the way the labels' did, with her new name too (_renamed). moved: laid out again after new words."""
+
+    def __init__(self, canvas, item, moved=None):
+        self.canvas, self.item, self.moved = canvas, item, moved
+
+    def configure(self, text=None, fg=None):
+        if fg is not None:
+            self.canvas.itemconfigure(self.item, fill=fg)
+        if text is not None:
+            self.canvas.itemconfigure(self.item, text=text)
+            if self.moved:
+                self.moved()
+
+    def cget(self, key):
+        return self.canvas.itemcget(self.item, "fill" if key == "fg" else key)
+
+    def winfo_exists(self):
+        return self.canvas.winfo_exists()
 
 
 class HintEntry(ttk.Entry):
@@ -419,7 +473,7 @@ class ModelPicker:
         self.key_link.pack(side="left", padx=(px(8), 0))
         foot = tk.Frame(body, bg=BG)
         foot.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(px(12), 0))
-        ttk.Button(foot, text="Use model", command=self.use).pack(side="right")
+        ttk.Button(foot, text="Use model", style="Accent.TButton", command=self.use).pack(side="right")
         ttk.Button(foot, text="Cancel", command=self.close).pack(side="right", padx=(0, px(6)))
         ttk.Button(foot, text="Refresh", command=self.refresh).pack(side="right", padx=(0, px(6)))
         self.status = app._label(foot, "", app.f_small, MUTED, wraplength=px(520))
@@ -763,7 +817,7 @@ class ListPicker:
         self.model_ids = []
         foot = tk.Frame(body, bg=BG)
         foot.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(px(12), 0))
-        ttk.Button(foot, text=source.use_text, command=self.use).pack(side="right")
+        ttk.Button(foot, text=source.use_text, style="Accent.TButton", command=self.use).pack(side="right")
         ttk.Button(foot, text="Cancel", command=self.close).pack(side="right", padx=(0, px(6)))
         source.footer(self, foot)
         self.status = app._label(foot, "", app.f_small, MUTED, wraplength=px(380))
@@ -974,7 +1028,6 @@ class AssistantWindow:
                       "priv": self._build_privacy(), "island": self._build_island(),
                       "settings": self._build_settings(), "keys": self._build_keys()}
         self._select_tab("keys" if missing_secrets() else "home")
-        self.root.after(300, self._slide_nav_bar)  # where the tabs are once the window's on screen
         if not settings.get("onboarded"):  # the first time: her walkthrough, over the window
             self.root.after(700, self.open_walkthrough)
         identity.on_rename(self._renamed)
@@ -1009,6 +1062,8 @@ class AssistantWindow:
         root.bind("<Control-t>", lambda e: self.toggle_on_top())
         for cls in ("TEntry", "TCombobox"):  # Ctrl+T swaps letters in a text box, the window shortcut wins
             root.bind_class(cls, "<Control-t>", lambda e: None)
+        root.bind_all("<MouseWheel>", self._wheel)  # a long page scrolls under the mouse, anywhere on it
+        root.bind_class("TCombobox", "<MouseWheel>", lambda e: None)  # and a drop-down's pick never changes with it
         root.grid_columnconfigure(1, weight=1)
         root.grid_rowconfigure(0, weight=1)
 
@@ -1017,28 +1072,99 @@ class AssistantWindow:
         self.f_small = ("Segoe UI", 9)
         self.f_bold = ("Segoe UI Semibold", 10)
         self.f_h2 = ("Segoe UI Semibold", 11)
-        self.f_status = ("Segoe UI Semibold", 13)
-        self.f_title = ("Segoe UI Semibold", 17)
-        self.f_brand = ("Segoe UI Semibold", 13)
-        self.f_value = ("Segoe UI Semibold", 19)
+        self.f_status = ("Segoe UI Semibold", 11)
+        self.f_title = ("Segoe UI Light", 24)  # a page's name at the top, in thin capitals (caps)
+        self.f_section = ("Segoe UI Light", 15)  # a part of a page, the same way
+        self.f_brand = ("Segoe UI", 14, "bold", "italic")  # her name by her island, as the page has its own
+        self.f_badge = ("Segoe UI Semibold", 9)
+        self.f_value = ("Segoe UI Light", 24)
         self.f_mono = ("Consolas", 11)
         icons = "Segoe Fluent Icons" if "Segoe Fluent Icons" in tkfont.families(self.root) else "Segoe MDL2 Assets"
         self.f_icon, self.f_icon_big = (icons, 12), (icons, 15)
         for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):  # text boxes and lists in the same type as the rest
             tkfont.nametofont(name).configure(family="Segoe UI", size=10)
-        self.root.option_add("*TCombobox*Listbox.font", self.f_body)
-        style = ttk.Style(self.root)
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-        style.configure(".", font=self.f_body)
-        style.configure("Treeview", rowheight=self.px(28), font=self.f_body)
-        style.map("Treeview", background=[("selected", ACCENT_SOFT)], foreground=[("selected", TEXT)])
-        style.configure("Treeview.Heading", font=self.f_bold)
-        style.configure("TButton", padding=(self.px(10), self.px(3)))
-        style.configure("Hint.TEntry", foreground="#6e6e6e")
-        style.configure("TCheckbutton", background=BG)
-        style.configure("TCombobox", padding=self.px(2))
-        style.configure("Pick.TButton", anchor="w", padding=(self.px(8), self.px(4)))  # the answer model, as a box
+        for key, value in (("font", self.f_body), ("background", BG), ("foreground", TEXT),
+                           ("selectBackground", TEXT), ("selectForeground", BG)):  # a drop-down's list
+            self.root.option_add(f"*TCombobox*Listbox.{key}", value)
+        px, style = self.px, ttk.Style(self.root)
+        # clam, not vista (29 October 2026): vista draws Windows' own controls, which take no colours, and these are
+        # black and white, hairline boxes that go black when they're on or under the mouse
+        style.theme_use("clam")
+        style.configure(".", background=BG, foreground=TEXT, font=self.f_body, bordercolor=EDGE, lightcolor=BG,
+                        darkcolor=BG, troughcolor=LINE, focuscolor=TEXT, fieldbackground=BG, insertcolor=TEXT,
+                        selectbackground=TEXT, selectforeground=BG, arrowcolor=MUTED)
+        style.map(".", foreground=[("disabled", FAINT)])
+        style.configure("TButton", padding=(px(12), px(4)))
+        style.map("TButton", background=[("pressed", LINE), ("active", ACCENT_SOFT)],
+                  lightcolor=[("pressed", LINE), ("active", ACCENT_SOFT)],
+                  darkcolor=[("pressed", LINE), ("active", ACCENT_SOFT)],
+                  bordercolor=[("active", TEXT), ("focus", TEXT)])
+        # her orange, for the button that does what its box is for: Send, Use model, Save keys
+        lit, down = mix(ACCENT, "#000000", 0.12), mix(ACCENT, "#000000", 0.24)
+        style.configure("Accent.TButton", foreground=BG, background=ACCENT, bordercolor=ACCENT, lightcolor=ACCENT,
+                        darkcolor=ACCENT)
+        style.map("Accent.TButton", background=[("pressed", down), ("active", lit)],
+                  lightcolor=[("pressed", down), ("active", lit)], darkcolor=[("pressed", down), ("active", lit)],
+                  bordercolor=[("focus", TEXT)])
+        style.configure("Pick.TButton", anchor="w", padding=(px(8), px(4)))  # the answer model, as a box
+        style.configure("TEntry", padding=(px(6), px(3)))
+        style.map("TEntry", bordercolor=[("focus", ACCENT)], lightcolor=[("focus", BG)])
+        style.configure("Hint.TEntry", foreground=FAINT)
+        style.configure("TCombobox", padding=(px(6), px(2)), arrowsize=px(12))
+        style.map("TCombobox", fieldbackground=[("readonly", BG)], selectbackground=[("readonly", BG)],
+                  selectforeground=[("readonly", TEXT)], background=[("active", BG), ("pressed", BG)],
+                  bordercolor=[("focus", ACCENT), ("active", TEXT)], arrowcolor=[("active", TEXT)])
+        # a box, orange with a white tick once it's on, drawn here (_tick_box): clam's own has a cross, which reads
+        # as off ("what is this x", the owner, 29 October 2026)
+        self.ticks = [self._tick_box(on, hot) for on, hot in ((False, False), (False, True), (True, False))]
+        if "Tick.indicator" not in style.element_names():
+            style.element_create("Tick.indicator", "image", self.ticks[0], ("selected", self.ticks[2]),
+                                 ("active", self.ticks[1]), width=px(14) + px(7), sticky="w")
+        style.layout("TCheckbutton", [("Checkbutton.padding", {"sticky": "nswe", "children": [
+            ("Tick.indicator", {"side": "left", "sticky": ""}),
+            ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
+                ("Checkbutton.label", {"sticky": "nswe"})]})]})])
+        style.map("TCheckbutton", background=[("active", BG)])
+        style.configure("Treeview", rowheight=px(30), font=self.f_body, fieldbackground=BG, bordercolor=LINE)
+        style.map("Treeview", background=[("selected", TINTS["orange"][1])], foreground=[("selected", TEXT)])
+        style.configure("Treeview.Heading", font=self.f_bold, foreground=MUTED, bordercolor=LINE,
+                        padding=(px(6), px(4)))
+        style.map("Treeview.Heading", background=[("active", SIDE)])
+        style.configure("Horizontal.TScale", background=TEXT, bordercolor=TEXT, lightcolor=TEXT, darkcolor=TEXT)
+        for side in ("Vertical", "Horizontal"):  # a grey bar with no arrows, darker under the mouse
+            style.layout(f"{side}.TScrollbar", [(f"{side}.Scrollbar.trough", {
+                "sticky": "ns" if side == "Vertical" else "ew",
+                "children": [(f"{side}.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+        style.configure("TScrollbar", background=LINE, troughcolor=BG, bordercolor=BG, lightcolor=LINE,
+                        darkcolor=LINE, arrowsize=px(9), gripcount=0)
+        style.map("TScrollbar", background=[("pressed", FAINT), ("active", EDGE)],
+                  lightcolor=[("pressed", FAINT), ("active", EDGE)], darkcolor=[("pressed", FAINT), ("active", EDGE)])
+
+    def _tick_box(self, on, hot):
+        """A checkbox's box as a picture, over the white it sits on, drawn smooth: a hairline square with round
+        corners, orange under the mouse, and orange with a white tick once it's on."""
+        n, s = self.px(14), self.s
+        r, lw, half = 3 * s, max(1.0, s), 0.9 * s  # its corners, its line, half the tick's
+        a, b, c = (3.5 * s, 7.3 * s), (6.0 * s, 9.8 * s), (10.6 * s, 4.7 * s)  # the tick, corner to corner
+        line = ACCENT if hot else EDGE
+        rows = []
+        for y in range(n):
+            row = []
+            for x in range(n):
+                cx, cy = x + 0.5, y + 0.5
+                qx, qy = abs(cx - n / 2) - (n / 2 - r), abs(cy - n / 2) - (n / 2 - r)
+                sd = math.hypot(max(qx, 0.0), max(qy, 0.0)) + min(max(qx, qy), 0.0) - r  # in it below 0
+                if on:
+                    colour = mix(BG, ACCENT, max(0.0, min(1.0, 0.5 - sd)))
+                    tick = max(0.0, min(1.0, half + 0.5 - min(_to_line(cx, cy, a, b), _to_line(cx, cy, b, c))))
+                    colour = mix(colour, BG, tick)
+                else:
+                    colour = mix(BG, line, max(0.0, min(1.0, 0.5 - (abs(sd + lw / 2) - lw / 2))))
+                row.append(colour)
+            rows.append("{" + " ".join(row) + "}")
+        box = tk.PhotoImage(master=self.root, width=n, height=n)
+        box.put(" ".join(rows))
+        return box
 
     def animate(self, key, ms, step, done=None):
         """step(t) every frame as t goes from 0 to 1 over ms, eased. A newer one with the same key takes over."""
@@ -1061,6 +1187,27 @@ class AssistantWindow:
                     done()
         frame()
 
+    def _wheel(self, event):
+        """The wheel over a long page, over its words and boxes too, scrolls it (29 October 2026: it scrolled only
+        over the page's margins, and the owner found it very hard to): 60 px a notch, a touchpad's small turns added
+        up. A table or a list under the mouse scrolls itself."""
+        page = getattr(self, "pages", {}).get(getattr(self, "current_tab", None))
+        canvas = getattr(page, "canvas", None)
+        try:
+            under = self.root.winfo_containing(event.x_root, event.y_root)
+        except (KeyError, tk.TclError):  # a drop-down's list, which isn't one of ours
+            under = None
+        if canvas is None or under is None or isinstance(under, (ttk.Treeview, tk.Listbox, tk.Text)):
+            return
+        outer, at = str(page.outer), str(under)
+        if not page.bar.winfo_ismapped() or (at != outer and not at.startswith(outer + ".")):
+            return
+        self.wheel_rest = getattr(self, "wheel_rest", 0.0) - event.delta / 40
+        units = int(self.wheel_rest)
+        self.wheel_rest -= units
+        if units:
+            canvas.yview_scroll(units, "units")
+
     def _label(self, parent, text="", font=None, fg=TEXT, bg=BG, **kw):
         anchor = "nw" if "wraplength" in kw else "w"  # if a long text runs out of room, lose the end, not the start
         label = tk.Label(parent, text=identity.named(text), font=font or self.f_body, fg=fg, bg=bg, anchor=anchor,
@@ -1082,6 +1229,10 @@ class AssistantWindow:
             label.configure(text=identity.named(text))
         self.hint.configure(text=identity.named(HINTS[self.mode]))
         self._build_mode_switch()
+        if getattr(self, "current_tab", None):  # a page's name can have hers in it, and the pill's as wide as hers
+            self._show_head(self.current_tab)
+        else:
+            self._lay_head()
         box = getattr(self, "nick_box", None)
         if box is not None and box.get() != identity.name():
             box._hide_hint()
@@ -1095,68 +1246,102 @@ class AssistantWindow:
 
     # ------------------------------------------------------------------ layout
     def _build_sidebar(self):
-        side = tk.Frame(self.root, bg=NAV, width=self.px(SIDEBAR))
+        """The sidebar, one canvas over the dots (29 October 2026): her island and her name at the top, the tabs as
+        words, grey till you're on one, on a pill of its colour, and the timers, the hint and Quit at the bottom. Up
+        and Down go through the tabs from the keyboard."""
+        px = self.px
+        side = self.side = tk.Canvas(self.root, bg=BG, width=px(SIDEBAR), highlightthickness=0, bd=0, takefocus=1)
         side.grid(row=0, column=0, sticky="ns")
-        side.pack_propagate(False)
-        brand = tk.Frame(side, bg=NAV)
-        brand.pack(fill="x", padx=self.px(20), pady=(self.px(22), self.px(18)))
+        pad, mid = px(22), px(38)  # in from the left, and the middle of her name's row
         self.logo_photo, self.logo_off = tk.PhotoImage(master=self.root), False
-        self.logo = tk.Label(brand, image=self.logo_photo, bg=NAV, bd=0)
-        self.logo.pack(side="left")
+        side.create_image(pad, mid, image=self.logo_photo, anchor="w")
         self._draw_logo(1.0)
         self.root.after(2500, self._blink)
-        self._label(brand, "Hey Harry", self.f_brand, "#ffffff", NAV).pack(side="left", padx=(self.px(10), 0))
-        self.nav = tk.Frame(side, bg=NAV)
-        self.nav.pack(fill="x", padx=self.px(10))
-        self.tab_buttons = {}
-        for key, title in TABS:
-            item = tk.Frame(self.nav, bg=NAV, cursor="hand2", takefocus=1, highlightthickness=1,
-                            highlightbackground=NAV, highlightcolor=GLOW)
-            item.pack(fill="x", pady=1)
-            icon = tk.Label(item, text=ICONS.get(key, ""), font=self.f_icon, fg=NAV_MUTED, bg=NAV, cursor="hand2")
-            icon.pack(side="left", padx=(self.px(12), self.px(10)), pady=self.px(7))
-            text = tk.Label(item, text=title, font=self.f_body, fg=NAV_TEXT, bg=NAV, anchor="w", cursor="hand2")
-            text.pack(side="left", fill="x", expand=True)
-            for w in (item, icon, text):
-                w.bind("<Button-1>", lambda e, k=key: self._select_tab(k))
-                w.bind("<Enter>", lambda e, k=key: self._hover_tab(k, True))
-                w.bind("<Leave>", lambda e, k=key: self._hover_tab(k, False, e))
-            for keysym in ("<Return>", "<space>"):
-                item.bind(keysym, lambda e, k=key: self._select_tab(k))
-            self.tab_buttons[key] = (item, icon, text)
-        self.nav_bar = tk.Frame(self.nav, bg=GLOW, width=self.px(3))  # slides to the tab you're on
-        bottom = tk.Frame(side, bg=NAV)
-        bottom.pack(side="bottom", fill="x", padx=self.px(20), pady=(0, self.px(14)))
-        self.timer_rows = []
+        brand = side.create_text(pad + (self.logo_photo.width() or px(52)) + px(10), mid, anchor="w",
+                                 text=identity.named("Hey Harry"), font=self.f_brand, fill=TEXT)
+        self.named.append((Item(side, brand), "Hey Harry"))
+        self.nav_top, self.nav_h = mid + px(34), px(36)
+        self.tab_buttons, self.side_over, self.leave_hot = {}, None, False
+        for i, (key, title) in enumerate(TABS):
+            y = self.nav_top + i * self.nav_h + self.nav_h // 2
+            icon = side.create_text(pad, y, anchor="w", text=ICONS.get(key, ""), font=self.f_icon, fill=FAINT)
+            text = side.create_text(pad + px(28), y, anchor="w", text=title, font=self.f_body, fill=FAINT)
+            self.tab_buttons[key] = (icon, text)
+        # a soft pill of its own colour behind the tab you're on, sliding to the next
+        self.nav_bar = side.create_polygon(0, 0, 0, 0, smooth=True, fill=ACCENT_SOFT, outline="")
+        side.tag_lower(self.nav_bar)
+        self.nav_ring = side.create_rectangle(0, 0, 0, 0, outline=TEXT, state="hidden")  # round it, from the keyboard
+        self.side_line = side.create_line(0, 0, 0, 0, fill=LINE)  # down its right side, by the page
+        self.timer_rows, self.timers_shown = [], 0
         for _ in range(3):  # up to 3 timers, soonest on top
-            row = tk.Frame(bottom, bg=NAV)
-            name = self._label(row, "", self.f_small, NAV_TEXT, NAV)
-            left = tk.Label(row, text="", font=self.f_mono, fg=GLOW, bg=NAV)
-            name.pack(side="left")
-            left.pack(side="right")
-            self.timer_rows.append((row, name, left))
-        self.hint = self._label(bottom, HINTS[self.mode], self.f_small, NAV_MUTED, NAV,
-                                wraplength=self.px(SIDEBAR - 40))
-        self.hint.pack(fill="x", pady=(self.px(8), self.px(8)))
-        leave = tk.Button(bottom, text=identity.named("\u23fb  Quit Hey Harry"), relief="flat", bd=0, bg=NAV,
-                          fg=NAV_MUTED, font=self.f_small, activebackground=NAV_HOVER, activeforeground="#ffffff",
-                          cursor="hand2", anchor="w", highlightthickness=1, highlightbackground=NAV,
-                          highlightcolor=GLOW, command=self.quit)
-        leave.pack(fill="x")
-        self.named.append((leave, "\u23fb  Quit Hey Harry"))  # "Quit Hey Friday" once she's Friday (_renamed)
+            name = side.create_text(pad, 0, anchor="w", font=self.f_small, fill=TEXT, state="hidden")
+            left = side.create_text(0, 0, anchor="e", font=self.f_mono, fill=ACCENT, state="hidden")
+            self.timer_rows.append((Item(side, name), Item(side, left)))
+        self.hint = Item(side, side.create_text(pad, 0, anchor="sw", width=px(SIDEBAR) - 2 * pad, font=self.f_small,
+                                                fill=MUTED, text=identity.named(HINTS[self.mode])), self._lay_bottom)
+        self.leave = side.create_text(pad, 0, anchor="sw", text=identity.named("\u23fb  Quit Hey Harry"),
+                                      font=self.f_small, fill=FAINT)
+        self.named.append((Item(side, self.leave), "\u23fb  Quit Hey Harry"))  # "Quit Hey Friday" once she's Friday
+        side.bind("<Configure>", lambda e: self._lay_side())
+        side.bind("<Motion>", self._side_motion)
+        side.bind("<Leave>", lambda e: self._side_motion(None))
+        side.bind("<Button-1>", self._side_click)
+        side.bind("<Up>", lambda e: self._tab_step(-1))
+        side.bind("<Down>", lambda e: self._tab_step(1))
+        side.bind("<FocusIn>", lambda e: self._ring_tab())
+        side.bind("<FocusOut>", lambda e: side.itemconfigure(self.nav_ring, state="hidden"))
+
+    def _lay_side(self):
+        """The dots and the line down its side for the sidebar's size now, and its bottom."""
+        c = self.side
+        w, h = c.winfo_width(), c.winfo_height()
+        if w < 2:  # not on screen yet
+            return
+        self._dots(c, w, h)
+        c.coords(self.side_line, w - 1, 0, w - 1, h)
+        self._lay_bottom()
+
+    def _lay_bottom(self):
+        """Quit at the bottom of the sidebar, the hint over it and the timers over that, soonest on top."""
+        c, px = self.side, self.px
+        w, h, pad = c.winfo_width(), c.winfo_height(), px(22)
+        if w < 2:
+            return
+        c.coords(self.leave, pad, h - px(16))
+        c.coords(self.hint.item, pad, c.bbox(self.leave)[1] - px(8))
+        y, row_h = c.bbox(self.hint.item)[1] - px(6), px(22)
+        for i, (name, left) in enumerate(self.timer_rows):
+            cy = y - (self.timers_shown - i) * row_h + row_h // 2
+            c.coords(name.item, pad, cy)
+            c.coords(left.item, w - pad, cy)
+            for item in (name.item, left.item):
+                c.itemconfigure(item, state="normal" if i < self.timers_shown else "hidden")
+
+    def _dots(self, c, w, h):
+        """The faint dots behind the sidebar and the top, the page's: one every DOT_GAP px, in step across the window,
+        under all else on the canvas c, w by h."""
+        c.delete("dots")
+        gap, d = self.px(DOT_GAP), max(2, self.px(1.5))
+        ox, oy = c.winfo_rootx() - self.root.winfo_rootx(), c.winfo_rooty() - self.root.winfo_rooty()
+        for y in range((gap // 2 - oy) % gap, h, gap):
+            for x in range((gap // 2 - ox) % gap, w, gap):
+                c.create_rectangle(x, y, x + d, y + d, fill=DOTS, width=0, tags="dots")
+        c.tag_lower("dots")
 
     def _draw_logo(self, open_):
         """Her island as it floats at the top of the screen with nothing on, the glass capsule with her glowing eyes
-        (28 October 2026, the owner's ask), drawn by the island's own code (island.logo): open_ 1 open and 0 shut."""
+        (28 October 2026, the owner's ask), drawn by the island's own code (island.logo): open_ 1 open and 0 shut. Its
+        glass solid on the white, black as the page's badge is."""
         if self.logo_off:
             return
         try:
             import island
-            rgb = island.logo(self.px(24), open_, back=tuple(int(NAV[i:i + 2], 16) / 255 for i in (1, 3, 5)))
+            rgba = island.logo(self.px(24), open_)
         except Exception as exc:  # never in the window's way: the name beside it is still there
             print(f"  couldn't draw her logo: {exc!r}")
             self.logo_off = True
             return
+        rgb = rgba[..., :3] + (1 - rgba[..., 3:])  # premultiplied, over the white
         h, w = rgb.shape[:2]
         pixels = (rgb * 255 + 0.5).astype("uint8").tobytes()
         self.logo_photo.configure(data=b"P6 %d %d 255 " % (w, h) + pixels, format="ppm")
@@ -1165,70 +1350,210 @@ class AssistantWindow:
         self.animate("blink", 220, lambda t: self._draw_logo(abs(1 - 2 * t)),
                      lambda: self.root.after(random.randint(3500, 8000), self._blink))
 
-    def _paint_tab(self, key, bg, on):
-        item, icon, text = self.tab_buttons[key]
-        item.configure(bg=bg, highlightbackground=bg)
-        icon.configure(bg=bg, fg=GLOW if on else NAV_MUTED)
-        text.configure(bg=bg, fg="#ffffff" if on else NAV_TEXT, font=self.f_bold if on else self.f_body)
+    def _paint_tab(self, key, on, colour=None):
+        """A tab in black words with its icon in its colour while you're on it, else grey, or colour while the mouse
+        fades it."""
+        icon, text = self.tab_buttons[key]
+        colour = TEXT if on else colour or FAINT
+        self.side.itemconfigure(icon, fill=TINTS[TAB_TINTS[key]][0] if on else colour)
+        self.side.itemconfigure(text, fill=colour, font=self.f_bold if on else self.f_body)
 
-    def _hover_tab(self, key, inside, event=None):
-        if key == getattr(self, "current_tab", None):
-            return
-        item = self.tab_buttons[key][0]
-        if event is not None:  # from the tab onto its own icon or words is still on it
-            under = self.root.winfo_containing(event.x_root, event.y_root)
-            if under is not None and (under is item or under.master is item):
-                return
-        start, end = item.cget("bg"), NAV_HOVER if inside else NAV
-        self.animate(f"hover {key}", 140, lambda t: self._paint_tab(key, mix(start, end, t), False))
+    def _hover_tab(self, key, inside):
+        start, end = self.side.itemcget(self.tab_buttons[key][1], "fill"), MUTED if inside else FAINT
+        self.animate(f"hover {key}", 140, lambda t: self._paint_tab(key, False, mix(start, end, t)))
+
+    def _side_row(self, y):
+        """The tab at y down the sidebar, or None."""
+        i = (y - self.nav_top) // self.nav_h if y >= self.nav_top else -1
+        return TABS[int(i)][0] if 0 <= i < len(TABS) else None
+
+    def _side_motion(self, event):
+        """The mouse over the sidebar (None: off it): the tab under it fades darker, and Quit goes black."""
+        c = self.side
+        over = c.find_withtag("current") if event is not None else ()
+        leave = bool(over) and over[0] == self.leave
+        key = self._side_row(event.y) if event is not None and not leave else None
+        if key != self.side_over:
+            for k, inside in ((self.side_over, False), (key, True)):
+                if k and k != getattr(self, "current_tab", None):
+                    self._hover_tab(k, inside)
+            self.side_over = key
+            c.configure(cursor="hand2" if key else "")
+        if leave != self.leave_hot:
+            self.leave_hot = leave
+            c.itemconfigure(self.leave, fill=TEXT if leave else FAINT)
+            c.configure(cursor="hand2" if leave or key else "")
+
+    def _side_click(self, event):
+        over = self.side.find_withtag("current")
+        if over and over[0] == self.leave:
+            self.quit()
+        elif self._side_row(event.y):
+            self._select_tab(self._side_row(event.y))
+
+    def _tab_step(self, step):
+        keys = [k for k, _ in TABS]
+        self._select_tab(keys[(keys.index(self.current_tab) + step) % len(keys)])
+        return "break"
+
+    def _ring_tab(self):
+        """A hairline round the tab you're on while the sidebar has the keyboard."""
+        try:
+            on = self.root.focus_get() is self.side and hasattr(self, "current_tab")
+        except (KeyError, tk.TclError):
+            on = False
+        if on:
+            px, i = self.px, [k for k, _ in TABS].index(self.current_tab)
+            y = self.nav_top + i * self.nav_h
+            self.side.coords(self.nav_ring, px(6), y + px(2), int(self.side.cget("width")) - px(10),
+                             y + self.nav_h - px(2))
+        self.side.itemconfigure(self.nav_ring, state="normal" if on else "hidden")
 
     def _slide_nav_bar(self):
-        item = self.tab_buttons[self.current_tab][0]
-        self.nav.update_idletasks()
-        y, h = item.winfo_y() + self.px(8), max(self.px(4), item.winfo_height() - self.px(16))
-        if not self.nav_bar.winfo_ismapped() or not item.winfo_height():
-            self.nav_bar.place(x=0, y=y, width=self.px(3), height=h)
-            return
-        start = self.nav_bar.winfo_y()
-        self.animate("nav bar", 260, lambda t: self.nav_bar.place_configure(y=round(start + (y - start) * t),
-                                                                             height=h))
+        c, px = self.side, self.px
+        i = [k for k, _ in TABS].index(self.current_tab)
+        y, h = self.nav_top + i * self.nav_h + px(3), self.nav_h - px(6)
+        x0, x1 = px(10), int(c.cget("width")) - px(12)
+        start = getattr(self, "nav_at", y)  # the first time it's just there
+        c.itemconfigure(self.nav_bar, fill=TINTS[TAB_TINTS[self.current_tab]][1])
+
+        def step(t):
+            self.nav_at = top = start + (y - start) * t
+            c.coords(self.nav_bar, *rounded(x0, top, x1, top + h, px(9)))
+        self.animate("nav bar", 260, step)
+        self._ring_tab()
 
     def _build_main(self):
         main = tk.Frame(self.root, bg=BG)
         main.grid(row=0, column=1, sticky="nsew")
-        header = tk.Frame(main, bg=BG)
-        header.pack(fill="x", padx=self.px(28), pady=(self.px(18), self.px(14)))
-        self.mode_switch = tk.Canvas(header, bg=BG, highlightthickness=0, cursor="hand2", takefocus=1)
-        self.mode_switch.pack(side="right", anchor="n")
+        # the top, over the dots (29 October 2026): how she's doing along it and the mode at its right, where the page
+        # has its name and its tabs; under them the page's name in big thin capitals and what it's for beside it
+        head = self.head = tk.Canvas(main, bg=BG, height=self.px(124), highlightthickness=0, bd=0, takefocus=1)
+        head.pack(fill="x")
+        self.measures = {}  # a font: its tkfont.Font, to measure words in (_measure)
+        self.mode_at, self.status_room, self.dot_at = (0, 0), self.px(400), (0, 0)
         self._build_mode_switch()
-        # An orange pill while Full access is on (Settings > Safety); a click turns it off
-        self.full_badge = tk.Label(header, text="\u25cf  Full access", font=self.f_small, fg="#b86e00", bg="#fff1db",
-                                   padx=self.px(10), pady=self.px(4), cursor="hand2")
-        self.full_badge.bind("<Button-1>", lambda e: self.set_full_access(False))
-        self._show_full_badge()
-        status = tk.Frame(header, bg=BG)
-        status.pack(side="left", fill="x", expand=True)
-        row = tk.Frame(status, bg=BG)
-        row.pack(anchor="w")
-        self.dot = tk.Canvas(row, width=self.px(20), height=self.px(20), bg=BG, highlightthickness=0)
-        self.dot.pack(side="left")
+        # Full access while it's on (Settings > Safety), an orange dot on black as the page's badge is; a click turns
+        # it off
+        self.badge_on = False
+        self.full_badge = head.create_rectangle(0, 0, 0, 0, fill=TEXT, width=0, state="hidden", tags="badge")
+        self.badge_dot = head.create_oval(0, 0, 0, 0, fill=ACCENT, width=0, state="hidden", tags="badge")
+        self.badge_text = head.create_text(0, 0, anchor="w", text="Full access", font=self.f_badge, fill=BG,
+                                           state="hidden", tags="badge")
+        head.tag_bind("badge", "<Button-1>", lambda e: self.set_full_access(False))
+        head.tag_bind("mode", "<Button-1>", self._mode_click)
+        for tag in ("badge", "mode"):
+            head.tag_bind(tag, "<Enter>", lambda e: head.configure(cursor="hand2"))
+            head.tag_bind(tag, "<Leave>", lambda e: head.configure(cursor=""))
         self.dot_colour, self.dot_busy, self.dot_job = STATUS_COLORS["Starting"], False, None
-        self._draw_dot()
-        self.status = self._label(row, "Starting", self.f_status)
-        self.status.pack(side="left", padx=(self.px(6), 0))
-        self.detail = self._label(status, "Loading speech models\u2026", fg=MUTED)
-        self.detail.pack(anchor="w", fill="x", padx=(self.px(26), 0))
-        tk.Frame(main, bg=LINE, height=1).pack(fill="x")
+        self.status = Item(head, head.create_text(0, 0, anchor="w", text="Starting", font=self.f_status, fill=TEXT),
+                           self._lay_status)
+        self.detail_text = "Loading speech models\u2026"
+        self.detail = head.create_text(0, 0, anchor="w", font=self.f_body, fill=MUTED)
+        self.head_title = head.create_text(0, 0, anchor="nw", font=self.f_title, fill=TEXT)
+        self.head_mark = head.create_rectangle(0, 0, 0, 0, fill=ACCENT, width=0)  # under it, in the tab's colour
+        self.head_sub = head.create_text(0, 0, anchor="nw", font=self.f_small, fill=MUTED)
+        self.head_line = head.create_line(0, 0, 0, 0, fill=LINE)
+        head.bind("<Configure>", lambda e: self._lay_head())
+        head.bind("<Left>", lambda e: self.set_mode(MODES[0]))
+        head.bind("<Right>", lambda e: self.set_mode(MODES[-1]))
+        head.bind("<FocusIn>", lambda e: head.itemconfigure(self.mode_ring, state="normal"))
+        head.bind("<FocusOut>", lambda e: head.itemconfigure(self.mode_ring, state="hidden"))
         self.page_area = tk.Frame(main, bg=BG)
         self.page_area.pack(fill="both", expand=True)
+        self._show_full_badge()
+
+    def _lay_head(self):
+        """All at the top for its width: the mode at the right with Full access by it, how she's doing along the left,
+        and under them the page's name, with what it's for beside it or, short of room, under it. As tall as they
+        need, with a line under it."""
+        c, px = self.head, self.px
+        w = c.winfo_width()
+        if w < 2:  # not on screen yet
+            return
+        pad, top = px(28), px(16)
+        (mw, mh), (ox, oy) = self.mode_size, self.mode_at
+        mx = w - pad - mw
+        c.move("mode", mx - ox, top - oy)
+        self.mode_at, right = (mx, top), mx
+        if self.badge_on:
+            cy, bh, x1 = top + mh / 2, px(26), mx - px(12)
+            x0 = x1 - self._measure(self.f_badge, "Full access") - px(32)
+            c.coords(self.full_badge, x0, cy - bh / 2, x1, cy + bh / 2)
+            c.coords(self.badge_dot, x0 + px(11), cy - px(3), x0 + px(17), cy + px(3))
+            c.coords(self.badge_text, x0 + px(22), cy)
+            right = x0
+        self.status_room = right - px(24)
+        self._lay_status()
+        ty = top + mh + px(10)
+        c.coords(self.head_title, pad - px(3), ty)
+        tb = c.bbox(self.head_title) or (pad, ty, pad, ty + px(44))
+        base = tb[1] + self._font(self.f_title).metrics("ascent")  # the foot of its capitals
+        c.coords(self.head_mark, pad, base + px(8), pad + px(36), base + px(11))
+        room = w - pad - tb[2] - px(40)
+        if room >= px(220):  # beside it, as the page has its small words by its big ones
+            c.itemconfigure(self.head_sub, anchor="ne", width=min(px(340), room))
+            c.coords(self.head_sub, w - pad, ty + px(10))
+        else:
+            c.itemconfigure(self.head_sub, anchor="nw", width=w - 2 * pad)
+            c.coords(self.head_sub, pad, tb[3])
+        sb = c.bbox(self.head_sub) or tb
+        height = int(max(base + px(11), sb[3]) + px(16))
+        if int(c.cget("height")) != height:
+            c.configure(height=height)
+        c.coords(self.head_line, 0, height - 1, w, height - 1)
+        self._dots(c, w, height)
+
+    def _lay_status(self):
+        """How she's doing along the top: her dot, what she's at, and the rest in grey, cut short to the room it has."""
+        c, px = self.head, self.px
+        x, y = px(28), px(32)  # level with the middle of the mode switch
+        self.dot_at = (x + px(5), y)
+        if not self.dot_busy:
+            self._draw_dot()
+        c.coords(self.status.item, x + px(18), y)
+        after = c.bbox(self.status.item)[2] + px(12)
+        c.itemconfigure(self.detail, text=self._fit(self.detail_text, self.f_body, self.status_room - after))
+        c.coords(self.detail, after, y)
+
+    def _font(self, font):
+        if font not in self.measures:
+            self.measures[font] = tkfont.Font(root=self.root, font=font)
+        return self.measures[font]
+
+    def _measure(self, font, text):
+        return self._font(font).measure(text)
+
+    def _fit(self, text, font, width):
+        """text, cut short to fit width px in font, the dots of an ellipsis where it's cut."""
+        if self._measure(font, text) <= width:
+            return text
+        lo, hi = 0, len(text)
+        while lo < hi:  # the most of it that fits with the dots
+            mid = (lo + hi + 1) // 2
+            if self._measure(font, text[:mid].rstrip() + "\u2026") <= width:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo].rstrip() + "\u2026" if lo else ""
+
+    def _show_head(self, key):
+        """The page's name and what it's for at the top, fading in as the page comes up."""
+        title, sub = self.pages[key].head
+        c = self.head
+        c.itemconfigure(self.head_title, text=caps(identity.named(title)))
+        c.itemconfigure(self.head_sub, text=identity.named(sub))
+        c.itemconfigure(self.head_mark, fill=TINTS[TAB_TINTS[key]][0])
+        self._lay_head()
+        self.animate("head", 260, lambda t: (c.itemconfigure(self.head_title, fill=mix(BG, TEXT, t)),
+                                             c.itemconfigure(self.head_sub, fill=mix(BG, MUTED, t))))
 
     def _show_full_badge(self):
         on = bool(settings.get("full_access"))
-        if on and not self.full_badge.winfo_ismapped():
-            self.full_badge.pack(side="right", anchor="n", padx=(0, self.px(12)), pady=(self.px(4), 0),
-                                 before=self.mode_switch)
-        elif not on and self.full_badge.winfo_ismapped():
-            self.full_badge.pack_forget()
+        if on != self.badge_on:
+            self.badge_on = on
+            self.head.itemconfigure("badge", state="normal" if on else "hidden")
+            self._lay_head()
         if hasattr(self, "full_var") and self.full_var.get() != on:
             self.full_var.set(on)
 
@@ -1252,13 +1577,13 @@ class AssistantWindow:
 
     def _draw_dot(self, phase=None):
         """Her status dot, and while she's busy a ring that grows from it and fades, phase 0 to 1."""
-        c, px, colour = self.dot, self.px, self.dot_colour
-        c.delete("all")
-        mid = px(10)
+        c, px, colour = self.head, self.px, self.dot_colour
+        c.delete("sdot")
+        x, y = self.dot_at
         if phase is not None:
             r = px(4) + px(6) * phase
-            c.create_oval(mid - r, mid - r, mid + r, mid + r, outline=mix(colour, BG, phase), width=px(2))
-        c.create_oval(mid - px(5), mid - px(5), mid + px(5), mid + px(5), fill=colour, outline="")
+            c.create_oval(x - r, y - r, x + r, y + r, outline=mix(colour, BG, phase), width=px(2), tags="sdot")
+        c.create_oval(x - px(5), y - px(5), x + px(5), y + px(5), fill=colour, outline="", tags="sdot")
 
     def _set_dot(self, colour, busy):
         self.dot_colour, self.dot_busy = colour, busy
@@ -1276,10 +1601,10 @@ class AssistantWindow:
         self.dot_job = self.root.after(33, self._pulse)
 
     def _build_mode_switch(self):
-        """Hold Right Alt and Hey Harry as one pill, the one on in a thumb that slides across. Drawn again with a new
-        name of hers (_renamed)."""
-        c, px = self.mode_switch, self.px
-        c.delete("all")
+        """Hold Right Alt and Hey Harry as one pill at the top right, the one on in a black thumb that slides across.
+        Drawn again with a new name of hers (_renamed)."""
+        c, px = self.head, self.px
+        c.delete("mode")
         measure = tkfont.Font(root=self.root, font=self.f_bold).measure
         pad, h, x = px(3), px(32), px(3)
         self.mode_spans = {}
@@ -1287,33 +1612,40 @@ class AssistantWindow:
             w = measure(identity.named(MODE_LABELS[mode])) + px(28)
             self.mode_spans[mode] = (x, x + w)
             x += w
-        c.configure(width=x + pad, height=h)
-        c.create_polygon(rounded(0, 0, x + pad, h, h / 2), smooth=True, fill="#eef0f3", outline="")
+        self.mode_size = (x + pad, h)
+        ox, oy = self.mode_at
+        c.create_polygon(rounded(ox, oy, ox + x + pad, oy + h, h / 2), smooth=True, fill=ACCENT_SOFT, outline="",
+                         tags="mode")
+        # round it while it has the keyboard, when Left and Right pick
+        self.mode_ring = c.create_polygon(rounded(ox - px(3), oy - px(3), ox + x + pad + px(3), oy + h + px(3),
+                                                  h / 2 + px(3)), smooth=True, fill="", outline=TEXT,
+                                          state="hidden", tags="mode")
         a, b = self.mode_spans[self.mode]
-        self.mode_thumb = c.create_polygon(rounded(a, pad, b, h - pad, (h - 2 * pad) / 2), smooth=True,
-                                           fill=ACCENT, outline="")
-        self.mode_texts = {m: c.create_text((a + b) / 2, h / 2, text=identity.named(MODE_LABELS[m]), font=self.f_bold)
-                           for m, (a, b) in self.mode_spans.items()}
-        c.bind("<Button-1>", lambda e: self.set_mode(next((m for m, (a, b) in self.mode_spans.items()
-                                                           if a <= e.x < b), self.mode)))
-        c.bind("<Left>", lambda e: self.set_mode(MODES[0]))
-        c.bind("<Right>", lambda e: self.set_mode(MODES[-1]))
+        self.mode_thumb = c.create_polygon(rounded(ox + a, oy + pad, ox + b, oy + h - pad, (h - 2 * pad) / 2),
+                                           smooth=True, fill=ACCENT, outline="", tags="mode")
+        self.mode_texts = {m: c.create_text(ox + (a + b) / 2, oy + h / 2, text=identity.named(MODE_LABELS[m]),
+                                            font=self.f_bold, tags="mode") for m, (a, b) in self.mode_spans.items()}
         self._paint_mode(slide=False)
 
     def _paint_mode(self, slide=True):
-        c, pad, h = self.mode_switch, self.px(3), int(self.mode_switch.cget("height"))
+        c, pad, h = self.head, self.px(3), self.mode_size[1]
         for mode, item in self.mode_texts.items():
-            c.itemconfigure(item, fill="#ffffff" if mode == self.mode else TEXT)
+            c.itemconfigure(item, fill=BG if mode == self.mode else MUTED)
         a2, b2 = self.mode_spans[self.mode]
         a1, b1 = getattr(self, "mode_thumb_at", (a2, b2)) if slide else (a2, b2)
 
         def step(t):
             self.mode_thumb_at = a, b = a1 + (a2 - a1) * t, b1 + (b2 - b1) * t
-            c.coords(self.mode_thumb, *rounded(a, pad, b, h - pad, (h - 2 * pad) / 2))
+            ox, oy = self.mode_at
+            c.coords(self.mode_thumb, *rounded(ox + a, oy + pad, ox + b, oy + h - pad, (h - 2 * pad) / 2))
         if slide:
             self.animate("mode", 240, step)
         else:
             step(1)
+
+    def _mode_click(self, event):
+        x = event.x - self.mode_at[0]
+        self.set_mode(next((m for m, (a, b) in self.mode_spans.items() if a <= x < b), self.mode))
 
     def _page(self, title, subtitle, scroll=False):
         page = tk.Frame(self.page_area, bg=BG, padx=self.px(28), pady=self.px(20))
@@ -1337,12 +1669,9 @@ class AssistantWindow:
                     canvas.yview_moveto(0)
             page.bind("<Configure>", fit)
             canvas.bind("<Configure>", fit)
-            wheel = lambda e: canvas.yview_scroll(int(-e.delta / 120), "units") if bar.winfo_ismapped() else None
-            outer.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", wheel))
-            outer.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-            page.outer = outer  # what the tabs raise
-        self._label(page, title, self.f_title).pack(fill="x")
-        self._label(page, subtitle, fg=MUTED, wraplength=self.px(660)).pack(fill="x", pady=(self.px(2), self.px(14)))
+            canvas.configure(yscrollincrement=self.px(20))  # the wheel moves it 3 of these a notch (_wheel)
+            page.outer, page.canvas, page.bar = outer, canvas, bar  # what the tabs raise, and what the wheel scrolls
+        page.head = (title, subtitle)  # at the top of the window while it's open, over the dots (_show_head)
         return page
 
     def _table(self, parent, columns, editable=True):
@@ -1367,6 +1696,49 @@ class AssistantWindow:
         message = self._label(bar, "", self.f_small, MUTED)
         message.pack(side="left", padx=self.px(10))
         return message
+
+    def _part(self, parent, title, tint, icon):
+        """A part of a page (29 October 2026): a card with a hairline round it, its icon on a tint of its colour and
+        its name in thin capitals at its top, then its rows. (the card, the frame its rows are gridded in)"""
+        px = self.px
+        colour, soft = TINTS[tint]
+        card = tk.Frame(parent, bg=BG, highlightthickness=1, highlightbackground=LINE, highlightcolor=LINE,
+                        padx=px(20), pady=px(14))
+        top = tk.Frame(card, bg=BG)
+        top.pack(fill="x")
+        tk.Label(top, text=icon, font=self.f_icon, fg=colour, bg=soft, width=2, pady=px(4)).pack(side="left")
+        self._label(top, caps(title), self.f_section).pack(side="left", padx=(px(12), 0))
+        rows = tk.Frame(card, bg=BG)
+        rows.pack(fill="x")
+        rows.grid_columnconfigure(0, weight=1)
+        return card, rows
+
+    def _jumps(self, page, parts):
+        """Along the top of a long page, staying there as it scrolls: each part's name by a dot of its colour, a
+        click on one scrolling to it. parts: (name, colour, its card)."""
+        px = self.px
+        bar = tk.Frame(page.outer, bg=BG)
+        bar.pack(side="top", fill="x", pady=(0, px(14)), before=page.canvas)
+        for name, tint, card in parts:
+            chip = tk.Frame(bar, bg=BG, highlightthickness=1, highlightbackground=LINE, cursor="hand2")
+            chip.pack(side="left", padx=(0, px(6)))
+            dot = tk.Label(chip, text="\u25cf", font=self.f_small, fg=TINTS[tint][0], bg=BG, cursor="hand2")
+            dot.pack(side="left", padx=(px(9), px(3)), pady=px(2))
+            words = tk.Label(chip, text=name, font=self.f_small, fg=TEXT, bg=BG, cursor="hand2")
+            words.pack(side="left", padx=(0, px(11)), pady=px(2))
+            for w in (chip, dot, words):
+                w.bind("<Button-1>", lambda e, c=card: self._jump(page, c))
+            chip.bind("<Enter>", lambda e, ws=(chip, dot, words): [w.configure(bg=ACCENT_SOFT) for w in ws])
+            chip.bind("<Leave>", lambda e, ws=(chip, dot, words): None if self.root.winfo_containing(
+                e.x_root, e.y_root) in ws else [w.configure(bg=BG) for w in ws])
+
+    def _jump(self, page, card):
+        """A long page scrolled till card is at its top, quickly, then settling."""
+        page.update_idletasks()
+        canvas, total = page.canvas, max(1, page.winfo_height())
+        end = max(0.0, min(1.0, (card.winfo_rooty() - page.winfo_rooty()) / total))
+        start = canvas.yview()[0]
+        self.animate("jump", 320, lambda t: canvas.yview_moveto(start + (end - start) * t))
 
     # ------------------------------------------------------------------ table editing
     def _edit_at(self, tree, event):
@@ -1475,7 +1847,8 @@ class AssistantWindow:
         self.ask_box = HintEntry(ask, "Type to Harry instead of talking (or tap right Alt twice, anywhere)", width=64)
         self.ask_box.pack(side="left", fill="x", expand=True, ipady=self.px(3))
         self.ask_box.bind("<Return>", lambda e: self.ask_typed())
-        ttk.Button(ask, text="Send", command=self.ask_typed).pack(side="left", padx=(self.px(8), 0))
+        ttk.Button(ask, text="Send", style="Accent.TButton", command=self.ask_typed).pack(side="left",
+                                                                                       padx=(self.px(8), 0))
         grid = tk.Frame(page, bg=BG)
         grid.pack(fill="x")
         for c in range(3):
@@ -1486,22 +1859,26 @@ class AssistantWindow:
                             highlightbackground=LINE, highlightcolor=LINE)
             card.grid(row=i // 3, column=i % 3, sticky="nsew", padx=(0, self.px(14) if i % 3 < 2 else 0),
                       pady=(0, self.px(14)))
-            tk.Label(card, text=STAT_ICONS[i], font=self.f_icon_big, fg=ACCENT, bg=ACCENT_SOFT, width=2,
+            colour, soft = TINTS[STAT_TINTS[i]]
+            tk.Label(card, text=STAT_ICONS[i], font=self.f_icon_big, fg=colour, bg=soft, width=2,
                      pady=self.px(4)).pack(anchor="w", pady=(0, self.px(8)))
             value = self._label(card, "", self.f_value, bg=BG)
             title = self._label(card, "", self.f_bold, bg=BG)
             sub = self._label(card, "", self.f_small, MUTED, BG)
             for v in (value, title, sub):
                 v.pack(fill="x")
-            for w in (card, *card.winfo_children()):  # it lights up under the mouse
+            for w in (card, *card.winfo_children()):  # it lights up in its colour under the mouse
                 w.bind("<Enter>", lambda e, c=card, n=i: self._light_card(c, n, True))
                 w.bind("<Leave>", lambda e, c=card, n=i: self._light_card(c, n, False, e))
             self.stat_cards.append((value, title, sub))
-        self._label(page, "Most used", self.f_h2).pack(fill="x", pady=(self.px(6), self.px(2)))
-        self.top_actions = self._label(page, "", fg=MUTED, wraplength=self.px(660))
-        self.top_actions.pack(fill="x")
-        self._label(page, "How to use", self.f_h2).pack(fill="x", pady=(self.px(12), self.px(2)))
-        self._label(page, HOW_TO, fg=MUTED, wraplength=self.px(660)).pack(fill="x")
+        used, box = self._part(page, "Most used", "amber", "\ue734")
+        used.pack(fill="x", pady=(0, self.px(14)))
+        self.top_actions = self._label(box, "", fg=MUTED, wraplength=self.px(660))
+        self.top_actions.grid(row=0, column=0, sticky="w", pady=(self.px(8), 0))
+        how, box = self._part(page, "How to use", "blue", "\ue897")
+        how.pack(fill="x")
+        self._label(box, HOW_TO, fg=MUTED, wraplength=self.px(660)).grid(row=0, column=0, sticky="w",
+                                                                         pady=(self.px(8), 0))
         return page
 
     def ask_typed(self):
@@ -1526,7 +1903,7 @@ class AssistantWindow:
             under = self.root.winfo_containing(event.x_root, event.y_root)
             if under is not None and (under is card or under.master is card):
                 return
-        start, end = card.cget("highlightbackground"), "#9cc3ea" if inside else LINE
+        start, end = card.cget("highlightbackground"), TINTS[STAT_TINTS[n]][0] if inside else LINE
         self.animate(f"card {n}", 160, lambda t: card.configure(highlightbackground=mix(start, end, t),
                                                                 highlightcolor=mix(start, end, t)))
 
@@ -2063,16 +2440,23 @@ class AssistantWindow:
         page = self._page("Island", "Her island at the top of the screen, like Nixi\u2019s: her eyes, your words "
                           "under it as you talk, and while she isn\u2019t busy what\u2019s playing, new notifications, "
                           "the battery and timers. Changes show on it straight away.", scroll=True)
-        form = tk.Frame(page, bg=BG)
-        form.pack(fill="x")
-        form.grid_columnconfigure(0, weight=1)
-        count = [0]
+        # in parts, each a card with its colour and its name along the top to jump to (29 October 2026): how it
+        # looks, where it sits, how it behaves, its plugins and the apps it shows
+        cards = {}
+        for name, tint, icon in ISLAND_PARTS:
+            cards[name] = self._part(page, name, tint, icon)
+            cards[name][0].pack(fill="x", pady=(0, self.px(14)))
+        self._jumps(page, [(name, tint, cards[name][0]) for name, tint, _ in ISLAND_PARTS])
+        count, form = [0], None
         self.island_jobs, self.island_apps_loaded = {}, False
 
         def row(title, sub):
-            r = count[0] * 2
+            nonlocal form
+            i = count[0]
             count[0] += 1
-            if r:  # a thin line between rows
+            form = cards["Look" if i < 6 else "Place" if i < 11 else "Behaviour"][1]  # its part's card
+            r = i * 2
+            if i not in (0, 6, 11):  # a thin line between rows, but at the top of a card
                 tk.Frame(form, bg=LINE, height=1).grid(row=r, column=0, columnspan=2, sticky="new")
             self._label(form, title, self.f_h2).grid(row=r, column=0, sticky="w", pady=(self.px(14), 0))
             self._label(form, sub, self.f_small, MUTED, wraplength=self.px(330)).grid(row=r + 1, column=0, sticky="w")
@@ -2124,7 +2508,8 @@ class AssistantWindow:
                           "the screen, headphones while music plays. Or the orb, a ring that ripples with a voice, or "
                           "the Siri wave on the pill."),
               "island_face", ISLAND_FACES)
-        combo(row("Theme", "AMOLED is pure black, like a phone's notch. Like Windows follows light and dark mode."),
+        combo(row("Theme", "Paper is white with faint dots, like this window. AMOLED is pure black, like a phone's "
+                           "notch. Like Windows follows light and dark mode."),
               "island_theme", ISLAND_THEMES)
         check(row("Border", "A thin line round it, so it shows on a dark wallpaper."), "island_border",
               "Show a border")
@@ -2142,19 +2527,16 @@ class AssistantWindow:
         slider(row("Popups stay", "How long a notification or the battery stays up. Pointing at one keeps it."),
                "island_auto_hide", 2, 15, " s")
 
-        self._label(page, "Plugins", self.f_status).pack(fill="x", pady=(self.px(24), 0))
-        self._label(page, "What the island shows while she isn't busy. Each one reads only what Windows already "
-                          "keeps on this PC, and nothing it reads leaves it.", self.f_small, MUTED,
-                    wraplength=self.px(660)).pack(fill="x")
-        found = tk.Frame(page, bg=BG)
-        found.pack(fill="x")
-        found.grid_columnconfigure(0, weight=1)
+        found = cards["Plugins"][1]
+        self._label(found, "What the island shows while she isn't busy. Each one reads only what Windows already "
+                           "keeps on this PC, and nothing it reads leaves it.", self.f_small, MUTED,
+                    wraplength=self.px(660)).grid(row=0, column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
         for i, cls in enumerate(plugins.PLUGINS):
-            self._label(found, cls.name, self.f_h2).grid(row=i * 2, column=0, sticky="w", pady=(self.px(12), 0))
+            self._label(found, cls.name, self.f_h2).grid(row=i * 2 + 1, column=0, sticky="w", pady=(self.px(12), 0))
             self._label(found, cls.description, self.f_small, MUTED, wraplength=self.px(330)).grid(
-                row=i * 2 + 1, column=0, sticky="nw")
+                row=i * 2 + 2, column=0, sticky="nw")
             box = tk.Frame(found, bg=BG)
-            box.grid(row=i * 2, column=1, rowspan=2, sticky="nw", padx=(self.px(12), 0), pady=(self.px(12), 0))
+            box.grid(row=i * 2 + 1, column=1, rowspan=2, sticky="nw", padx=(self.px(12), 0), pady=(self.px(12), 0))
             on = (settings.get("island_plugins") or {}).get(cls.id)
             var = tk.BooleanVar(value=cls.default_on if on is None else bool(on))
             ttk.Checkbutton(box, text="On", variable=var,
@@ -2166,16 +2548,16 @@ class AssistantWindow:
                                 command=lambda c=cls, k=key, v=ov: self.plugin_option(c.id, k, v.get())
                                 ).pack(anchor="w")
 
-        self._label(page, "Notifications from", self.f_h2).pack(fill="x", pady=(self.px(20), 0))
-        self._label(page, "The apps whose notifications pop up on the island. The ones people message you in are on "
-                          "to start with. Your phone's come through Phone Link.", self.f_small, MUTED,
-                    wraplength=self.px(660)).pack(fill="x")
-        self.island_apps_box = tk.Frame(page, bg=BG)
-        self.island_apps_box.pack(fill="x", pady=(self.px(6), 0))
+        notes = cards["Notifications"][1]
+        self._label(notes, "The apps whose notifications pop up on the island. The ones people message you in are on "
+                           "to start with. Your phone's come through Phone Link.", self.f_small, MUTED,
+                    wraplength=self.px(660)).grid(row=0, column=0, sticky="w", pady=(self.px(8), 0))
+        self.island_apps_box = tk.Frame(notes, bg=BG)
+        self.island_apps_box.grid(row=1, column=0, sticky="ew", pady=(self.px(6), 0))
         self._label(self.island_apps_box, "Looking for them\u2026", self.f_small, MUTED).grid(row=0, column=0,
                                                                                               sticky="w")
-        bar = tk.Frame(page, bg=BG)
-        bar.pack(fill="x", pady=(self.px(18), self.px(8)))
+        bar = tk.Frame(notes, bg=BG)
+        bar.grid(row=2, column=0, sticky="ew", pady=(self.px(16), 0))
         ttk.Button(bar, text="Preview", command=self.island_preview).pack(side="left")
         self.island_note = self._label(bar, "Shows a notification on the island, the way they come.", self.f_small,
                                        MUTED)
@@ -2284,12 +2666,25 @@ class AssistantWindow:
         self.nick_box.bind("<Return>", lambda e: self.nickname_changed(self.nick_box.get()), add="+")
         ttk.Button(nick, text="Save", command=lambda: self.nickname_changed(self.nick_box.get())).pack(
             side="left", padx=(self.px(8), 0))
-        form = tk.Frame(page, bg=BG)
-        form.pack(fill="x")
-        form.grid_columnconfigure(0, weight=1)
+        # in parts, each a card with its colour and its name along the top to jump to (29 October 2026, the owner:
+        # one long list was hard to find things in and to scroll): (name, colour, icon, its rows by number below)
+        parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14)),
+                 ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20)),
+                 ("Models", "green", "\ue99a", (1, 21, 22)), ("Speaking up", "amber", "\uea8f", (12, 13)),
+                 ("Phone", "rose", "\ue8ea", (16,)), ("Window", "slate", "\ue737", (4, 5, 6, 19)))
+        cards, where, form = {}, {}, None
+        for name, tint, icon, rows in parts:
+            cards[name] = self._part(page, name, tint, icon)
+            cards[name][0].pack(fill="x", pady=(0, self.px(14)))
+            where.update((r, cards[name][1]) for r in rows)
+        tops = {rows[0] for name, _, _, rows in parts if rows and name != "Her"}  # Her name is over Her's first
+        self._jumps(page, [(name, tint, cards[name][0]) for name, tint, _, _ in parts])
 
         def row(r, title, sub):
-            tk.Frame(form, bg=LINE, height=1).grid(row=r * 2, column=0, columnspan=2, sticky="new")  # a thin line above
+            nonlocal form
+            form = where[r]  # its part's card: what's made for the row after this goes in it too
+            if r not in tops:  # a thin line above, but at the top of its card
+                tk.Frame(form, bg=LINE, height=1).grid(row=r * 2, column=0, columnspan=2, sticky="new")
             self._label(form, title, self.f_h2).grid(row=r * 2, column=0, sticky="w", pady=(self.px(14), 0))
             label = self._label(form, sub, self.f_small, MUTED, wraplength=self.px(310))
             label.grid(row=r * 2 + 1, column=0, sticky="w")
@@ -2450,10 +2845,11 @@ class AssistantWindow:
         row(19, "Walkthrough", "Her setup and a short tour: what she needs, trying her out, and what she can do.")
         # Safety, at the top: Full access, off unless turned on here
         safety = tk.Frame(page, bg=BG)
-        safety.pack(fill="x", before=form)
-        mine.pack(fill="x", before=form)
+        safety.pack(in_=cards["Safety"][0], fill="x")
+        mine.pack(in_=cards["Her"][0], fill="x", before=cards["Her"][1])
+        mine.lift()  # made before the cards, so under them till raised
         safety.grid_columnconfigure(0, weight=1)
-        self._label(safety, "Full access", self.f_h2).grid(row=0, column=0, sticky="w", pady=(self.px(4), 0))
+        self._label(safety, "Full access", self.f_h2).grid(row=0, column=0, sticky="w", pady=(self.px(14), 0))
         self._label(safety, "She does what you clearly ask by name without asking first: sends the message, installs "
                             "the app. She still never types passwords or card numbers, never pays or buys, never "
                             "deletes for good, and never acts on words she wasn't sure were for her.", self.f_small,
@@ -2468,7 +2864,6 @@ class AssistantWindow:
                         command=lambda: self.set_full_access(self.full_var.get(),
                                                              1 if self.full_for.current() == 1 else 0)).pack(
             side="left")
-        tk.Frame(safety, bg=LINE, height=1).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(self.px(12), 0))
         ttk.Button(form, text="Show it again", command=self.open_walkthrough).grid(row=38, column=1, rowspan=2,
                                                                                     sticky="e")
         row(20, "Let her see you", "Through the laptop's camera she welcomes you as you come back to it, and does what "
@@ -2905,24 +3300,24 @@ class AssistantWindow:
     def _build_keys(self):
         page = self._page("Keys", "Saved in Windows Credential Manager. A key in .env wins over these. Saved keys stay "
                                   "hidden.", scroll=True)
-        form = tk.Frame(page, bg=BG)
-        form.pack(fill="x")
-        form.grid_columnconfigure(0, weight=1)
         self.key_fields = {}
-        r = 0
-        for heading, about, rows in KEY_GROUPS:
-            if heading:  # the providers' rows go under their heading
-                self._label(form, heading, self.f_h2).grid(row=r, column=0, columnspan=2, sticky="w",
-                                                           pady=(self.px(26), 0))
+        parts = []
+        for (heading, about, rows), (name, tint, icon) in zip(KEY_GROUPS, KEY_PARTS):
+            card, form = self._part(page, name, tint, icon)  # each group a card of its own (29 October 2026)
+            card.pack(fill="x", pady=(0, self.px(14)))
+            parts.append((name, tint, card))
+            r = 0
+            if about:  # what the providers' rows are for, at the top of their card
                 self._label(form, about, self.f_small, MUTED, wraplength=self.px(620)).grid(
-                    row=r + 1, column=0, columnspan=2, sticky="w")
-                r += 2
+                    row=0, column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
+                r = 1
             for title, key_name, use, url in rows:
                 head = tk.Frame(form, bg=BG)
                 head.grid(row=r, column=0, sticky="w", pady=(self.px(12), 0))
                 self._label(head, title, self.f_h2).pack(side="left")
                 self._link(head, "Get a key", url).pack(side="left", padx=(self.px(8), 0))
-                self._label(form, use, self.f_small, MUTED).grid(row=r + 1, column=0, sticky="w")
+                self._label(form, use, self.f_small, MUTED, wraplength=self.px(360)).grid(row=r + 1, column=0,
+                                                                                          sticky="w")
                 hint = "Already saved" if get_secret(key_name) else ("Paste key" if key_name in KEY_NAMES and
                                                                      key_name not in OPTIONAL else "Optional")
                 field = HintEntry(form, hint, secure=True, width=40)
@@ -2930,9 +3325,10 @@ class AssistantWindow:
                 field.bind("<Return>", lambda e: self.save_keys())
                 self.key_fields[key_name] = field
                 r += 2
+        self._jumps(page, parts)
         bar = tk.Frame(page, bg=BG)
-        bar.pack(fill="x", pady=(self.px(20), 0))
-        ttk.Button(bar, text="Save keys", command=self.save_keys).pack(side="right")
+        bar.pack(fill="x", pady=(self.px(6), 0))
+        ttk.Button(bar, text="Save keys", style="Accent.TButton", command=self.save_keys).pack(side="right")
         self.keys_message = self._label(bar, "", self.f_small, ERROR, wraplength=self.px(520))
         self.keys_message.pack(side="left")
         return page
@@ -2997,8 +3393,12 @@ class AssistantWindow:
         rise = self.px(16)  # it comes up into place, over the page before's blank top
         self.animate("page", 260, lambda t: page.place_configure(y=round(rise * (1 - t))))
         for name in self.tab_buttons:
-            self._paint_tab(name, NAV_ON if name == key else NAV, name == key)
+            job = self._anims.pop(f"hover {name}", None)  # a fade from the mouse mustn't paint over it after
+            if job:
+                self.root.after_cancel(job)
+            self._paint_tab(name, name == key)
         self._slide_nav_bar()
+        self._show_head(key)
 
     # ------------------------------------------------------------------ assistant
     def _start_worker(self):
@@ -3085,10 +3485,9 @@ class AssistantWindow:
             kind, _, text = str(detail).partition("\t")
             getattr(self.bubble, "learned", lambda kind, text: None)(kind, text)
             return
-        self.status.configure(text=state)
         if detail is not None:  # None keeps what's there, like her last reply
-            detail = " ".join(str(detail).split())
-            self.detail.configure(text=detail if len(detail) <= 110 else detail[:109] + "\u2026")
+            self.detail_text = " ".join(str(detail).split())  # cut to the room it has along the top (_lay_status)
+        self.status.configure(text=state)
         enrol = next((look for start, look in ENROL.items() if state.startswith(start)), None)
         self._set_dot(STATUS_COLORS.get(state, STATUS_COLORS["Listening"] if enrol else TEXT),
                       state in BUSY or bool(enrol))
@@ -3114,17 +3513,14 @@ class AssistantWindow:
     def _tick(self):
         siri = sys.modules.get("siri")
         timers = siri.timer_snapshot()[:3] if hasattr(siri, "timer_snapshot") else []  # siri may still be loading
-        for i, (row, name, left) in enumerate(self.timer_rows):
-            if i < len(timers):
-                label, secs = timers[i]
-                m, sec = divmod(int(secs + 0.999), 60)
-                h, m = divmod(m, 60)
-                name.configure(text=label if len(label) <= 18 else label[:17] + "\u2026")
-                left.configure(text=f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}")
-                if not row.winfo_ismapped():
-                    row.pack(fill="x", before=self.hint)
-            elif row.winfo_ismapped():
-                row.pack_forget()
+        for (name, left), (label, secs) in zip(self.timer_rows, timers):
+            m, sec = divmod(int(secs + 0.999), 60)
+            h, m = divmod(m, 60)
+            name.configure(text=label if len(label) <= 18 else label[:17] + "\u2026")
+            left.configure(text=f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}")
+        if len(timers) != self.timers_shown:  # one more or one fewer: the bottom of the sidebar laid out again
+            self.timers_shown = len(timers)
+            self._lay_bottom()
         self._todo_tick()
         self._tasks_tick()
         self._show_full_badge()  # said off by voice or the phone, or run out: the pill goes too
