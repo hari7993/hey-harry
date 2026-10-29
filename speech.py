@@ -45,9 +45,20 @@ MODELS = {  # name: (file or folder once downloaded, where it comes from, size f
     # 3D-Speaker's CAM++ trained on VoxCeleb (English, many accents), Apache 2.0: whose voice it is, see Speaker
     "speaker": ("3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx", "https://github.com/k2-fsa/sherpa-onnx/releases/"
                 "download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx", "30 MB"),
+    # YuNet, OpenCV Zoo's face finder (MIT): whether you're in front of the laptop's camera, see camera.py
+    "face": ("face_detection_yunet_2023mar.onnx", "https://github.com/opencv/opencv_zoo/raw/main/models/"
+             "face_detection_yunet/face_detection_yunet_2023mar.onnx", "0.2 MB"),
+    # your hand in front of the camera, for a snap seen (hands.py): MediaPipe's palm finder and its 21 points
+    "palm": ("palm_detection_mediapipe_2023feb.onnx", "https://github.com/opencv/opencv_zoo/raw/main/models/"
+             "palm_detection_mediapipe/palm_detection_mediapipe_2023feb.onnx", "3.9 MB"),
+    "hand": ("handpose_estimation_mediapipe_2023feb.onnx", "https://github.com/opencv/opencv_zoo/raw/main/models/"
+             "handpose_estimation_mediapipe/handpose_estimation_mediapipe_2023feb.onnx", "4.1 MB"),
 }
 SHA256 = {"turn": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",  # from Hugging Face's LFS
-          "speaker": "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b"}  # checked 7 Oct 2026
+          "speaker": "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b",  # checked 7 Oct 2026
+          "face": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",  # checked 29 Oct 2026
+          "palm": "78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c",  # and these two
+          "hand": "db0898ae717b76b075d9bf563af315b29562e11f8df5027a1ef07b02bef6d81c"}
 PARAKEET_THREADS = 2  # as quick as 4 on this 12th gen i5 (315 vs 294 ms a command), and half the CPU; 6+ was slower
 # Nemotron while someone talks, fed in real time, and its last words once they stop: 4.5 cores and 174 ms at 3
 # threads, 2.3 cores and 222 ms at 2, 0.34 cores and 342 ms at 1. Most of it is sherpa-onnx's own onnxruntime

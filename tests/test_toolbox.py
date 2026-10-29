@@ -62,6 +62,14 @@ NEW_EXTRAS = {"show", "agenda", "event", "spotify", "helper", "draft_reply", "me
 # dream mode (dream.py, 28 October 2026): a scene full screen while music plays, opened like an app, so read-safe and
 # a routine's
 NEW_DREAM = {"dream"}
+# what she sees of you through the camera, asked about (cues.py, 29 October 2026): a look-up, its answer back to the
+# model, never what someone else wrote
+NEW_CUES = {"camera"}
+# building into and knowing herself (selfwork.py, 29 October 2026): improve queues a build before the plan runs, so
+# it's in no other set; about_me is a look-up of her own code
+NEW_SELF = {"improve", "about_me"}
+# your hand as the mouse (handmouse.py, 29 October 2026): it takes the mouse, so asked about after a read
+NEW_HANDS = {"hand_control"}
 
 
 class Golden(unittest.TestCase):
@@ -78,8 +86,10 @@ class Golden(unittest.TestCase):
                 self.assertIsInstance(getattr(siri, name), frozenset)
 
     def test_the_planner_knows_the_same_steps_and_the_new_look_ups(self):
-        self.assertEqual(set(siri.KNOWN_STEPS), OLD_KNOWN_STEPS | NEW_LOOKS | NEW_JOB | NEW_PLACE | NEW_EXTRAS | NEW_DREAM)
-        self.assertEqual(set(siri.INFO), OLD_INFO | NEW_LOOKS | {"agenda", "files_inside"})
+        self.assertEqual(set(siri.KNOWN_STEPS),
+                         OLD_KNOWN_STEPS | NEW_LOOKS | NEW_JOB | NEW_PLACE | NEW_EXTRAS | NEW_DREAM | NEW_CUES | NEW_SELF
+                         | NEW_HANDS)
+        self.assertEqual(set(siri.INFO), OLD_INFO | NEW_LOOKS | NEW_CUES | {"agenda", "files_inside", "about_me"})
         self.assertNotIn("agent_resume", siri.KNOWN_STEPS)  # only her own question makes one
         self.assertNotIn("watch_start", siri.KNOWN_STEPS)
 

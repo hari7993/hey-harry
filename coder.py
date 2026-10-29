@@ -14,6 +14,10 @@ Kept on a short leash, because OpenCode itself lets an agent edit files and run 
   and listed in her report when there's no way to ask. The project's own test or build is asked about too once the
   job has edited what says what it runs (package.json and the like).
 - Only a free model, picked from the ones the session offers, or the job doesn't start.
+
+Her own builds (selfwork.Build) use a Job too, in a copy of her code: on the model the owner picked to build her
+with, its key given to OpenCode for that job only (env), her own tests run without asking (may_run), and the files
+that put her back if a change goes wrong never edited (may_edit).
 """
 import json
 import os
@@ -119,8 +123,10 @@ def snapshot(folder):
             index = index if os.path.isabs(index) else os.path.join(folder, index)
             seeded = False
             if head and os.path.isfile(index):
-                try:
-                    shutil.copyfile(index, env["GIT_INDEX_FILE"])
+                try:  # with its time as well (copy2): a copy made now made every file look older than the index,
+                    # so git took one rewritten in the same 15 ms tick, at the same size, as unchanged, and the way
+                    # back kept the old one (29 October 2026). With the index's own time git checks those again
+                    shutil.copy2(index, env["GIT_INDEX_FILE"])
                     seeded = True
                 except OSError:
                     pass
@@ -200,12 +206,18 @@ def edited(n):
 
 
 class Job:
-    def __init__(self, folder, task, ask=None, cancelled=lambda: False, timeout=TIMEOUT, progress=None):
+    def __init__(self, folder, task, ask=None, cancelled=lambda: False, timeout=TIMEOUT, progress=None, model=None,
+                 env=None, may_run=None, may_edit=None, guide=None, config=None):
         """ask(question) -> True/False, or None when there's nobody to ask: then it's refused and reported. siri's
         job_ask is the ask for every job, started by voice or from the phone: the job's row waits on you with the
-        command, and a no or no answer refuses it. progress(n): told each time it edits a file, n of them so far."""
+        command, and a no or no answer refuses it. progress(n): told each time it edits a file, n of them so far.
+        For her own builds: model, OpenCode's name for the one to use when the session offers it (else a free one);
+        env, more environment for OpenCode (that model's key); may_run(command), True for a command that goes ahead
+        unasked; may_edit(path), False for a file it mustn't edit; guide, the prompt itself, in place of GUIDE's;
+        config, more of OpenCode's settings (a provider's key), under CONFINE's, which always win."""
         self.folder, self.task, self.ask, self.cancelled, self.timeout = folder, task, ask, cancelled, timeout
-        self.progress = progress
+        self.progress, self.model, self.env, self.may_run, self.may_edit = progress, model, env, may_run, may_edit
+        self.guide, self.model_used, self.config = guide, None, config
         self.text, self.refused, self.ran, self.edited = [], [], [], []
         self.defined = False  # it edited a file that says what the project's test or build command runs
         self.changed = False  # it edited anything: a test file it rewrote runs as the project's own tests
@@ -216,6 +228,11 @@ class Job:
         kind, title = str(call.get("kind") or ""), str(call.get("title") or "")
         raw = call.get("rawInput") or {}
         if kind == "edit":
+            paths = [p for p in [raw.get("filePath"), raw.get("path"), (title.split() or [""])[-1]] + [
+                p.get("path") for p in call.get("locations") or [] if isinstance(p, dict)] if p]
+            if self.may_edit is not None and any(not self.may_edit(p) for p in paths):
+                self.refused.append(f"editing {title} (it mustn't change)")
+                return False
             self.edited.append(title)
             if self.progress is not None:
                 self.progress(len(self.edited))
@@ -226,6 +243,9 @@ class Job:
             return True
         if kind == "execute":
             command = str(raw.get("command") or title)
+            if self.may_run is not None and self.may_run(command):
+                self.ran.append(command)
+                return True
             level, reason = tasking.command_policy(command, self.folder)
             # "npm test" goes ahead as the project's own test, but it runs whatever package.json says, and an edit
             # here goes ahead too: rewritten by the job, it'd run any command with nobody asked. So does any file it
@@ -248,7 +268,7 @@ class Job:
         exe = opencode_exe()
         if not exe:
             raise RuntimeError("The OpenCode CLI isn't installed")
-        env = dict(os.environ, OPENCODE_CONFIG_CONTENT=json.dumps(CONFINE))
+        env = dict(os.environ, **(self.env or {}), OPENCODE_CONFIG_CONTENT=json.dumps({**(self.config or {}), **CONFINE}))
         proc = subprocess.Popen([exe, "acp", "--cwd", self.folder], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, text=True, encoding="utf-8", cwd=self.folder, env=env,
                                 creationflags=CREATE_NO_WINDOW)
@@ -292,14 +312,20 @@ class Job:
         try:
             request("initialize", INITIALIZE)
             session = request("session/new", {"cwd": self.folder, "mcpServers": []})
-            model = free_model(session)
+            offered = _session_model_ids(session)
+            model = self.model if self.model and self.model in offered else None
+            if self.model and not model:
+                print(f"  OpenCode doesn't offer {self.model}, so a free one does it")
+            model = model or free_model(session)
             if not model:
                 raise RuntimeError("OpenCode offered no free model, and Hey Harry only uses free ones")
+            self.model_used = model
             selection = _model_selection_request(session, model)
             if selection:
                 request(*selection)
+            text = self.guide or GUIDE.format(folder=self.folder, task=self.task)
             result = request("session/prompt", {"sessionId": session["sessionId"], "prompt": [
-                {"type": "text", "text": GUIDE.format(folder=self.folder, task=self.task)}]})
+                {"type": "text", "text": text}]})
             return result.get("stopReason") == "end_turn", " ".join("".join(self.text).split())
         finally:
             proc.kill()

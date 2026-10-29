@@ -28,6 +28,7 @@ Needs Windows 10 or 11, Python 3.10 or newer, a free [Fish Audio](https://fish.a
 - **Background helpers.** Give a helper a name and a job, talk to it while it works, and watch it in a live mini view.
 - **Meeting notes.** Notes, answers and a recap in any call app. The audio never leaves your PC.
 - **Remembers you.** Say "remember…" and she knows it from then on. Teach her a phrase once and it becomes a routine.
+- **Builds into herself.** "Build yourself a way to..." and she codes it, tests it and restarts with it, on the model you pick. An error of her own she fixes the same way, and a crash she starts again from.
 - **Your PC from your phone.** Your own Telegram bot: text or voice notes, with Yes and No buttons for anything risky.
 - **Dictation.** "Hey Harry, transcribe" types your words where your cursor is, with the "um"s taken out.
 - **Free models, or Claude.** Runs on free models with no billing, or on Claude Haiku 5.5 with your own Anthropic key.
@@ -565,6 +566,70 @@ Each scene is drawn live at 30 frames a second, not played from a video, so it g
 
 It opens in its own full-screen window: Edge (or Chrome or Brave) in app mode, with a profile of its own in her folder, so there are no tabs or bars and nothing of yours in it. The page is served by `dream.py` to this PC only (127.0.0.1, a free port, a random key in its address) and loads nothing from the internet. It follows whatever Windows' media controls show playing, as the island does: YouTube in a browser, Spotify, Amazon Music, Apple Music, VLC. The words come from [LRCLIB](https://lrclib.net) (free, no key), which is sent the song's title, artist and length and nothing else. What it sends back is kept in `%APPDATA%\Hey Harry\lyrics.json`, so each song is looked up once. A video's title is turned into its song and singer first ("Ed Sheeran - Perfect (Official Music Video)" is "Perfect" by Ed Sheeran), and a match only counts if its name is close and its length within 45 seconds of what's playing. A mix, a stream or a song LRCLIB doesn't have shows the song's name instead, and nothing is looked up for a mix or a stream.
 
+### Seeing you, claps and snaps
+
+Added 29 October 2026, and off until you turn on Settings > Let her see you, or say "Hey Harry, turn on your camera". Through the laptop's camera she knows when you've come back to it and welcomes you then, as she does when you unlock it. She also does what you've told her to when she sees or hears something:
+
+- **Two claps** in front of the laptop: work mode.
+- **A finger snap** in front of it while music plays: dream mode.
+- **Your glasses on:** light mode.
+
+Those three are there to start with. Change them, or add more, by saying so:
+
+- "When I clap, open Spotify"
+- "When I take off my glasses, turn on dark mode"
+- "When I come back to the laptop, read my messages"
+- "Forget the snap"
+- "What do my claps do?"
+
+What follows "when..." is done as if you'd said it to her by name, so a routine of yours ("work mode") works as one. They're kept in `%APPDATA%\Hey Harry\cues.json` (`cues.py`).
+
+While it's on she watches you all the time, as asked: the camera stays open (its light stays on) and a frame every 2 seconds is looked at and let go straight after (`camera.py`). Whether you're there is worked out on this PC by YuNet, OpenCV Zoo's face finder (MIT, 0.2 MB, downloaded once and checked). Gone a minute and a half with no face and no typing, and back after five minutes or more, she welcomes you, at most every 15 minutes. While the PC's locked the camera's off, and unlocking welcomes you as before, never twice.
+
+Only a look rule sends anything: one small picture (512 px) to the model that sees pictures (Claude Haiku with your Anthropic key, else Kilo's free Nemotron VL), asking only whether each look is plainly so. It's sent as you come back, as soon as you look different and have settled (your glasses on or off, worked out on this PC from the band of your face round your eyes), at most every 20 seconds, and every 2 minutes otherwise. Until 29 October it was every 5 minutes, and light mode was slow to come. A look's rule runs once as it comes true, not again while it stays true.
+
+Ask her what she sees and she looks: "can you see me?", "what am I wearing?", "how do I look?", "am I wearing my glasses?". One picture goes to the same model and she says its answer; nothing's kept. "Watch me" (or "can you watch me?", "keep watching me") turns it on, "stop watching me" turns it off.
+
+Claps and snaps are heard on this PC in the mic's own sound, on a stream of their own (`claps.py`). Windows' speech mode, which she listens to you in, keeps voices and takes out everything else: on the owner's laptop a snap that stood 40 dB over the room in the mic's own sound didn't show in speech mode at all. Listened for in the high notes, above about 2 kHz, a clap or a snap is a sharp sound out of quiet, gone within a tenth of a second or so (in the owner's room they rang for 70 to 100 ms), with nothing going on after it. A knock or a thump on the desk sits far lower, under 600 Hz, so it isn't either. Two claps 0.15 to 0.9 s apart are the cue; one alone could be a book put down. A short, high one (under 60 ms, over 2.2 kHz) is a snap by its sound alone, and snapping away counts once.
+
+A snap is also seen. One sharp sound alone that may have been a snap (over 1.2 kHz) counts if your hand was up in front of the camera then, as the owner asked ("my fingers snap on camera, then it needs to do it"). The camera keeps its last 3 seconds of frames at half size, and the frames round the sound are looked at by MediaPipe's palm finder, as OpenCV Zoo has it for OpenCV (Apache 2.0, 3.9 MB, downloaded once and checked; `hands.py`). A palm at least 5% of the picture's width is a hand up at the laptop. It only looks when a sharp sound comes, never otherwise. While music plays, a sharp sound the PC played too (a drum in the song) is never a snap by its sound, but still is with your hand up: on 29 October every snap over "Blank Space" had been taken for a drum. The log says what it saw: "a sharp sound with your hand up in front of the camera: a snap", or the biggest palm it saw when it wasn't enough. Nothing counts while you type or move the mouse (a key's click is a sharp sound too), while anyone talks, while she does, or while you dictate. While music or a video plays, what the PC plays is listened to as well, and a sharp sound that came out of the speakers (a drum, a clap in a video) doesn't count. A rule that needs you in front of the laptop checks with the camera. Each sharp sound goes in the log with what it was taken for, so the lines can be set from a real room.
+
+On this laptop all of it took about 6% of one core while watching, 8.5% while music played: the camera (it makes 10 frames a second whatever it's asked for, kept as they come), the face finder (6 ms a look on one thread), the mic's own sound and, with music on, the PC's. The palm finder adds a few looks of 100 ms for each sharp sound. Turning off Let her see you stops all of it. While Harry has the camera, another app opening it gets one frame a second.
+
+### Your hand as the mouse
+
+Added 29 October 2026, after [Apple-Watch-Cursor](https://github.com/intelc/Apple-Watch-Cursor), which points with a watch on the wrist and clicks with a finger-to-thumb tap. Here it's the laptop's camera, on Windows. Say "Hey Harry, hand control on" (or "control the PC with my hand", "use my hand as the mouse"), and:
+
+- **Point:** hold your hand up in front of the camera and move it. The middle of your palm moves the pointer, as in a mirror; your hand moves within the middle of the camera's view, and that's the whole screen. A One Euro filter keeps it steady when you hold still and quick when you move.
+- **Click:** pinch your thumb and index finger together and apart. The pinch never moves the pointer, so it clicks where you were pointing.
+- **Drag:** keep the pinch and move, then let go.
+- **Right click:** your thumb and middle finger.
+
+"Stop hand control" stops it. It also stops by itself after a minute with no hand in front of the camera, and when the PC's locked, and a button held down is let go if it loses your hand.
+
+Your hand is found by MediaPipe's palm finder and its 21 points (`hands.py`), run by ONNX Runtime: on this laptop 8.6 ms of CPU for the palm finder and 3.1 ms for the points, against 69 and 31 in OpenCV's own DNN. It follows your hand from frame to frame from the points it found the frame before, the way MediaPipe does, so the palm finder only looks again when it's lost it: about 4 ms a frame. While it's on, the camera's asked for 30 frames a second, and it's shared with Let her see you (`handmouse.py`, `camera.py`).
+
+### Building into herself, and healing herself
+
+Added 29 October 2026. Ask for a feature and she builds it into herself: "Hey Harry, build yourself a way to read my battery out every hour", "add a feature to close WhatsApp when I say focus", "improve yourself so you answer faster", "give yourself the ability to read PDFs aloud". She says what she'll build, does it in the background while you carry on, and tells you when it's in. She also knows herself: ask "what can you do?", "how do you see me?", "what have you built for yourself?" or "any errors lately?" and she answers from her own code, never from memory, so the answer is always up to date (`selfwork.py`).
+
+How a build goes:
+
+1. Her code as it is now, with whatever isn't committed, is copied with `git worktree` into `%LOCALAPPDATA%\Hey Harry\builds`. The code that's running is never built on.
+2. The coding agent coding jobs use (the OpenCode CLI) makes the change there, on the model in **Settings > Build herself**. Pick a strong one, like Claude Opus 5.5 or Sonnet 5.5; until you do, it's the answer model's, and if OpenCode doesn't have that one a free model builds it, and she says so. Its key goes to OpenCode for that build only. `AGENTS.md` tells it how she's put together and the rules. It may run her tests without asking, and nothing else: no installs, no network, nothing outside the copy.
+3. Her whole test suite runs on the copy, and on her code as it was. What fails with the change that didn't fail before goes back to the agent, twice at most. A test that only fails some of the time (one fails while music plays) is run again alone, so it isn't taken for the change's.
+4. A change that passes is checked once more. It isn't taken if it touches what puts her back if a change goes wrong (`app.py`, `selfwork.py`, `tests/support.py`, `tests/test_selfwork.py`, `AGENTS.md`, `requirements.txt`, `setup.ps1`), takes any test away, has anything that looks like a key in it (or one of her own keys), or changes over 3,000 lines.
+5. Its files are copied into her code, but only those still as they were when the build began, or nothing is. It's kept as a commit under `refs/heyharry/builds`, and in `%LOCALAPPDATA%\Hey Harry\built.jsonl`.
+6. She restarts to use it once she's not busy: no turn going on, no dictation, no dream mode or meeting notes.
+
+If she won't start with a new build, her keeper takes it out, puts her files back as they were, starts her again and she tells you. A build she asked for is tried once more, told what stopped it. "Undo your last build" takes the last one out while its files are as it left them, and "what have you built?" lists them.
+
+Healing: an error in her own code, like a TypeError or a KeyError raised from one of her files, is kept in `%LOCALAPPDATA%\Hey Harry\faults.jsonl`. The first time each one's seen, she builds a fix for it the same way, with a test that fails without the fix, and tells you once it's in. That's at most 4 fixes a day, and none with **Settings > Heal herself** off. What she raises on purpose to tell you why she can't do something, and the network's or Windows' errors, aren't faults of hers. "Fix yourself" fixes the latest one that isn't fixed, and "any errors lately?" says how she's been.
+
+Her keeper is `app.py`, a dozen MB of the standard library that runs her as `app.py --child`. When she asks to restart (a build's in) it starts her again. When she crashes it starts her again too, and she fixes what crashed her once she's up. Four crashes in ten minutes and it stops, and says so in a box on the screen. Quit her from her window, or stop her yourself in Task Manager, and she stays stopped.
+
+A build on a paid model is billed to your account with that provider: a small feature is usually a few cents to a dollar or two on Claude Sonnet, more on Opus. It takes a few minutes, three of them her tests.
+
 ### Starting with Windows
 
 Settings > Start when I sign in (on here) adds Hey Harry to what Windows starts when you sign in, minimised to the taskbar. Then she welcomes you the way JARVIS welcomes Tony home in Iron Man 2, with the time and the weather: "Welcome home, Hari. It's 2:27 in the afternoon, 33 degrees and mostly clear outside. Anything you'd like me to do?" When you come back to the laptop after it was locked or asleep for a minute or more, it's "Welcome back, Hari.", with only what needs you: who messaged while you were away, the battery if it's under 30 percent and not charging, the C drive if it's nearly full. Those are the lines as written: she says them in her own words, a little different each time (see Personality). Just answer, no "Hey Harry" needed. The name and Say hello are in Settings too. It also shows in Task Manager > Startup apps.
@@ -675,7 +740,7 @@ She does what she hears, and a video or someone in the room can say "Hey Harry" 
 
 ## What it costs
 
-With Claude Haiku as the answer model, what it reads and writes is billed per request to your Anthropic account, at Anthropic's prices; the to-do list goes with each request, so a long list costs a little more. The part of her prompt that's the same every time (her personality and the steps she can take, and for a task in an app its rules) is marked for Anthropic's prompt cache (`opencode.Cached`), so within 5 minutes of the last request Haiku reads it back at a tenth of the price, and a little sooner. When any did, a plan line in the log says how many tokens came from the cache, as "N cached". In a check on 25 October a 3,221-token start was written to the cache on the first request and read back on the next two. New ways to say her lines (see Personality) are one more request every two days, 2,000 to 3,300 tokens written in the checks on 27 October, and a welcome in her own words is a small one each time she welcomes you. Everything else is $0, and without an Anthropic key so is that: the answer model is then a free Kilo or OpenCode Zen model. The voice is Fish's free model, the YouTube search is the public results page, the web sources (Wikipedia, DuckDuckGo, Google News, Open-Meteo, ipinfo.io) are free without keys, speech-to-text runs on your PC, and the task queue/scheduler/command runner use Python and Windows only. A voice from ElevenLabs, Sarvam or Deepgram, or speech-to-text from Sarvam, ElevenLabs, AssemblyAI or Deepgram, is billed to your account there, only if you pick one.
+With Claude Haiku as the answer model, what it reads and writes is billed per request to your Anthropic account, at Anthropic's prices; the to-do list goes with each request, so a long list costs a little more. The part of her prompt that's the same every time (her personality and the steps she can take, and for a task in an app its rules) is marked for Anthropic's prompt cache (`opencode.Cached`), so within 5 minutes of the last request Haiku reads it back at a tenth of the price, and a little sooner. When any did, a plan line in the log says how many tokens came from the cache, as "N cached". In a check on 25 October a 3,221-token start was written to the cache on the first request and read back on the next two. New ways to say her lines (see Personality) are one more request every two days, 2,000 to 3,300 tokens written in the checks on 27 October, and a welcome in her own words is a small one each time she welcomes you. Everything else is $0, and without an Anthropic key so is that: the answer model is then a free Kilo or OpenCode Zen model. The voice is Fish's free model, the YouTube search is the public results page, the web sources (Wikipedia, DuckDuckGo, Google News, Open-Meteo, ipinfo.io) are free without keys, speech-to-text runs on your PC, and the task queue/scheduler/command runner use Python and Windows only. A voice from ElevenLabs, Sarvam or Deepgram, or speech-to-text from Sarvam, ElevenLabs, AssemblyAI or Deepgram, is billed to your account there, only if you pick one. With Let her see you on and a look rule, the vision model is asked about one small picture as you come back and every 5 minutes while you're there: billed to Anthropic with Haiku, free on Kilo's Nemotron VL.
 
 ## Troubleshooting
 
@@ -710,6 +775,8 @@ With Claude Haiku as the answer model, what it reads and writes is billed per re
 - `providers.py` the providers in Settings > Answer model, their keys, and their live model lists
 - `todo.py` the to-do list, `filesearch.py` finding your files in Windows Search's index and opening one safely, `filecontents.py` the same index asked for the words inside them
 - `extras.py` the newer skills joined to her turns: their quick commands, their steps and prompt lines, and the yes before a calendar change. `showme.py` where to click, `overlay.py` what she draws on the screen and the thread her Win32 windows live on, `agenda.py` the calendar and iCal feeds, `spotify.py` Spotify, `helpers.py` named helpers, `jobview.py` and `cards.py` the live view in the corner, `drafts.py` a reply in the email in front, `meeting.py` and `loopback.py` meeting notes and what the PC plays
+- `selfwork.py` how she knows herself (her parts, steps, settings and builds, read from her code), builds what you ask into herself in a copy of her code, tested and put in, fixes her own faults, and keeps her running (her keeper, which `app.py` runs). `AGENTS.md` is how she's put together and the rules, for the agent that builds her
+- `cues.py` what she sees or hears that starts something: the rules, taught and forgotten by voice, and done when what they need is so. `camera.py` the laptop's camera and whether you're in front of it, `claps.py` claps and snaps in the mic's sound, `hands.py` your hand in front of the camera, for a snap seen, `handmouse.py` your hand as the mouse
 - `voices.py` her voice from ElevenLabs, Sarvam or Deepgram: their voices, a line asked of each, and kept. `hearing.py` what you say heard by Sarvam, ElevenLabs, AssemblyAI or Deepgram, once it's plainly hers, in time or not at all
 - `dream.py` dream mode: its scenes by name, the song's words from LRCLIB, the page's server, its window, and what's said for it. `dream\index.html` the page, the words in time with the song, and `dream\scenes.js` the six scenes, drawn in code
 - `tasks.py` the SQLite task queue, local schedule parser, command policy, hidden PowerShell runner, timeout, output cap and redaction
@@ -727,7 +794,7 @@ With Claude Haiku as the answer model, what it reads and writes is billed per re
 - `agent.py` tasks in apps: the live loop, the gate every step passes, the yes for a send, and procedures she learned by doing them, replayed, mended and put away. `vision.py` the screenshots it sends, made small, with no image library
 - `assistant_ui.py` the window: status, mode switch, and the Home, To-do, Tasks, Contacts, Dictionary, Apps, Dictation history, Memory, Privacy, Island, Settings and Keys tabs
 - `secrets_store.py` Credential Manager read / write, `settings.py` window and model settings in `%APPDATA%\Hey Harry`
-- `app.py` and `setup.ps1` the shortcut's entry point and the setup script
+- `app.py` and `setup.ps1` the shortcut's entry point (her keeper, which runs her and starts her again) and the setup script
 - `assets\` the app icon: her island, the glass capsule with her eyes (`island.logo` draws it)
 - `docs\` this README's banner (`banner.png`), the one-minute explainer video (`harry-explainer.mp4`) and the GIFs made from it
 

@@ -25,3 +25,5 @@ winrt-Windows.Storage.Streams==3.2.1
 PyYAML==6.0.3
 # Harry on your phone (telegram_bot.py): the library Hermes Agent pins, LGPL-3.0, only httpx besides
 python-telegram-bot==22.8
+# her eyes on you through the laptop's camera (camera.py): the webcam, and YuNet's face finder, all on this PC
+opencv-python-headless==4.14.0.94
