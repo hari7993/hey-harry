@@ -15,6 +15,10 @@ DEFAULTS = {
     "llm_model": "kilo/nvidia/nemotron-3-ultra-550b-a55b:free",
     # speech to text on this PC: parakeet, nemotron (writes as you talk, but lost "Hey Harry" in Hari's voice), or whisper
     "stt_engine": "parakeet",
+    # a provider's ears for what's plainly said to her, as "sarvam:saaras:v4" (hearing.py), or "" for this PC's alone;
+    # and what they're for: "all" (commands and dictation) or "dictation"
+    "ears": "",
+    "ears_use": "all",
     # how long she waits for you to finish before answering: patient, even or quick (speech.Listener.WAITS)
     "turn_wait": "patient",
     "echo_cancel": True,  # the mic in Windows' speech mode, so she hears you over videos and music

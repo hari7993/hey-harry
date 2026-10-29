@@ -11,9 +11,11 @@ import random
 import tkinter as tk
 import tkinter.font as tkfont
 import webbrowser
+from collections import namedtuple
 from tkinter import messagebox, ttk
 
 import activity
+import hearing
 import hermes_memory
 import history
 import identity
@@ -24,6 +26,7 @@ import providers
 import settings
 import tasks as tasking
 import todo
+import voices
 import winplatform as win
 from bubble import Bubble
 from dictation import HISTORY, read_vocab, save_vocab
@@ -37,9 +40,8 @@ W, H, SIDEBAR = 1060, 700, 220
 HINTS = {"ptt": "Hold right Alt to talk", "wake": "Say \u201cHey Harry\u201d, \u201cHello Harry\u201d or just \u201cHarry\u201d, "
                                                  "then what you want. Right after she answers, just keep talking. "
                                                  "Holding right Alt works too."}
-ENGINES = {"parakeet": "Parakeet (hears her name best)", "nemotron": "Nemotron (writes as you talk)",
-           "whisper": "Whisper small.en (slower)"}
 WAITS = {"patient": "Patient (lets you pause)", "even": "Even", "quick": "Quick (can cut you off)"}  # speech.Listener
+EARS_USES = {"all": "For commands and dictation", "dictation": "For dictation only"}  # a provider's ears, hearing.py
 SEP = "  \u00b7  "  # between a model's ID and what's known of it in the model list: "gpt-5.2  ·  400k"
 MODES = ("ptt", "wake")
 MODE_LABELS = {"ptt": "Hold Right Alt", "wake": "Hey Harry"}
@@ -107,7 +109,8 @@ HOW_TO = ("Say \u201cHey Harry\u201d and what you want: \u201cplay Arijit Singh 
           "corrections, and her personality is yours to change in the Memory tab.\n"
           "Closing the window keeps her listening, quit from the sidebar or with Ctrl+Q.")
 PRIVACY = (
-    ("Stays on your PC", "Everything the mic hears, and all your dictation. Speech is turned into text on this PC to "
+    ("Stays on your PC", "Everything the mic hears, and all your dictation, unless you pick a provider for speech to "
+     "text (below). Speech is turned into text on this PC to "
      "listen for \u201cHey Harry\u201d, and anything that isn't for her is thrown away, never sent. Simple commands like "
      "\u201copen Notepad\u201d or \u201cpause\u201d are worked out here too, and so are questions about the PC like "
      "\u201chow much space is on my C drive\u201d. The log only keeps phrases that start with \u201chey\u201d, to check "
@@ -166,6 +169,13 @@ PRIVACY = (
     ("YouTube  \u00b7  search words", "When she plays something, what you asked for, to find the top video."),
     ("Fish Audio  \u00b7  text", "The text of her replies, to turn into her voice. Scripted replies are saved after the "
      "first time, so most are never sent again."),
+    ("Her voice from a provider  \u00b7  text", "Only if you pick an ElevenLabs, Sarvam or Deepgram voice in Settings "
+     "> Voice: the text of each line she says, to that provider, with your key. A line said once is kept on this PC "
+     "and never sent again."),
+    ("Speech to text by a provider  \u00b7  your voice", "Only if you pick Sarvam, ElevenLabs, AssemblyAI or Deepgram "
+     "in Settings > Speech to text: the audio of what you say to her, once she's taken it as hers (with her name, right "
+     "Alt, just after she answers, or dictating), with her name and yours as words to listen for. This PC hears "
+     "everything first and decides, so what isn't for her never leaves it."),
 )
 KEY_ROWS = (
     ("Anthropic", "ANTHROPIC_API_KEY", "Claude models, like Haiku 5.5, paid per request",
@@ -187,6 +197,24 @@ MODEL_USES = {"openrouter": "Hundreds of models from every lab, a few free", "op
               "huggingface": "Open models from many hosts, a token", "moonshot": "Kimi models, paid per request"}
 MODEL_KEY_ROWS = tuple((p.name, p.key, MODEL_USES.get(p.id, f"{p.name}'s models"), p.key_url)
                        for p in providers.PROVIDERS if p.key and p.key not in {row[1] for row in KEY_ROWS})
+# her voice's and her ears' providers (voices.py, hearing.py), picked in Settings > Voice and Speech to text
+VOICE_KEY_ROWS = (
+    ("ElevenLabs", "ELEVENLABS_API_KEY", "Her voice, and speech to text with Scribe, paid per use",
+     "https://elevenlabs.io/app/settings/api-keys"),
+    ("Sarvam", "SARVAM_API_KEY", "Indian voices, and speech to text for Indian accents and Hinglish",
+     "https://dashboard.sarvam.ai"),
+    ("Deepgram", "DEEPGRAM_API_KEY", "Her voice with Aura-2, and speech to text with Nova-3",
+     "https://console.deepgram.com"),
+    ("AssemblyAI", "ASSEMBLYAI_API_KEY", "Speech to text in one quick request", "https://www.assemblyai.com/dashboard"),
+)
+# the Keys tab: (heading, what it says, rows), the first group with no heading
+KEY_GROUPS = (
+    (None, None, KEY_ROWS),
+    ("More answer model providers", "All optional. With a key saved, pick any of its models in Settings > Answer "
+     "model; one that isn’t free is billed to your account there.", MODEL_KEY_ROWS),
+    ("Her voice and speech to text", "All optional. With a key saved, pick its voices in Settings > Voice, or how it "
+     "hears you in Settings > Speech to text; what it costs is billed to your account there.", VOICE_KEY_ROWS),
+)
 
 BG, SIDE, LINE = "#ffffff", "#f3f3f3", "#e3e3e3"
 # the sidebar, dark like her island, beside the light pages; GLOW is her eyes' colour
@@ -534,6 +562,385 @@ class ModelPicker:
         self.app.picker = None
 
 
+Group = namedtuple("Group", "id name key key_url local")  # who makes what's down a picker's side: key None for none
+
+
+class VoiceSource:
+    """Settings > Voice's picker (29 October 2026): her voice on this PC and Windows' own, Fish's, and ElevenLabs',
+    Sarvam's and Deepgram's (voices.py), as the answer model's picker lists models. ElevenLabs' voices are your
+    account's, read with your key; it alone has models to pick from, in the box under the list."""
+    title, use_text, things = "Pick her voice", "Use voice", "voices"
+    columns = (("name", "Voice", 210), ("by", "Made by", 130), ("about", "About", 340))
+
+    def __init__(self, app):
+        self.app = app
+        self.groups = [Group("pc", "On this PC", None, "", True),
+                       Group("fish", "Fish Audio", "FISH_AUDIO_API_KEY", "https://fish.audio/?fpr=henryk", False)] + \
+                      [Group(p.id, p.name, p.key, p.key_url, False) for p in voices.PROVIDERS]
+
+    def rows(self, g, model=None):
+        if g.id == "pc":
+            return [{"value": v, "cols": (name, "This PC" if v.startswith("pocket:") else "Windows", about)}
+                    for name, v, about in settings.VOICES if v.startswith(("pocket:", "onecore:", "sapi:"))]
+        if g.id == "fish":
+            return [{"value": v, "cols": (name, "Fish Audio", about)} for name, v, about in settings.VOICES
+                    if re.fullmatch(r"[0-9a-f]{32}", v)]
+        p = voices.BY_ID[g.id]
+        return [{"value": voices.full(p, v["id"], model), "cols": (v["name"], p.name, v["about"])}
+                for v in voices.cached(p)["voices"]]
+
+    def typed(self, text):
+        """A Fish voice from its link pasted in the search box, as the old voice box took it."""
+        m = re.search(r"[0-9a-f]{32}", text.lower())
+        return [{"value": m[0], "cols": ("This Fish voice", "Fish Audio", "from the link you pasted")}] if m else []
+
+    def models(self, g):
+        return voices.cached(voices.BY_ID[g.id])["models"] if g.id == "elevenlabs" else []
+
+    def model_of(self, value):
+        parsed = voices.parse(value)
+        return parsed[1] if parsed and parsed[0].id == "elevenlabs" else None
+
+    def group_of(self, value):
+        parsed = voices.parse(value)
+        return parsed[0].id if parsed else "pc" if str(value).startswith(("pocket:", "onecore:", "sapi:")) else "fish"
+
+    def status(self, g):
+        if g.id != "elevenlabs":
+            return "", 0
+        entry = voices.cached(voices.BY_ID[g.id])
+        return entry["error"], entry["at"]
+
+    def stale(self, g):
+        return g.id in voices.BY_ID and voices.stale(voices.BY_ID[g.id])
+
+    def refresh(self, g):
+        if g.id in voices.BY_ID:
+            voices.refresh(voices.BY_ID[g.id])
+
+    def current(self):
+        return settings.get("voice") or settings.VOICES[0][1]
+
+    def footer(self, picker, foot):
+        ttk.Button(foot, text="Try it", command=lambda: self.app.try_voice(picker.chosen())).pack(
+            side="right", padx=(0, self.app.px(6)))
+
+    def use(self, value):
+        self.app.set_voice(value)
+        return True
+
+
+class EarsSource:
+    """Settings > Speech to text's picker (29 October 2026): this PC's own, the default, and Sarvam's, ElevenLabs',
+    AssemblyAI's and Deepgram's (hearing.py). Under it, what a provider's are for, and a test of them on your voice."""
+    title, use_text, things = "Pick how she hears you", "Use these", "choices"
+    columns = (("name", "Speech to text", 210), ("by", "By", 130), ("about", "About", 340))
+
+    def __init__(self, app):
+        self.app = app
+        self.groups = [Group("pc", "On this PC", None, "", True)] + [Group(p.id, p.name, p.key, p.key_url, False)
+                                                                     for p in hearing.PROVIDERS]
+
+    def rows(self, g, model=None):
+        if g.id == "pc":
+            return [{"value": f"pc:{e}", "cols": (name, "This PC", about)} for e, name, about in hearing.LOCAL]
+        p = hearing.BY_ID[g.id]
+        return [{"value": f"{p.id}:{m}", "cols": (name, p.name, about)} for m, name, about in hearing.MODELS[p.id]]
+
+    def typed(self, text):
+        return []
+
+    def models(self, g):
+        return []
+
+    def model_of(self, value):
+        return None
+
+    def group_of(self, value):
+        parsed = hearing.parse(value)
+        return parsed[0].id if parsed else "pc"
+
+    def status(self, g):
+        return "", 0
+
+    def stale(self, g):
+        return False
+
+    def refresh(self, g):
+        pass
+
+    def current(self):
+        return hearing.picked() or f"pc:{settings.get('stt_engine') or 'parakeet'}"
+
+    def footer(self, picker, foot):
+        px = self.app.px
+        ttk.Button(foot, text="Test", command=lambda: self.app.test_ears(picker.chosen())).pack(side="right",
+                                                                                              padx=(0, px(6)))
+        self.use_menu = ttk.Combobox(foot, state="readonly", width=24, values=list(EARS_USES.values()))
+        self.use_menu.set(EARS_USES.get(settings.get("ears_use"), EARS_USES["all"]))
+        self.use_menu.pack(side="right", padx=(0, px(6)))
+        self.use_menu.bind("<<ComboboxSelected>>", lambda e: settings.put("ears_use", list(EARS_USES)[
+            self.use_menu.current()]))
+
+    def use(self, value):
+        return self.app.set_ears(value)
+
+
+class ListPicker:
+    """Settings > Voice's and Speech to text's pickers, laid out as the answer model's (ModelPicker): who makes them
+    down the side, with a key box for one that needs a key, and all of them in one list, narrowed as you type. Enter
+    or a double click uses the one picked. source (VoiceSource or EarsSource) says what's in it."""
+
+    def __init__(self, app, source):
+        self.app, self.source, px = app, source, app.px
+        top = self.top = tk.Toplevel(app.root, bg=BG)
+        top.title(source.title)
+        top.transient(app.root)
+        w, h = px(880), px(560)
+        x = app.root.winfo_rootx() + (app.root.winfo_width() - w) // 2
+        y = app.root.winfo_rooty() + (app.root.winfo_height() - h) // 3
+        top.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        top.minsize(px(660), px(420))
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        top.bind("<Escape>", lambda e: self.close())
+        self.only, self.rows, self._typing = None, {}, None  # the group picked down the side, None for all
+        body = tk.Frame(top, bg=BG, padx=px(16), pady=px(14))
+        body.pack(fill="both", expand=True)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(1, weight=1)
+        app._label(body, "Search", app.f_h2).grid(row=0, column=0, sticky="w", pady=(0, px(10)))
+        self.search = ttk.Entry(body)
+        self.search.grid(row=0, column=1, sticky="ew", pady=(0, px(10)))
+        self.search.bind("<KeyRelease>", self._typed)
+        self.search.bind("<Down>", lambda e: self._move(1))
+        self.search.bind("<Up>", lambda e: self._move(-1))
+        self.search.bind("<Return>", lambda e: self.use())
+        self.side = tk.Listbox(body, activestyle="none", exportselection=False, relief="flat", bd=0, width=24,
+                               highlightthickness=1, highlightbackground=LINE, highlightcolor=LINE, font=app.f_body,
+                               bg=SIDE, fg=TEXT, selectbackground=ACCENT, selectforeground="#ffffff")
+        self.side.grid(row=1, column=0, sticky="nsew", padx=(0, px(10)))
+        self.side.bind("<<ListboxSelect>>", lambda e: self._side_picked())
+        table = tk.Frame(body, bg=BG)
+        table.grid(row=1, column=1, sticky="nsew")
+        tree = self.tree = ttk.Treeview(table, columns=[c[0] for c in source.columns], show="headings",
+                                        selectmode="browse")
+        for ident, title, width in source.columns:
+            tree.heading(ident, text=title, anchor="w")
+            tree.column(ident, width=px(width), anchor="w", stretch=ident == "about")
+        bar = ttk.Scrollbar(table, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=bar.set)
+        tree.pack(side="left", fill="both", expand=True)
+        bar.pack(side="right", fill="y")
+        tree.tag_configure("nokey", foreground="#8a8a8a")
+        tree.tag_configure("current", font=app.f_bold)
+        tree.bind("<Double-1>", lambda e: self.use())
+        tree.bind("<Return>", lambda e: self.use())
+        tree.bind("<<TreeviewSelect>>", lambda e: self._show_model())
+        self.key_row = tk.Frame(body, bg=BG)
+        self.key_row.grid(row=2, column=1, sticky="ew", pady=(px(8), 0))
+        self.key_title = app._label(self.key_row, "", app.f_bold)
+        self.key_title.pack(side="left")
+        self.key_box = HintEntry(self.key_row, "", secure=True, width=20)
+        self.key_box.pack(side="left", fill="x", expand=True, padx=(px(8), 0))
+        self.key_box.bind("<Return>", lambda e: self.save_key())
+        ttk.Button(self.key_row, text="Save key", command=self.save_key).pack(side="left", padx=(px(6), 0))
+        self.key_link = app._link(self.key_row, "Get a key", "")
+        self.key_link.pack(side="left", padx=(px(8), 0))
+        self.model_row = tk.Frame(body, bg=BG)  # ElevenLabs' models, for its voices
+        self.model_row.grid(row=3, column=1, sticky="ew", pady=(px(6), 0))
+        app._label(self.model_row, "Model", app.f_bold).pack(side="left")
+        self.model_menu = ttk.Combobox(self.model_row, state="readonly", width=42)
+        self.model_menu.pack(side="left", padx=(px(8), 0))
+        self.model_menu.bind("<<ComboboxSelected>>", lambda e: self._fill())
+        self.model_ids = []
+        foot = tk.Frame(body, bg=BG)
+        foot.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(px(12), 0))
+        ttk.Button(foot, text=source.use_text, command=self.use).pack(side="right")
+        ttk.Button(foot, text="Cancel", command=self.close).pack(side="right", padx=(0, px(6)))
+        source.footer(self, foot)
+        self.status = app._label(foot, "", app.f_small, MUTED, wraplength=px(380))
+        self.status.pack(side="left", fill="x", expand=True)
+        current = source.current()
+        self._set_models(source.model_of(current))
+        self.reload()
+        self.search.focus_set()
+        try:  # the main window waits while it's open, like a dialog
+            top.grab_set()
+        except tk.TclError:
+            pass
+
+    def _set_models(self, want=None):
+        """ElevenLabs' models in the box under the list, keeping the one picked, or want."""
+        g = next((g for g in self.source.groups if self.source.models(g)), None)
+        models = self.source.models(g) if g else []
+        keep = want or self.model()
+        self.model_ids = [m for m, _ in models]
+        self.model_menu.configure(values=[name for _, name in models])
+        if models:
+            at = self.model_ids.index(keep) if keep in self.model_ids else 0
+            self.model_menu.current(at)
+
+    def model(self):
+        at = self.model_menu.current()
+        return self.model_ids[at] if 0 <= at < len(self.model_ids) else None
+
+    def reload(self):
+        """The groups down the side and the list again, from what's known now."""
+        counts = {g.id: len(self.source.rows(g)) for g in self.source.groups}
+        names = [f"All  ({sum(counts.values())})"] + [
+            g.name + (f"  ({counts[g.id]})" if counts[g.id] else "") + ("" if self._ready(g) else SEP + "add key")
+            for g in self.source.groups]
+        self.side.delete(0, "end")
+        for name in names:
+            self.side.insert("end", name)
+        at = 0 if self.only is None else self.source.groups.index(self.only) + 1
+        self.side.selection_set(at)
+        self.side.see(at)
+        self._set_models()
+        self._show_key()
+        self._fill()
+
+    @staticmethod
+    def _ready(g):
+        return g.local or bool(get_secret(g.key))
+
+    def _side_picked(self):
+        picked = self.side.curselection()
+        if not picked:
+            return
+        self.only = None if picked[0] == 0 else self.source.groups[picked[0] - 1]
+        self._show_key()
+        self._fill()
+        if self.only is not None and self.source.stale(self.only):
+            self.refresh()
+
+    def _show_key(self):
+        g = self.only
+        if g is None or g.local:
+            self.key_row.grid_remove()
+            return
+        self.key_row.grid()
+        self.key_title.configure(text=f"{g.name} key")
+        self.key_box.clear()
+        self.key_box.set_hint("Saved, paste a new one to change it" if get_secret(g.key) else "Paste it here")
+        self.key_link.bind("<Button-1>", lambda e: webbrowser.open(g.key_url))
+
+    def _typed(self, event):
+        if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"):
+            return
+        if self._typing:
+            self.top.after_cancel(self._typing)
+        self._typing = self.top.after(120, self._fill)
+
+    def _fill(self):
+        """What has every word typed in the search box, those that can be used now first."""
+        self._typing = None
+        typed = self.search.get()
+        words, current, kept = typed.lower().split(), self.source.current(), self.chosen()
+        self.tree.delete(*self.tree.get_children())
+        self.rows, pick = {}, None
+        shown = [self.only] if self.only else sorted(self.source.groups, key=lambda g: not self._ready(g))
+        found = [(None, row) for row in self.source.typed(typed)]
+        for g in shown:
+            found += [(g, row) for row in self.source.rows(g, self.model())
+                      if not words or all(w in " ".join(row["cols"]).lower() for w in words)]
+        for g, row in found:
+            ready = g is None or self._ready(g)
+            tags = ([] if ready else ["nokey"]) + (["current"] if row["value"] == current else [])
+            cols = row["cols"] if ready else (*row["cols"][:2], "add key")
+            item = self.tree.insert("", "end", values=cols, tags=tags)
+            self.rows[item] = (g, row["value"])
+            if pick is None and row["value"] in (kept, current):
+                pick = item
+        items = self.tree.get_children()
+        pick = pick or (items[0] if items else None)
+        if pick:
+            self.tree.selection_set(pick)
+            self.tree.see(pick)
+        self._show_model()
+        self._say(len(items))
+
+    def _show_model(self):
+        """The model box, while one of ElevenLabs' voices is picked."""
+        picked = self.selected()
+        if picked and picked[0] is not None and self.source.models(picked[0]):
+            self.model_row.grid()
+        else:
+            self.model_row.grid_remove()
+
+    def _say(self, shown):
+        g = self.only
+        error, at = self.source.status(g) if g else ("", 0)
+        if error:
+            self.say(error + ".", True)
+            return
+        when = ""
+        if at:
+            ago = int((time.time() - at) // 60)
+            when = f" Updated {'just now' if ago < 1 else f'{ago} min ago'}."
+        self.say(f"{shown} {self.source.things}{f' from {g.name}' if g else ''}.{when}")
+
+    def say(self, text, error=False):
+        self.status.configure(text=text, fg=ERROR if error else MUTED)
+
+    def _move(self, step):
+        items = self.tree.get_children()
+        if items:
+            now = self.tree.selection()
+            at = items.index(now[0]) + step if now else 0
+            item = items[max(0, min(len(items) - 1, at))]
+            self.tree.selection_set(item)
+            self.tree.see(item)
+        return "break"
+
+    def selected(self):
+        picked = self.tree.selection()
+        return self.rows.get(picked[0]) if picked else None
+
+    def chosen(self):
+        """The value of what's picked in the list, or None."""
+        picked = self.selected()
+        return picked[1] if picked else None
+
+    def use(self):
+        picked = self.selected()
+        if not picked:
+            return
+        g, value = picked
+        if g is not None and not self._ready(g):
+            self.only = g
+            self.reload()
+            self.key_box.focus_set()
+            self.say(f"Add your {g.name} key first, then pick it again.", True)
+            return
+        if self.source.use(value):
+            self.close()
+
+    def save_key(self):
+        g, value = self.only, self.key_box.get().strip()
+        if g is None or not value:
+            return
+        error = self.app.save_list_key(g, value)
+        if error:
+            self.say(error, True)
+            return
+        self._show_key()
+        self.reload()
+        self.say(f"Saved your {g.name} key.")
+
+    def refresh(self):
+        self.say("Getting the lists…")
+        self.app.refresh_lists(self.source, self.only)
+
+    def close(self):
+        try:
+            self.top.grab_release()
+        except tk.TclError:
+            pass
+        self.top.destroy()
+        self.app.list_picker = None
+
+
 class AssistantWindow:
     def __init__(self, root):
         self.root = root
@@ -546,6 +953,7 @@ class AssistantWindow:
         self.s = root.winfo_fpixels("1i") / 96  # Windows display scaling, 1.0 at 100%
         self._anims = {}  # what's moving: key -> its next frame
         self.walkthrough = None  # her setup window while it's open (onboarding.py)
+        self.list_picker = None  # Settings > Voice's or Speech to text's picker while it's open (ListPicker)
         self.named = []  # (label, its words as written): her name in them, said again with a new one (_renamed)
         self._setup_root()
         self._setup_styles()
@@ -1898,12 +2306,18 @@ class AssistantWindow:
         self.picker = None
         self._show_models()
 
-        row(2, "Speech to text", "Turns what you say into text, on this PC. Nemotron shows your words as you talk, "
-                                 "but it lost \u201cHey Harry\u201d in a real voice. Takes effect when Hey Harry next starts.")
-        self.stt_menu = ttk.Combobox(form, state="readonly", width=38, values=list(ENGINES.values()))
-        self.stt_menu.set(ENGINES.get(settings.get("stt_engine"), ENGINES["parakeet"]))
-        self.stt_menu.grid(row=4, column=1, rowspan=2, sticky="e")
-        self.stt_menu.bind("<<ComboboxSelected>>", lambda e: self.engine_changed())
+        row(2, "Speech to text", "Turns what you say into text, on this PC unless you pick a provider: click it for "
+                                 "Sarvam (best for Indian accents and Hinglish), ElevenLabs, AssemblyAI or Deepgram. "
+                                 "The PC still hears everything first; only what's said to her goes to them.")
+        ears = tk.Frame(form, bg=BG)
+        ears.grid(row=4, column=1, rowspan=2, sticky="e")
+        ears.grid_columnconfigure(0, weight=1)
+        self.ears_button = ttk.Button(ears, style="Pick.TButton", width=38,
+                                      command=lambda: self.open_list_picker(EarsSource(self)))
+        self.ears_button.grid(row=0, column=0, sticky="ew")
+        self.ears_info = self._label(ears, "", self.f_small, MUTED, wraplength=self.px(330))
+        self.ears_info.grid(row=1, column=0, sticky="w", pady=(self.px(4), 0))
+        self._show_ears()
 
         row(3, "Hear me over videos", "Windows takes what the PC is playing out of the mic, so she hears you over "
                                       "YouTube and music. Turn it off if she stops hearing you.")
@@ -1944,16 +2358,20 @@ class AssistantWindow:
                         command=lambda: settings.put("welcome", self.welcome_var.get())).pack(side="left",
                                                                                               padx=(self.px(8), 0))
 
-        row(8, "Voice", "Her voice, on Fish Audio\u2019s free model until 30 November, then made on this PC (Harry on "
-                        "this PC). Try it plays a line. To use any other Fish voice, paste its link from fish.audio.")
+        row(8, "Voice", "Her voice: Fish Audio\u2019s free model till 30 November, made on this PC, Windows\u2019 own, "
+                        "or ElevenLabs, Sarvam or Deepgram with your key. Click it for every voice, with a search box; "
+                        "paste a fish.audio link there for any Fish voice. Try it plays a line.")
         voice = tk.Frame(form, bg=BG)
         voice.grid(row=16, column=1, rowspan=2, sticky="e")
-        self.voice_menu = ttk.Combobox(voice, width=24, values=[self._voice_label(v) for _, v, _ in settings.VOICES])
-        self.voice_menu.set(self._voice_label(settings.get("voice")))
-        self.voice_menu.pack(side="left")
-        ttk.Button(voice, text="Try it", command=self.try_voice).pack(side="left", padx=(self.px(6), 0))
-        for event in ("<<ComboboxSelected>>", "<Return>", "<FocusOut>"):
-            self.voice_menu.bind(event, lambda e: self.voice_changed())
+        voice.grid_columnconfigure(0, weight=1)
+        self.voice_button = ttk.Button(voice, style="Pick.TButton", width=30,
+                                       command=lambda: self.open_list_picker(VoiceSource(self)))
+        self.voice_button.grid(row=0, column=0, sticky="ew")
+        ttk.Button(voice, text="Try it", command=lambda: self.try_voice(None)).grid(row=0, column=1,
+                                                                                   padx=(self.px(6), 0))
+        self.voice_info = self._label(voice, "", self.f_small, MUTED, wraplength=self.px(330))
+        self.voice_info.grid(row=1, column=0, columnspan=2, sticky="w", pady=(self.px(4), 0))
+        self._show_voice()
 
         row(9, "Vision", "When you ask about the screen, or for something she has to see like \u201cclick the "
                          "second video\u201d, she looks at a screenshot of it and acts on it. Watching, she also reads "
@@ -2148,55 +2566,157 @@ class AssistantWindow:
 
     @staticmethod
     def _voice_label(voice):
-        """"Hannah · friendly and clear" for a voice in the list, else the ID itself."""
+        """"Hannah · friendly, clear" for a voice in the list, "Shubh, Sarvam" for a provider's, else the ID."""
         voice = voice or settings.VOICES[0][1]
-        return next((f"{name} \u00b7 {about}" for name, v, about in settings.VOICES if v == voice), voice)
+        return next((f"{name} · {about}" for name, v, about in settings.VOICES if v == voice), None) or \
+            voices.name_of(voice) or voice
 
-    @staticmethod
-    def _voice_id(text):
-        """The voice ID for what's in the voice box: one from the list, or a pasted link or ID. None if neither."""
-        t = (text or "").strip()
-        for name, v, about in settings.VOICES:
-            if t.lower() in (name.lower(), f"{name} \u00b7 {about}".lower()):
-                return v
-        if t.lower().startswith(("onecore:", "sapi:", "pocket:")):
-            return t
-        m = re.search(r"[0-9a-f]{32}", t.lower())
-        return m[0] if m else None
+    def _show_voice(self):
+        """Her voice on its box, and under it who makes it."""
+        voice = settings.get("voice") or settings.VOICES[0][1]
+        label = self._voice_label(voice)
+        self.voice_button.configure(text=(label if len(label) <= 30 else label[:29] + "…") + "  ▾")
+        parsed = voices.parse(voice)
+        if parsed and not voices.ready(parsed[0]):
+            self.voice_info.configure(text=f"Add your {parsed[0].name} key: click the voice.", fg=ERROR)
+        elif parsed:
+            self.voice_info.configure(text=f"{parsed[0].name}, with your key. Each line is kept once said, and her "
+                                           f"voice on this PC fills in if it fails.", fg=MUTED)
+        else:
+            self.voice_info.configure(text="", fg=MUTED)
 
-    def voice_changed(self):
-        voice = self._voice_id(self.voice_menu.get())
-        if not voice:
-            self.voice_menu.set(self._voice_label(settings.get("voice")))
-            self._note("That isn\u2019t a recognized voice. Pick one from the list, or paste a voice ID.", error=True)
-            return
-        self.voice_menu.set(self._voice_label(voice))
+    def set_voice(self, voice):
+        """Saves her voice from the picker."""
         if voice == (settings.get("voice") or settings.VOICES[0][1]):
+            self._show_voice()
             return
         settings.put("voice", voice)
-        self._note("Voice saved. Her usual replies are made again in it in the background, so for a few minutes some "
+        self._show_voice()
+        paid = voices.parse(voice)
+        self._note(f"Voice saved. Each of her lines is made by {paid[0].name} the first time she says it, then kept, "
+                   f"so it's only paid for once." if paid else
+                   "Voice saved. Her usual replies are made again in it in the background, so for a few minutes some "
                    "may start a moment later.")
         siri = sys.modules.get("siri")
-        if siri:
+        if siri:  # it only makes lines ahead for a voice that isn't paid for by the line
             threading.Thread(target=siri.warm_cache, daemon=True).start()
 
-    def try_voice(self):
-        voice = self._voice_id(self.voice_menu.get())
-        if not voice:
-            self._note("Pick a voice first, or paste a voice\u2019s link from fish.audio.", error=True)
-            return
+    def try_voice(self, voice=None):
+        """A line in voice, or her voice now, played to hear how it sounds; what happened is said under it."""
+        voice = voice or settings.get("voice") or settings.VOICES[0][1]
         name = settings.get("name")
         line = f"Hi{' ' + name if name else ''}, this is how I'd sound. Anything you'd like me to do?"
-        self._note("Playing a line\u2026")
+        self._tell("Playing a line…")
 
         def play():
             try:
                 import siri
-                siri.speak(line, voice=voice)
-                self.events.put(("note", "", False))
+                ms = siri.speak(line, voice=voice)
+                self.events.put(("tell", f"It started in {ms / 1000:.1f}s." if ms else "", False))
             except Exception as exc:
-                self.events.put(("note", f"Couldn\u2019t play it: {exc}", True))
+                self.events.put(("tell", f"Couldn’t play it: {exc}", True))
         threading.Thread(target=play, daemon=True).start()
+
+    def _tell(self, text, error=False):
+        """A line for the open picker, if there's one, else under Settings."""
+        if self.list_picker is not None:
+            self.list_picker.say(text, error)
+        else:
+            self._note(text, error)
+
+    def _show_ears(self):
+        """How she hears you on its box, and under it what that means."""
+        value = hearing.picked()
+        engine = settings.get("stt_engine") or "parakeet"
+        label = hearing.name_of(value) or next((f"{name}, on this PC" for e, name, _ in hearing.LOCAL if e == engine),
+                                               engine)
+        self.ears_button.configure(text=(label if len(label) <= 36 else label[:35] + "…") + "  ▾")
+        parsed = hearing.parse(value)
+        if parsed and not get_secret(parsed[0].key):
+            self.ears_info.configure(text=f"Add your {parsed[0].name} key: click it. Till then, this PC hears you.",
+                                     fg=ERROR)
+        elif parsed:
+            use = "dictation" if settings.get("ears_use") == "dictation" else "commands and dictation"
+            self.ears_info.configure(text=f"{parsed[0].name} hears what's said to her, for {use}. If it takes more "
+                                          f"than {hearing.WAIT:.1f}s, this PC's words are used.", fg=MUTED)
+        else:
+            self.ears_info.configure(text="Nothing you say leaves this PC.", fg=MUTED)
+
+    def set_ears(self, value):
+        """Saves how she hears you, from the picker: one of this PC's, which takes effect when Hey Harry next
+        starts, or a provider's, at once. True to close the picker."""
+        if value.startswith("pc:"):
+            engine, was = value[3:], settings.get("stt_engine") or "parakeet"
+            settings.put("ears", "")
+            settings.put("stt_engine", engine)
+            name = next(n for e, n, _ in hearing.LOCAL if e == engine)
+            self._note(f"Saved. Quit Hey Harry and open it again to switch to {name}." if engine != was else
+                       f"Saved. Only this PC hears you, with {name}.")
+        else:
+            settings.put("ears", value)
+            self._note(f"Saved. {hearing.name_of(value)} hears what's said to her from now on.")
+        self._show_ears()
+        return True
+
+    def test_ears(self, value):
+        """Four seconds of you from the mic, heard by what's picked in the list: what it wrote and how long it took,
+        said in the picker. The audio goes nowhere else and isn't kept."""
+        if not value or value.startswith("pc:"):
+            self._tell("Pick a provider's to test it. This PC's are the ones she uses now.")
+            return
+        parsed = hearing.parse(value)
+        if not get_secret(parsed[0].key):
+            self._tell(f"Add your {parsed[0].name} key first.", True)
+            return
+        self._tell("Say something now, for four seconds…")
+
+        def run():
+            try:
+                import sounddevice as sd
+                device = win.input_device(settings.get("mic") or "")
+                device = device if device is not None else win.auto_input()[0]
+                audio = sd.rec(4 * hearing.RATE, samplerate=hearing.RATE, channels=1, dtype="float32", device=device)
+                sd.wait()
+                self.events.put(("tell", f"Sending it to {parsed[0].name}…", False))
+                got = hearing.transcribe(audio[:, 0], value)
+                self.events.put(("tell", f"{parsed[0].name} heard “{got.text or '(nothing)'}” in "
+                                         f"{got.ms / 1000:.2f}s.", False))
+            except Exception as exc:
+                self.events.put(("tell", f"Couldn’t test it: {exc}", True))
+        threading.Thread(target=run, daemon=True).start()
+
+    def open_list_picker(self, source):
+        if self.list_picker is not None:
+            self.list_picker.top.lift()
+            return
+        self.list_picker = ListPicker(self, source)
+        self.refresh_lists(source)  # any list that's old, read again while it's open
+
+    def refresh_lists(self, source, group=None):
+        """Reads a provider's list again on a thread: group's, or every one gone stale."""
+        def fetch():
+            for g in source.groups:
+                if (group is not None and g.id == group.id) or (group is None and source.stale(g)):
+                    source.refresh(g)
+            self.events.put(("lists",))
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def save_list_key(self, g, value):
+        """Saves a provider's key from a picker, and reads its list with it. Why it couldn't, or None."""
+        try:
+            save_secret(g.key, value)
+        except Exception as exc:
+            return str(exc)
+        if g.key == "FISH_AUDIO_API_KEY":
+            from siri import reload_keys
+            reload_keys()
+        if g.key in self.key_fields:  # the Keys tab says so too
+            self.key_fields[g.key].set_hint("Already saved")
+        if self.list_picker is not None:
+            self.refresh_lists(self.list_picker.source, g)
+        self._show_voice()
+        self._show_ears()
+        return None
 
     def startup_changed(self):
         on = self.startup_var.get()
@@ -2233,11 +2753,6 @@ class AssistantWindow:
         if not self.popup:
             self.bubble.hide()
         getattr(self.bubble, "reload", lambda: None)()  # the island's eyes and plugins go too, or come back
-
-    def engine_changed(self):
-        engine = list(ENGINES)[self.stt_menu.current()]
-        settings.put("stt_engine", engine)
-        self._note(f"Saved. Quit Hey Harry and open it again to switch to {ENGINES[engine]}.")
 
     def wait_changed(self):
         wait = list(WAITS)[self.wait_menu.current()]
@@ -2325,25 +2840,27 @@ class AssistantWindow:
         form.pack(fill="x")
         form.grid_columnconfigure(0, weight=1)
         self.key_fields = {}
-        for i, (title, key_name, use, url) in enumerate(KEY_ROWS + MODEL_KEY_ROWS):
-            r = i * 2 + (2 if i >= len(KEY_ROWS) else 0)  # the providers' rows go under their heading
-            head = tk.Frame(form, bg=BG)
-            head.grid(row=r, column=0, sticky="w", pady=(self.px(12), 0))
-            self._label(head, title, self.f_h2).pack(side="left")
-            self._link(head, "Get a key", url).pack(side="left", padx=(self.px(8), 0))
-            self._label(form, use, self.f_small, MUTED).grid(row=r + 1, column=0, sticky="w")
-            hint = "Already saved" if get_secret(key_name) else ("Paste key" if key_name in KEY_NAMES and
-                                                                 key_name not in OPTIONAL else "Optional")
-            field = HintEntry(form, hint, secure=True, width=40)
-            field.grid(row=r, column=1, rowspan=2, sticky="e", pady=(self.px(12), 0))
-            field.bind("<Return>", lambda e: self.save_keys())
-            self.key_fields[key_name] = field
-        r = len(KEY_ROWS) * 2
-        self._label(form, "More answer model providers", self.f_h2).grid(row=r, column=0, columnspan=2, sticky="w",
-                                                                         pady=(self.px(26), 0))
-        self._label(form, "All optional. With a key saved, pick any of its models in Settings > Answer model; one "
-                          "that isn’t free is billed to your account there.", self.f_small, MUTED,
-                    wraplength=self.px(620)).grid(row=r + 1, column=0, columnspan=2, sticky="w")
+        r = 0
+        for heading, about, rows in KEY_GROUPS:
+            if heading:  # the providers' rows go under their heading
+                self._label(form, heading, self.f_h2).grid(row=r, column=0, columnspan=2, sticky="w",
+                                                           pady=(self.px(26), 0))
+                self._label(form, about, self.f_small, MUTED, wraplength=self.px(620)).grid(
+                    row=r + 1, column=0, columnspan=2, sticky="w")
+                r += 2
+            for title, key_name, use, url in rows:
+                head = tk.Frame(form, bg=BG)
+                head.grid(row=r, column=0, sticky="w", pady=(self.px(12), 0))
+                self._label(head, title, self.f_h2).pack(side="left")
+                self._link(head, "Get a key", url).pack(side="left", padx=(self.px(8), 0))
+                self._label(form, use, self.f_small, MUTED).grid(row=r + 1, column=0, sticky="w")
+                hint = "Already saved" if get_secret(key_name) else ("Paste key" if key_name in KEY_NAMES and
+                                                                     key_name not in OPTIONAL else "Optional")
+                field = HintEntry(form, hint, secure=True, width=40)
+                field.grid(row=r, column=1, rowspan=2, sticky="e", pady=(self.px(12), 0))
+                field.bind("<Return>", lambda e: self.save_keys())
+                self.key_fields[key_name] = field
+                r += 2
         bar = tk.Frame(page, bg=BG)
         bar.pack(fill="x", pady=(self.px(20), 0))
         ttk.Button(bar, text="Save keys", command=self.save_keys).pack(side="right")
@@ -2364,6 +2881,8 @@ class AssistantWindow:
             if saved:  # Settings > Answer model: the providers now ready, and their lists read with the key
                 self._show_models()
                 self.refresh_models()
+                self._show_voice()  # and Voice and Speech to text, a provider's key there now
+                self._show_ears()
             still_missing = missing_secrets()
             if still_missing:
                 names = ", ".join(n.replace("_API_KEY", "").replace("_", " ").title() for n in still_missing)
@@ -2441,6 +2960,13 @@ class AssistantWindow:
                     self._note(event[1], error=event[2])
                 elif event[0] == "models":
                     self._show_models()
+                elif event[0] == "lists":  # a provider's voices read again (VoiceSource)
+                    if self.list_picker is not None:
+                        self.list_picker.reload()
+                    self._show_voice()
+                    self._show_ears()
+                elif event[0] == "tell":  # how a voice played or a provider's ears heard you
+                    self._tell(event[1], event[2])
                 elif event[0] == "model_check":
                     self.models_info.configure(text=event[1], fg=ERROR if event[2] else MUTED)
                 elif event[0] == "island_apps":
