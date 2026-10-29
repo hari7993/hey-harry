@@ -553,8 +553,10 @@ class Tasks(Plugin):
         press = {"key": item["key"], "needs": item["needs"]}
         buttons = []
         if state == "waiting_yes" and item["needs"] and item["answers"]:
-            # no Approve here: the owner wants a yes said or tapped on the phone, so the island can only say no or
-            # stop (27 October)
+            # Approve is back (29 October, the owner's ask): it counts only once the pointer has rested on it
+            # (island's careful press), only for the question still waiting (activity.press's needs id), and never
+            # while she's doing a task in an app, whose clicks are real ones (island_answer, tasks.Store)
+            buttons.append({"name": "approve", "label": "Approve", "data": press})
             buttons.append({"name": "deny", "label": "Deny", "data": press})
         elif state in ("running", "queued") and item["stops"]:
             buttons.append({"name": "stop", "label": "Stop", "data": press})
@@ -566,9 +568,9 @@ class Tasks(Plugin):
                 "progress": progress, "buttons": buttons, "kind": item["kind"]}  # research shows violet on the capsule
 
     def command(self, what, data=None):
-        """Stop or Deny on a row (activity.press), on a thread of its own: a background task's goes through
+        """Stop, Approve or Deny on a row (activity.press), on a thread of its own: a background task's goes through
         tasks.db, and her question's through siri's controls loop."""
-        if what not in ("stop", "deny") or not isinstance(data, dict):  # never Approve, even an old card's button
+        if what not in ("stop", "approve", "deny") or not isinstance(data, dict):
             return
         threading.Thread(target=activity.press, args=(data.get("key"), what, data.get("needs", "")),
                          name="island-press", daemon=True).start()

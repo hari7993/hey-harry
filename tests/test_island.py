@@ -446,21 +446,28 @@ class TasksPlugin(unittest.TestCase):
         d = act.data
         self.assertEqual((len(d["rows"]), d["more"], d["short"], d["badge"]), (3, 2, "5 tasks", 4))
         ask, first, second = d["rows"]
-        self.assertEqual([b["name"] for b in ask["buttons"]], ["deny"])  # a yes is said or tapped on the phone
+        self.assertEqual([b["name"] for b in ask["buttons"]], ["approve", "deny"])
         self.assertEqual((ask["status"], ask["buttons"][0]["data"]), ("Needs you", {"key": "ask", "needs": "q1"}))
         self.assertEqual((first["status"], first["progress"], [b["name"] for b in first["buttons"]]),
                          ("2/6", 1 / 6, ["stop"]))
         self.assertEqual((second["status"], second["progress"]), ("", None))  # how far isn't known: a clock counts
         self.assertIsNotNone(second["since"])
 
-    def test_the_island_never_approves_even_from_an_old_cards_button(self):
-        """27 October: the owner wants Deny and Stop on the island, and a yes only by voice or on the phone."""
-        activity.publish("ask", title="Send the message?", state="waiting_yes", needs="q1", answer=lambda yes: True)
+    def test_approve_on_the_island_answers_only_the_question_still_waiting(self):
+        """29 October: the owner wants Approve on the island too. It answers the question it was drawn for, and a
+        button left from an older question does nothing."""
+        answers = []
+        activity.publish("ask", title="Send the message?", state="waiting_yes", needs="q1",
+                         answer=lambda yes: answers.append(yes) or True)
+        self.plugin.poll(time.time())
+        self.assertEqual([b["name"] for b in self.posted()[-1][2].data["rows"][0]["buttons"]], ["approve", "deny"])
         with mock.patch.object(plugins.threading, "Thread") as thread:
-            self.plugin.poll(time.time())
-            self.plugin.command("approve", {"key": "ask", "needs": "q1"})  # an old card's button
-        self.assertEqual([b["name"] for b in self.posted()[-1][2].data["rows"][0]["buttons"]], ["deny"])
-        thread.assert_not_called()
+            self.plugin.command("approve", {"key": "ask", "needs": "q1"})
+        thread.assert_called_once()
+        self.assertEqual(thread.call_args.kwargs["args"], ("ask", "approve", "q1"))
+        self.assertFalse(activity.press("ask", "approve", "q0"))  # an old card's button
+        self.assertTrue(activity.press("ask", "approve", "q1"))
+        self.assertEqual(answers, [True])
 
     def test_it_posts_only_what_changed_and_goes_once_all_is_over(self):
         activity.publish("task:1", title="Install VLC", origin="task")
