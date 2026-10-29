@@ -312,6 +312,37 @@ class OverTheProtocol(unittest.TestCase):
         self.assertEqual(said, "Model opencode/big-pickle, answers yes1,no1.")  # free model; edit yes, install no
         self.assertEqual(job.refused[0].split(" (")[0], "npm install")
 
+    @needs_windows
+    def test_her_own_build_uses_the_model_picked_with_its_key_and_her_rules(self):
+        folder = git_folder()
+        fake = os.path.join(folder, "fake_opencode.py")
+        with open(fake, "w", encoding="utf-8") as f:
+            f.write(FAKE_OPENCODE)
+        real, seen = subprocess.Popen, {}
+
+        def popen(args, **kw):
+            seen["env"] = kw.get("env") or {}
+            return real([sys.executable, fake], **{**kw, "stderr": subprocess.DEVNULL})
+        with mock.patch.object(coder, "opencode_exe", lambda: sys.executable), \
+                mock.patch.object(coder.subprocess, "Popen", popen):
+            job = coder.Job(folder, "x", timeout=30, model="opencode/claude-opus-4-5", env={"ANTHROPIC_API_KEY": "k"},
+                            may_run=lambda command: command == "npm install", guide="Build it into her.",
+                            config={"provider": {"anthropic": {"options": {"apiKey": "k"}}},
+                                    "permission": {"edit": "allow"}})
+            ok, said = job.run()
+        self.assertTrue(ok)
+        self.assertEqual(said, "Model opencode/claude-opus-4-5, answers yes1,yes1.")  # the picked one; run as told
+        self.assertEqual(job.model_used, "opencode/claude-opus-4-5")
+        self.assertEqual(seen["env"]["ANTHROPIC_API_KEY"], "k")
+        config = json.loads(seen["env"]["OPENCODE_CONFIG_CONTENT"])
+        self.assertEqual(config["provider"]["anthropic"]["options"]["apiKey"], "k")
+        self.assertEqual(config["permission"], coder.CONFINE["permission"])  # her leash always wins
+        with mock.patch.object(coder, "opencode_exe", lambda: sys.executable), \
+                mock.patch.object(coder.subprocess, "Popen", popen):
+            job = coder.Job(folder, "x", timeout=30, model="anthropic/claude-haiku-5-5")
+            job.run()
+        self.assertEqual(job.model_used, "opencode/big-pickle")  # not offered: a free one does it
+
 
 class Steps(unittest.TestCase):
     def test_a_code_step_asks_first_and_a_yes_queues_it(self):

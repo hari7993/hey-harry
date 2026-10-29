@@ -27,7 +27,7 @@ DB_PATH = os.path.join(APPDATA_DIR, "tasks.db")
 STATUSES = {"queued", "running", "waiting_approval", "completed", "failed", "cancelled"}
 # watch: see watchers.py. agent: a job of several parts done in the background (27 October, siri.run_job), which may
 # work in apps, so it changes the PC as a command does
-KINDS = {"command", "reminder", "lookup", "research", "install", "code", "watch", "agent"}
+KINDS = {"command", "reminder", "lookup", "research", "install", "code", "watch", "agent", "self"}
 CHANGES_PC = {"command", "install", "code", "agent"}  # never re-run by themselves after Harry stopped part-way: asked again
 # Hermes Agent's cron rule (cron/jobs.py): a one-off job that comes due more than 2 minutes late, as after the PC was
 # off or asleep, doesn't run late by itself. One that changes the PC asks again; a reminder says when it was for

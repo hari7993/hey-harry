@@ -5,7 +5,9 @@
 It points %APPDATA% and %LOCALAPPDATA% at an empty temp folder, so history, tasks, memory, contacts and logs never touch
 the real %APPDATA%\\Hey Harry, and replaces everything that acts on the PC or goes online with a tripwire that raises and
 is recorded in TRIPPED. A test that needs one of them patches it itself (unittest.mock.patch.object)."""
+import atexit
 import os
+import shutil
 import sys
 import tempfile
 
@@ -17,6 +19,11 @@ REAL = os.environ.setdefault("HEYHARRY_TESTING", os.pathsep.join(
 DATA = tempfile.mkdtemp(prefix="heyharry-tests-")
 os.environ["APPDATA"] = DATA
 os.environ["LOCALAPPDATA"] = DATA
+# and every temp folder a test makes goes in it, and it goes when the run ends: by 29 October 2026 the runs had left
+# 12,770 folders in %TEMP%, and the C drive was down to a gigabyte
+tempfile.tempdir = os.path.join(DATA, "temp")
+os.makedirs(tempfile.tempdir, exist_ok=True)
+atexit.register(shutil.rmtree, DATA, True)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 

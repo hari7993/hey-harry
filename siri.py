@@ -24,6 +24,14 @@ import dream
 # only when picked in Settings (29 October 2026): voices.py and hearing.py
 import hearing
 import voices
+# what she sees or hears that starts something (29 October 2026): you back at the laptop, your glasses on, two claps,
+# a snap while music plays; only with Settings > Let her see you on (cues.py, camera.py, claps.py)
+import cues
+# how she knows herself, builds what you ask into herself and fixes her own faults (29 October 2026): selfwork.py, its
+# steps registered here, before the step sets below are worked out from the registry
+import selfwork
+# your hand as the mouse through the laptop's camera (29 October 2026): handmouse.py, its step registered here too
+import handmouse
 from hermes_memory import curator, daemon_pool, hermes_bits, skills, voice_bits
 from hermes_memory.threat_patterns import INVISIBLE_CHARS, first_threat_message
 from secrets_store import get_secret, missing_secrets
@@ -32,6 +40,8 @@ from dictation import Dictation, START as DICTATE_START, USER_VOCAB, fix_vocab, 
 agent.bind(sys.modules[__name__])  # her tasks in apps (agent.py) do their steps and talk through this module
 extras.bind(sys.modules[__name__])  # and the newer skills (extras.py) theirs
 dream.bind(sys.modules[__name__])  # dream mode asks what's said plainly and what's playing through here
+selfwork.register()
+handmouse.register()
 HERE = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(HERE, ".env"))
 FISH_KEY = get_secret("FISH_AUDIO_API_KEY")
@@ -1173,6 +1183,58 @@ def watch_look(rgb, w):
         why = ""
     print(f"  looked at {w['name']}: {state} ({why})")
     return (state if state in ("done", "working", "waiting", "failed") else "working"), why
+
+
+CAMERA_LOOK = ("This is a photo from the laptop's own camera of {who}, sitting at it. For each numbered sentence about "
+               "the person nearest the camera, say whether it's plainly true in this photo. Reply with JSON only, like "
+               '{{"1": true, "2": false}}: true only when you can see it clearly, false when it isn\'t so or you can\'t '
+               "tell.")
+
+
+def camera_look(rgb, looks):
+    """{look: True or False} for what each look rule says of you ("wearing glasses"), from one small frame from the
+    laptop's camera, by the model that sees pictures (BACKUP_MODEL): the only time a picture of you leaves the PC, and
+    only for a look rule (cues.py). {} when it can't say."""
+    who = " ".join(str(settings.get("name") or "").split()) or "the user"
+    url = "data:image/png;base64," + base64.b64encode(vision.png(vision.shrink(rgb, 512))).decode()
+    numbered = "\n".join(f"{i}. They are {look}." for i, look in enumerate(looks, 1))
+    try:
+        raw, _, _ = opencode.chat(OC_KEY, [{"role": "system", "content": CAMERA_LOOK.format(who=who)},
+                                           {"role": "user", "content": [{"type": "text", "text": numbered},
+                                                                        {"type": "image_url", "image_url": {"url": url}}]}],
+                                  max_tokens=60, timeout=30, model=BACKUP_MODEL)
+        got = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+    except Exception as exc:
+        print(f"  couldn't look at you: {exc!r}")
+        return {}
+    seen = {look: got.get(str(i)) is True for i, look in enumerate(looks, 1) if str(i) in got}
+    print(f"  (looked at you: {', '.join(f'{k} {v}' for k, v in seen.items()) or 'no answer'})")
+    return seen
+
+
+CAMERA_ASK = ("You're {name}, a voice assistant, looking at {who} through the laptop's own camera, this photo, taken "
+              "just now. Answer what they asked about what you see in one or two short sentences, to be said out loud, "
+              "speaking to them as you: \"Yes, I can see you\", \"You're wearing a grey hoodie and your glasses\". "
+              "Only what's plainly in the photo. Never say who someone is from their face; if nobody's there, say so.")
+
+
+def camera_answer(rgb, question):
+    """What she says to a question about what she sees of you ("can you see me?", "what am I wearing?"), from one
+    small frame from the camera now, by the model that sees pictures (cues.look_now). Nothing's kept."""
+    who = " ".join(str(settings.get("name") or "").split()) or "the user"
+    url = "data:image/png;base64," + base64.b64encode(vision.png(vision.shrink(rgb, 640))).decode()
+    try:
+        text, _, _ = opencode.chat(OC_KEY, [{"role": "system", "content": CAMERA_ASK.format(name=identity.name(),
+                                                                                             who=who)},
+                                            {"role": "user", "content": [{"type": "text", "text": str(question)},
+                                                                         {"type": "image_url",
+                                                                          "image_url": {"url": url}}]}],
+                                   max_tokens=120, timeout=30, model=BACKUP_MODEL)
+    except Exception as exc:
+        print(f"  couldn't look at you: {exc!r}")
+        return "I couldn't make out the picture from my camera just now, try me again."
+    print(f"  (looked at you for: {question!r})")
+    return " ".join(str(text or "").split()) or "I can see you, but I couldn't say more just now."
 
 
 SCREEN = []  # the screen watcher (screen_watch.Watcher) once she's started: what's on your screen, for context()
@@ -3755,6 +3817,22 @@ def _quick(words, gate=False):
     swapped = swapped_routine(t) if gate != "cold" else None  # the same routine about another app
     if swapped:
         return swapped
+    # "when I clap, start work mode", "when I wear my glasses, turn on light mode", "forget the snap", "watch me": what
+    # she sees or hears that starts something, taught and changed with no model, and only with her name said
+    cue = cues.quick(words, plain, gate)
+    if cue:
+        print("  cues")
+        return cue
+    # "build yourself a way to...", "what have you built?", "fix yourself", "undo your last build", "are you okay?":
+    # her building into and healing herself (selfwork.py), with her name only
+    me = selfwork.quick(words, plain, gate, queue=queue_self)
+    if me:
+        print("  selfwork")
+        return me
+    hand = handmouse.quick(words, plain, gate)  # "hand control on", "stop hand control": your hand as the mouse
+    if hand:
+        print("  hand control")
+        return hand
     # "dream mode", "dream mode on the beach", "next scene", "exit dream mode": its scenes, opened and changed with no
     # model, and only with her name said
     dreaming = dream.quick(words, gate)
@@ -6709,6 +6787,9 @@ def _think(text, gate, notify=None, sure=1.0):
                              + ("\n\n" + ORDER_STEPS if ORDER_WORDS.search(text) else "")
                              + extras.prompt_block(text)  # the newer skills' steps, for the words that may ask for one
                              + dream.prompt_block(text)  # and dream mode's, for words of dreams, scenes and moods
+                             + cues.prompt_block(text)  # and her camera's, for words of seeing you
+                             + selfwork.prompt_block(text)  # and building into herself, for words about her
+                             + handmouse.prompt_block(text)  # and your hand as the mouse, for words of it
                              + ("\n\n" + known if known else "")
                              + memory_block() + context() + job_news(gate)
                              + (cold if gate == "cold" else GATE_NOTE if gate else "")
@@ -7223,6 +7304,23 @@ def asked_from():
     return {"phone": PHONE_CHAT.get()} if PHONE_CHAT.get() is not None else {}
 
 
+def queue_self(kind, what, trace="", doing="", sig=None):
+    """Her task for building into herself (selfwork.Build): kind "build" for what you asked for, "fix" for a fault of
+    hers. In the background on the slow lane, one at a time. Its id."""
+    payload = {"kind": kind, "what": str(what)[:2000], "trace": str(trace)[-6000:], "doing": str(doing)[:300],
+               "sig": sig, "origin": asked_from()}
+    desc = f"{'Fix' if kind == 'fix' else 'Build'}: {' '.join(str(what).split())}"
+    return TASK_STORE.create(desc[:160], "self", payload)
+
+
+def heal_me(sig, trace, where, doing):
+    """selfwork's heal: a fix for a fault of hers, queued like a build, said once it's in."""
+    queue_self("fix", f"the error {sig}, in {where}", trace, doing, sig=sig)
+
+
+IDLE = [lambda: True]  # she's free to restart: no turn going on, no dictation, no dream mode or meeting notes
+
+
 def tell_task(task, line):
     """A task's result, back where it was asked from: the phone's chat, or out loud (Hermes' cron delivers a job's
     output to its origin the same way)."""
@@ -7235,8 +7333,9 @@ def tell_task(task, line):
 
 
 TASK_DOING = {"command": "Running it", "install": "Installing", "research": "Looking into it",
-              "code": "OpenCode is on it", "agent": "Working on it"}  # what a background task's row says while it runs
-SLOW_TASKS = ("command", "install", "research", "code")  # minutes at a time, so they get a thread of their own
+              "code": "OpenCode is on it", "agent": "Working on it",
+              "self": "Building it into me"}  # what a background task's row says while it runs
+SLOW_TASKS = ("command", "install", "research", "code", "self")  # minutes at a time, so they get a thread of their own
 SHOWN_TASKS = SLOW_TASKS + ("agent",)  # on the island (show_task): those, and a job in the background, on its lane
 
 
@@ -7469,6 +7568,15 @@ def prepare_task_steps(plan):
     for step in plan.get("steps") or []:
         do = step.get("do")
         try:
+            if do == "improve":  # a feature built into her (selfwork.Build): asked for, so queued straight away
+                what = " ".join(str(step.get("what") or step.get("task") or "").split())
+                if not what:
+                    raise RuntimeError("I didn't catch what to build into myself")
+                task_id = queue_self("build", what)
+                kept.append({"do": "task_queued", "id": task_id})
+                notices.append(f"I'm building that into myself in the background, task {task_id}, with "
+                               f"{selfwork.builder_model().split('/')[-1]}. I'll tell you when it's in.")
+                continue
             if do == "code":  # changes files: she asks first, in so many words, and only then queues it
                 payload = {**background_payload({**step, "kind": "code"}), "origin": asked_from()}
                 task_id = TASK_STORE.create(step.get("description") or payload["task"], "code", payload,
@@ -7649,6 +7757,26 @@ def task_worker():
                     tell_task(task, _task_result_line(task, text, ok))
                     if ok and noted:
                         send_report(task, noted[-1], f"Task {task['id']}: {task['description']}")
+            elif kind == "self":  # built into her: you asked, or it's a fault of hers (selfwork.Build)
+                build = selfwork.Build(payload.get("what") or task["description"], kind=payload.get("kind") or "build",
+                                       trace=payload.get("trace") or "", doing=payload.get("doing") or "",
+                                       cancelled=lambda: TASK_STORE.is_cancelled(task["id"]),
+                                       progress=lambda note: activity.update(f"task:{task['id']}", note=note))
+                ok, said = build.run()
+                if payload.get("sig"):
+                    selfwork.healed(payload["sig"], ok)
+                TASK_STORE.finish(task["id"], json.dumps({"said": said, "files": build.files, "model": build.used}),
+                                  "" if ok else said)
+                if TASK_STORE.is_cancelled(task["id"]):
+                    return
+                if not ok:
+                    tell_task(task, _task_result_line(task, said, False))
+                    return
+                line = (f"{'Fixed' if payload.get('kind') == 'fix' else 'Built'} into me: {said} Restarting to use "
+                        f"it, back in a few seconds.")
+                if phone_for(task) is not None:
+                    tell_task(task, line)
+                selfwork.restart_soon(say=speak, idle=lambda: IDLE[0](), why=line)
             elif kind == "code":
                 if not payload.get("approved"):
                     TASK_STORE.wait_for_approval(task["id"], "A coding job changes files; approve it to start")
@@ -7696,6 +7824,7 @@ def task_worker():
                 print(f"  task {task['id']} cancelled")
                 return
             print(f"  task {task['id']} failed: {error}")
+            selfwork.fault(exc, f"task {task['id']}", task.get("description") or "")  # a fault of hers is fixed
             TASK_STORE.finish(task["id"], error=error)
             if not TASK_STORE.is_cancelled(task["id"]):
                 tell_task(task, _task_result_line(task, "Open Tasks for the details.", False))
@@ -8895,6 +9024,8 @@ def step_label(step):
                                              or f"on the {get('where') or 'screen'}"),
         "dream": {"close": "Leaving dream mode", "next": "Changing the scene"}.get(get("action"),
                                                                                   "Opening dream mode"),
+        "camera": "Looking at you", "improve": "Building it into me", "about_me": "Looking at myself",
+        "hand_control": "Your hand on the mouse",
     }
     label = labels.get(do) or (describe([step]) or str(do or "")).replace("_", " ").capitalize()
     return " ".join(label.split()).rstrip(": ")
@@ -9827,6 +9958,7 @@ class Her:
     def __init__(self):
         self.stop = threading.Event()  # she stops: every player looks between SLICE pieces
         self.turn, self.until, self.level, self.asking = 0, 0.0, 1.0, False
+        self.heard_until = 0.0  # when the last of her voice written to the speakers will have played (_write)
         self.cut_upto = -1  # the last turn she was stopped in, see stopper
         # the words that stopped her, kept past the end of her turn: that phrase was said to her, and is done once her
         # turn is over. Placed over her it was held to the strict rule as if a TV had said it, so "open Chrome"
@@ -9843,6 +9975,10 @@ class Her:
         self.turn += 1
         self.stop.clear()
         self.until, self.asking = 0.0, False
+
+    def sounding(self):
+        """True while her voice is coming out of the speakers, or was a moment ago (_write)."""
+        return time.time() < self.heard_until
 
     def gain(self):
         return DUCK if time.time() < self.until else 1.0
@@ -9889,6 +10025,7 @@ def _write(out, data, rate):
             ramp = np.linspace(HER.level, g, len(piece), dtype=np.float32)
             piece = (piece.astype(np.float32) * (ramp if piece.ndim == 1 else ramp[:, None])).astype(data.dtype)
         HER.level = g
+        HER.heard_until = time.time() + len(piece) / rate + 0.3  # for claps.py: a sharp sound then could be hers
         out.write(np.ascontiguousarray(piece))
     return True
 
@@ -11176,6 +11313,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             except Exception as exc:
                 failed[0] = True
                 print(f"\n  turn failed: {exc!r}")
+                selfwork.fault(exc, "a turn", f"answering {str(text)[:150]!r}")  # one of her own is fixed by her
                 emit(notify, "Something went wrong", str(exc))
                 time.sleep(2)
                 emit(notify, "Ready", ready_text(rec.wake))
@@ -11746,6 +11884,9 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                           + (f", kept {len(audio[-most:]) * Recorder.BLOCK / SAMPLE_RATE:.1f}s from her first line"
                              if kept else " to now") + f", {time.strftime('%H:%M:%S')})")
                     continue
+                # two claps or a snap (cues.py, claps.py, heard in the mic's own sound): none starts while anyone
+                # talks, she does, or you dictate. As it was before this block: a clap's own sound mustn't count
+                cues.busy(rec.dictating or listener.talking or HER.sounding())
                 listener.feed(block, dictating=rec.dictating)
                 # the rest never came. Not while it's still coming: a pause in it let "Hey Harry, search" go alone, and
                 # her reply to that threw "for flights to Delhi next Friday" away
@@ -12109,6 +12250,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 phone_job(job, chat)
             except Exception as exc:  # one bad job never ends the phone: the next message is answered
                 print(f"\n  phone turn failed: {exc!r}")
+                selfwork.fault(exc, "a turn from the phone")
 
     def phone_job(job, chat):
         """One message or tap from your phone."""
@@ -12259,6 +12401,17 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     start_screen_watch(lambda: not busy.locked())  # her eyes on the screen, between turns (screen_watch)
     threading.Thread(target=keep_warm, daemon=True).start()
     watch_return(lambda since: welcome(True, since))
+    # her own faults fixed by her, any thread's (selfwork.watch); a build that came in, or was taken out, said
+    IDLE[0] = lambda: not busy.locked() and not rec.dictating and not dream.is_open() and not extras.meeting.on()
+    selfwork.STATE["restart"] = lambda: selfwork.restart_soon(say=speak, idle=lambda: IDLE[0](), why=None)
+    selfwork.watch(heal=heal_me, say=ANNOUNCE.put)
+    handmouse.bind(camera=lambda: getattr(cues.NOW["eyes"], "camera", None), say=ANNOUNCE.put)
+    selfwork.started(say=ANNOUNCE.put, heal=heal_me, queue=queue_self)
+    # and back at the laptop without unlocking it, seen by its camera; your look rules, two claps and a snap
+    cues.start(welcome=lambda since: welcome(True, since),
+               run=lambda words, why: CONTROLS[0] is not None and CONTROLS[0].put(("cue", words, why)),
+               playing=media_playing, look=camera_look, see=camera_answer, idle=win.idle_seconds, say=ANNOUNCE.put,
+               mic=lambda: (win.speech_input(settings.get("mic") or "") or (None,))[0])
     threading.Thread(target=listen_loop, daemon=True).start()
     # what you say over her, judged while she's still talking or doing a task in an app: as you talk with Nemotron,
     # once you stop with Parakeet (about 0.3 s a phrase). Started for Nemotron only, "stop" said to a task in an app
@@ -12296,6 +12449,10 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 threading.Thread(target=run_turn, args=(command[1], command[1], None), daemon=True).start()
             elif isinstance(command, tuple) and command[0] == "typed":  # typed to her (askbox, Home): as if said
                 print(f"\n> typed: {command[1]!r}")  # with her name, and sure of every word
+                emit(notify, "Asked", command[1])
+                threading.Thread(target=run_turn, args=(command[1], command[1], None), daemon=True).start()
+            elif isinstance(command, tuple) and command[0] == "cue":  # a rule of yours she saw or heard start (cues)
+                print(f"\n> {command[2]}: {command[1]!r}")  # as if you'd said its words to her by name
                 emit(notify, "Asked", command[1])
                 threading.Thread(target=run_turn, args=(command[1], command[1], None), daemon=True).start()
             elif command in ("pair phone", "phone token"):  # Settings > Phone > Pair, or a bot token saved in Keys

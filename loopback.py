@@ -68,8 +68,10 @@ class Loopback:
     """Hands what the default output device plays to on_block, BLOCK samples at a time, until stop(). Quiet stretches
     come as silence, at the rate the clock goes, so a pause in a call is a pause here too."""
 
-    def __init__(self, on_block):
-        self.on_block, self.stopped = on_block, threading.Event()
+    def __init__(self, on_block, every=0.01):
+        """every: seconds between looks at what's come in: 0.01 for a call's voices; claps.py, which only needs to
+        know a sharp sound came from the speakers, looks every 0.03 for a third of the work."""
+        self.on_block, self.stopped, self.every = on_block, threading.Event(), every
         self.error, self.rate, self.thread = None, None, None
         self.started = threading.Event()
 
@@ -122,7 +124,7 @@ class Loopback:
         scale = 1.0 if is_float else float(2 ** (bits - 1))
         try:
             while not self.stopped.is_set():
-                time.sleep(0.01)
+                time.sleep(self.every)
                 got = []
                 size = capture.GetNextPacketSize()
                 while size:
