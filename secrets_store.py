@@ -21,6 +21,8 @@ OPTIONAL = ("OPENCODE_ZEN_API_KEY", "KILO_API_KEY", "TELEGRAM_BOT_TOKEN", "ANTHR
 MODEL_KEYS = ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY", "GROQ_API_KEY",
               "DEEPSEEK_API_KEY", "MISTRAL_API_KEY", "CEREBRAS_API_KEY", "TOGETHER_API_KEY", "NOUS_API_KEY", "HF_TOKEN",
               "MOONSHOT_API_KEY")
+# her voice's and her ears' providers (voices.py, hearing.py), saved from Settings > Voice and Speech to text
+VOICE_KEYS = ("ELEVENLABS_API_KEY", "SARVAM_API_KEY", "DEEPGRAM_API_KEY", "ASSEMBLYAI_API_KEY")
 # the names their own docs use
 ALIASES = {"OPENCODE_ZEN_API_KEY": ("OPENCODE_API_KEY",), "GEMINI_API_KEY": ("GOOGLE_API_KEY",),
            "HF_TOKEN": ("HUGGINGFACE_API_KEY",)}
@@ -47,7 +49,7 @@ def get_secret(name):
 
 
 def save_secret(name, value):
-    if name not in KEY_NAMES + MODEL_KEYS:
+    if name not in KEY_NAMES + MODEL_KEYS + VOICE_KEYS:
         raise ValueError(f"unknown secret: {name}")
     value = value.strip()
     if not value:

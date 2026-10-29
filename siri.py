@@ -20,6 +20,10 @@ import extras
 # Dream mode (28 October 2026): a pixel-art scene full screen while music plays, the song's words in time with it. Its
 # step is registered as it's imported, as extras' are
 import dream
+# her voice from ElevenLabs, Sarvam or Deepgram, and what you say heard by Sarvam, Scribe, AssemblyAI or Deepgram, each
+# only when picked in Settings (29 October 2026): voices.py and hearing.py
+import hearing
+import voices
 from hermes_memory import curator, daemon_pool, hermes_bits, skills, voice_bits
 from hermes_memory.threat_patterns import INVISIBLE_CHARS, first_threat_message
 from secrets_store import get_secret, missing_secrets
@@ -49,10 +53,11 @@ FISH_ENDS = (2026, 12, 1)  # Fish's free voice model is free "through November 3
 
 
 def voice_id(voice=None):
-    """The voice to speak with: her voice on this PC (pocket:p248), a Windows OneCore / SAPI voice, or a Fish Audio
-    ID from Settings, else the default. Once Fish's free model has ended, a Fish voice becomes her one on this PC."""
+    """The voice to speak with: her voice on this PC (pocket:p248), a Windows OneCore / SAPI voice, a provider's
+    (voices.py: "elevenlabs:<model>/<voice>"), or a Fish Audio ID from Settings, else the default. Once Fish's free
+    model has ended, a Fish voice becomes her one on this PC."""
     val = str(voice or settings.get("voice") or "").strip()
-    if val.startswith(("onecore:", "sapi:", "pocket:")):
+    if val.startswith(("onecore:", "sapi:", "pocket:")) or voices.parse(val):
         return val
     m = re.search(r"[0-9a-f]{32}", val.lower())
     if time.localtime()[:3] >= FISH_ENDS:
@@ -366,6 +371,41 @@ def route(text, kind, open_mic=None, strict=False):
     if kind == "follow_up" and settings.get("call_aware") and win.call_apps():
         return None  # an unnamed follow-up during a call is held back; "Harry" then a command is kind "armed"
     return text, text, kind == "follow_up"
+
+
+def heard_better(what, text, kind, strict, ms, asked=None):
+    """A turn she's taking (route's what), heard again by the provider picked in Settings > Speech to text
+    (hearing.py): its request in the provider's words if they come in time and still ask her something, else as this
+    PC heard it. What she decided stands either way: that it was hers, and how she'll treat it (what[2]). text: what
+    this PC heard, its audio on it; asked: the hearing.Asked already under way (right Alt starts it at once). ms:
+    speech-to-text's time so far, the provider's added. (what, ms)."""
+    asked = asked or hearing.ask(getattr(text, "audio", None), "commands")
+    got = asked.words() if asked else None
+    if got is None:
+        return what, ms
+    heard = speech.heard(got.text, getattr(text, "sure", 1.0) if got.sure is None else got.sure)
+    again = route(heard, kind, strict=strict)
+    if not isinstance(again, tuple) or not str(again[1]).strip(" .,!?"):
+        print(f"  ({asked.name} heard {got.text!r}, which asks her nothing: going with this PC's words)")
+        return what, ms
+    print(f"  ({asked.name} heard it in {got.ms}ms: {got.text!r})")
+    return (again[0], again[1], what[2]), ms + got.ms
+
+
+def dictated_better(heard, stop_rx, until=None):
+    """Each dictated phrase in heard (a Dictation's) in the provider's words, where they came by until (hearing.SETTLE
+    from now), in place of this PC's: the last one only if stop_rx, the stop phrase, is still in its words, so that
+    still comes off. How many were swapped."""
+    until = time.time() + hearing.SETTLE if until is None else until
+    asked = [(i, h.asked) for i, h in enumerate(heard) if getattr(h, "asked", None) is not None]
+    swapped = 0
+    for i, one in asked:
+        got = one.words(until)
+        if got and (i < len(heard) - 1 or stop_rx.search(got.text)):
+            heard[i], swapped = got.text, swapped + 1
+    if asked:
+        print(f"  (dictation: {swapped} of {len(heard)} phrases in {asked[0][1].name}'s words)")
+    return swapped
 
 
 # Without her name, a phrase only goes to the answer model if it could be a request: a word that asks for something,
@@ -9115,13 +9155,17 @@ def fetch_tts(text, voice=None):
             pocket.to_wav(text, path + ".part.wav", v.split(":", 1)[1])
             os.replace(path + ".part.wav", path)
             return path, int((time.time() - t) * 1000), False
+        if voices.parse(v):  # a provider's voice (voices.py)
+            voices.to_wav(text, v, path + ".part.wav")
+            os.replace(path + ".part.wav", path)
+            return path, int((time.time() - t) * 1000), False
         r = fish(text, "wav", voice=v)
         with open(path + ".part", "wb") as f:  # write then rename, so a cut-off download is never cached
             f.write(r.content)
         os.replace(path + ".part", path)
         return path, int((time.time() - t) * 1000), False
     except Exception as exc:
-        print(f"  fish fetch failed ({exc}), using Windows' own voice for this line")
+        print(f"  {voice_name(v)} fetch failed ({exc}), using Windows' own voice for this line")
         fallback = tts_path(text, "onecore:fallback")  # its own name: the Fish line is still made next time
         if not os.path.exists(fallback):
             win.native_to_wav(text, fallback)
@@ -9131,10 +9175,16 @@ def fetch_tts(text, voice=None):
 VOICE = threading.RLock()  # one line at a time: a "One moment" and the answer after it never talk over each other
 
 
+def voice_name(v):
+    """Who makes voice v, for the log: "fish", "her voice on this PC" or a provider's name."""
+    parsed = voices.parse(v)
+    return parsed[0].name if parsed else "her voice on this PC" if str(v).startswith("pocket:") else "fish"
+
+
 class Line:
-    """One line of her voice, under way from the moment it's made: Fish's stream opened, or her voice on this PC
-    being made (pocket.py). play() says it. So while one sentence plays the next is already being made, and a line
-    streamed from the model as it's written has no gaps between its sentences (LiveSay)."""
+    """One line of her voice, under way from the moment it's made: Fish's or a provider's stream opened (voices.py),
+    or her voice on this PC being made (pocket.py). play() says it. So while one sentence plays the next is already
+    being made, and a line streamed from the model as it's written has no gaps between its sentences (LiveSay)."""
 
     def __init__(self, text, voice=None):
         self.text, self.v, self.t = text, voice_id(voice), time.time()
@@ -9146,13 +9196,27 @@ class Line:
             self.audio = pocket.stream(text, self.v.split(":", 1)[1], stop=HER.stopper())
         else:
             self.audio = queue.Queue()
-            threading.Thread(target=self._fish, daemon=True).start()
+            threading.Thread(target=self._cloud if voices.parse(self.v) else self._fish, daemon=True).start()
 
     def _fish(self):
         try:
             r = fish(self.text, "pcm", stream=True, voice=self.v)  # 16-bit mono, played as it arrives
             for chunk in r.iter_content(8192):
                 self.audio.put(chunk)
+            self.audio.put(None)
+        except Exception as exc:
+            self.audio.put(exc)
+
+    def _cloud(self):
+        kept = []
+        try:
+            for chunk in voices.stream(self.text, self.v):  # 16-bit mono at voices.RATE, as the provider makes it
+                if HER.stop.is_set():
+                    break
+                kept.append(chunk)
+                self.audio.put(chunk)
+            else:  # said in full: kept, so a line is only paid for once (warm_cache never makes these ahead)
+                voices.keep(self.path, b"".join(kept))
             self.audio.put(None)
         except Exception as exc:
             self.audio.put(exc)
@@ -9194,7 +9258,12 @@ class Line:
             return 0
         local, started = str(self.v).startswith("pocket:"), [None]
         try:
-            self._play_local(started) if local else self._play_fish(started)
+            if local:
+                self._play_local(started)
+            elif voices.parse(self.v):  # a provider's: the same 16-bit mono as Fish's, at voices.RATE
+                self._play_fish(started, voices.RATE, voices.WAIT[1])
+            else:
+                self._play_fish(started)
             return started[0] or 0
         except Exception as exc:
             if HER.stop.is_set():  # stopped: not said again in another voice
@@ -9203,39 +9272,38 @@ class Line:
                 print(f"  her voice broke off ({exc!r})")
                 return started[0]
             if not local and pocket.available():
-                print(f"  fish speak failed ({exc}), falling back to her voice on this PC")
+                print(f"  {voice_name(self.v)} speak failed ({exc}), falling back to her voice on this PC")
                 return Line(self.text, "pocket:" + pocket.DEFAULT).play()
-            print(f"  {'her voice on this PC' if local else 'fish speak'} failed ({exc}), falling back to Windows "
-                  f"native speech")
+            print(f"  {voice_name(self.v)} speak failed ({exc}), falling back to Windows native speech")
             win.speak_native(self.text, wait=True)
             return int((time.time() - self.t) * 1000)
 
-    def _play_fish(self, started):
-        out, pending = None, b""
+    def _play_fish(self, started, rate=PCM_RATE, wait=sum(FISH_WAIT)):
+        out, pending, ahead = None, b"", PREBUFFER * rate // PCM_RATE  # the same 0.6 s at any rate
         try:
             while True:
-                chunk = self._next(sum(FISH_WAIT))
+                chunk = self._next(wait)
                 if chunk is None:
                     break
                 pending += chunk
                 if out is None:
-                    if len(pending) < PREBUFFER:
+                    if len(pending) < ahead:
                         continue
-                    out = sd.RawOutputStream(samplerate=PCM_RATE, channels=1, dtype="int16")
+                    out = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16")
                     out.start()
                     started[0] = int((time.time() - self.t) * 1000)
                 whole = len(pending) - len(pending) % 2
                 SPEAK_LEVELS.append(_pcm_level(pending[:whole]))
-                if not _write(out, np.frombuffer(pending[:whole], "<i2"), PCM_RATE):
+                if not _write(out, np.frombuffer(pending[:whole], "<i2"), rate):
                     out.abort()  # stopped: what's buffered goes too
                     return
                 pending = pending[whole:]
             if out is None:  # a short line, all of it came before the buffer was full
-                out = sd.RawOutputStream(samplerate=PCM_RATE, channels=1, dtype="int16")
+                out = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16")
                 out.start()
                 started[0] = int((time.time() - self.t) * 1000)
                 whole = len(pending) - len(pending) % 2
-                if not _write(out, np.frombuffer(pending[:whole], "<i2"), PCM_RATE):
+                if not _write(out, np.frombuffer(pending[:whole], "<i2"), rate):
                     out.abort()
                     return
             out.stop()  # waits for the last of it to play
@@ -9314,7 +9382,11 @@ def warm():
     # Kilo too: Ling is her model, and its host was the one left cold. And the provider of the model picked
     picked = providers.split(settings.get("llm_model"))[0]
     hosts = {opencode.BASE, opencode.KILO_BASE, picked.base}
-    for args in [(opencode.SESSION, base + "/models") for base in hosts] + [(FISH, "https://api.fish.audio/")]:
+    heads = [(opencode.SESSION, base + "/models") for base in hosts] + [(FISH, "https://api.fish.audio/")]
+    voice, ears = voices.parse(voice_id()), hearing.parse(hearing.picked())  # her voice's and ears' providers, if any
+    heads += ([(voices.HTTP, voice[0].host + "/")] if voice else []) + ([(hearing.HTTP, ears[0].host + "/")] if ears
+                                                                       else [])
+    for args in heads:
         threading.Thread(target=head, args=args, daemon=True).start()
 
 
@@ -9344,7 +9416,15 @@ def warm_cache():
     try:
         while True:
             voice, made, keep = voice_id(), 0, set()
+            # a provider's voice is paid for by the character: hundreds of lines made ahead would use up the credits,
+            # so they're kept as she first says them (Line._cloud), and only listed here so they stay
+            paid = voices.parse(voice)
+            if paid:
+                print(f"  (her voice is {paid[0].name}'s: lines are kept as she says them, not made ahead)")
             for line in all_scripted_lines():
+                if paid:
+                    keep.add(os.path.basename(tts_path(line, voice)))
+                    continue
                 try:
                     path, _, cached = fetch_tts(line, voice)
                     keep.add(os.path.basename(path))
@@ -11061,7 +11141,8 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     busy = threading.Lock()
     next_window = [0.0]  # follow-up seconds to open once she's done talking, set by each turn
     shown = [None]  # what the window last said about listening
-    dictation = Dictation(lambda: NAMES)  # written by the same local speech model, the audio stays on this PC
+    # written by the same speech model on this PC, and by a provider's ears only if you picked one for dictation
+    dictation = Dictation(lambda: NAMES)
     win.warm_start_apps()  # read the Start menu now, so the first "open" is quick
     late_timers = []  # timers that went off mid-dictation, announced once it stops
 
@@ -11239,7 +11320,10 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     def on_phrase(audio, kind, text, ms):
         """A turn from the listener, already in words: kind is dictation, armed, follow_up or other (see
         speech.Listener)."""
+        text = text if isinstance(text, speech.Heard) else speech.heard(text)
         if kind == "dictation":
+            if text.strip():  # a provider's ears, if picked for dictation, hear it too, while you go on (hearing.py)
+                text.asked = hearing.ask(audio, "dictation")
             dictate_turn(text)
             return
         if enrolling[0] is not None:
@@ -11266,6 +11350,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             print(f"\n  (waiting for the rest: {text!r})")
             emit(notify, "Listening", text + " \u2026")
             return
+        text.audio = audio  # so a provider's ears can hear it again, once it's plainly hers (heard_better)
         act_on(text, kind, ms)
 
     def where(begun):
@@ -11441,6 +11526,8 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 voice_kept(False)
                 return
             before = rec.blocks.qsize()
+            # the provider's ears, if picked: after before, so what's said while it's out is caught up on as in a turn
+            what, ms = heard_better(what, text, kind, strict, ms)
             if rec.keeps:  # a turn of yours: what's said from here till her first word is said while she thinks
                 her.update(asked=getattr(listener, "pos", 0), start=None, spoke=None, done=None)
             if again:
@@ -11699,6 +11786,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
         emit(notify, "Finishing", "Writing it up\u2026")
         win.chime("dictate_stop")
         try:
+            dictated_better(dictation.heard, dictation.stop_rx)
             text = dictation.finish()
             print(f"  dictation: {text!r}")
             if text:
@@ -11727,6 +11815,8 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             time.sleep(0.05)
 
     def ptt_turn(audio, press=None):
+        # holding right Alt is talking to her, so a provider's ears, if picked, start on it now (heard_better)
+        asked = hearing.ask(audio, "commands") if enrolling[0] is None else None
         if enrolling[0] is None:  # reading her the sentences for your voice: the one to read stays up
             emit(notify, "Transcribing", "Working out what you said\u2026")
         try:
@@ -11752,6 +11842,7 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             return
         if what == "wake":  # just her name while holding the key: she says hello back
             what = (text, "hello", False)
+        what, ms = heard_better(what, text, "armed", False, ms, asked)
         run_turn(what[0], what[1], ms)
 
     def set_mode(new):

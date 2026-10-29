@@ -68,6 +68,8 @@ class Heard(str):
     owner = None  # how like your voice it was, -1 to 1 (voiceid.Profile.score), None if it wasn't scored
     spoke = 0.0  # seconds of speech in it, without the quiet
     voice = None  # its voice print, to add to her picture of yours when it was plainly you
+    audio = None  # the turn's audio, so a provider's ears can hear it again once it's hers (hearing.py)
+    asked = None  # a dictated phrase's hearing.Asked: the provider's words for it, put in before it's pasted
 
 
 def heard(text, sure=1.0):
