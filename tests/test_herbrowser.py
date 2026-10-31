@@ -488,7 +488,7 @@ class Routing(unittest.TestCase):
 
 
 class Commands(Page):
-    """What's said about her browser, with no model and only with her name."""
+    """What's said about her browser, with no model, with her name (shown and hidden also without it)."""
 
     def setUp(self):
         super().setUp()
@@ -540,9 +540,20 @@ class Commands(Page):
         self.say("use your own browser")
         self.assertTrue(settings.get("own_browser"))
 
-    def test_never_from_across_the_room(self):
-        self.assertIsNone(self.say("show me your browser", gate="cold"))
+    def test_shown_and_hidden_without_her_name_only_when_the_words_name_her_browser(self):
+        # on 31 October "show me your browser" said without her name went to the model, which opened your Chrome
+        self.say("show me your browser", gate="cold")
+        self.say("sign in to linkedin in your browser", gate="cold")
+        self.assertEqual(self.did, [("show", None), ("show", "https://www.linkedin.com")])
+        herbrowser._shown[0] = True
+        self.assertIn("put away", self.say("hide your browser", gate="cold")["say"])
+        self.did.clear()
+        for words in ("take control", "let me sign in", "i'm done", "carry on", "hide", "close your browser",
+                      "don't use your browser", "use your browser"):
+            with self.subTest(words=words):
+                self.assertIsNone(self.say(words, gate="cold"))  # said in the room, or more than showing it
         self.assertEqual(self.did, [])
+        self.assertTrue(settings.get("own_browser"))
 
     def test_never_in_a_test_run_and_never_without_chrome(self):
         settings.put("own_browser", True)

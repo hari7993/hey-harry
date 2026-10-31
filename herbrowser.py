@@ -1374,10 +1374,12 @@ def _plan(say):
 
 def quick(words, plain, gate=False):
     """A plan for what's said about her browser, or None: show it to sign in (at a site), hide it, close it, use it
-    or not. With her name only, never from across the room."""
-    if gate == "cold":
-        return None
+    or not. Without her name only shown and hidden, and only when the words name her browser: on 31 October "show me
+    your browser" said so went to the model, which opened your own Chrome instead."""
     t = plain(str(words or ""))
+    if gate == "cold" and not (re.search(rf"\b{_YOUR}\b", t) and (SHOW.fullmatch(t) or SIGN_IN.fullmatch(t) or
+                                                                  HIDE.fullmatch(t))):
+        return None
     if TURN_OFF.fullmatch(t):
         settings.put("own_browser", False)
         close()
