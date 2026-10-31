@@ -43,8 +43,14 @@ DEFAULTS = {
     "voice": "",  # her Fish Audio voice, an ID from VOICES or a pasted fish.audio link. Empty: the first in VOICES
     "vision": True,  # she may look at the screen when you ask about it, see siri.see()
     # her own browser (herbrowser.py, 31 October 2026): her jobs on websites work in a Chrome of her own, out of your
-    # way, signed in wherever you've signed it in; off, they work on your screen as before
-    "own_browser": True,
+    # way, signed in wherever you've signed it in. Off since that evening, the owner's call: Google wouldn't sign in
+    # to it ("this browser or app may not be secure", as it can tell it's driven), so her jobs on websites are done
+    # in your own browser instead, in the background (siri.site_job)
+    "own_browser": False,
+    # a window of her own in your own Chrome (siri.job_profile, 31 October 2026): her jobs on websites open sites in
+    # this profile of yours, made and signed in by you in Chrome the ordinary way, so your window is left alone;
+    # "" for your usual one
+    "job_profile": "",
     # her eyes on you through the laptop's camera, and her ears for claps and snaps (cues.py, 29 October 2026): she
     # welcomes you back when she sees you, and does what your rules say ("when I clap, start work mode"). Off till
     # you turn it on, in Settings > Let her see you or by saying "turn on your camera"

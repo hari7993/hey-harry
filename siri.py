@@ -8,7 +8,7 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # Windows without
 import subprocess
 import numpy as np, psutil, requests, sounddevice as sd, soundfile as sf
 from dotenv import load_dotenv
-import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, installer, kokoro, messaging, opencode, outcomes, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win
+import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, installer, kokoro, longmem, messaging, opencode, outcomes, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win
 import toolbox
 import screen_watch
 import phrasebook  # more ways to say her scripted lines, so she doesn't sound the same every time
@@ -4178,7 +4178,7 @@ POST_WORDS = re.compile(r"\b(?:post|posts|posting|tweet|comment|reply|apply|appl
                         r"indeed)\b", re.I)
 POST_STEPS = ("Posting, commenting, replying, applying or filling in a form on a site (LinkedIn, X, Instagram, Reddit, a "
               "job site): website for the site, then a screen task saying what to post or fill in, in full. It's done "
-              "in your own browser, and what you'd post or send is read back for their yes before it goes, so never "
+              "as a job in the background, and what you'd post or send is read back for their yes before it goes, so never "
               "say you can't, and never only open the site or offer to draft it for them. \"Can you post X for me?\" "
               "is the ask: do it. Write the post yourself when they give the topic, not the words.")
 # A job of several parts (agent.task, 27 October): one loop that looks things up, works in apps and keeps notes,
@@ -5000,16 +5000,28 @@ def ask_alone(messages, deadline=DEADLINE, cap=10.0, **_):
         return opencode.chat(OC_KEY, messages, max_tokens=1500, timeout=limit, model=model)  # no effort levels
 
 
-def memory_block():
+def long_recall(text):
+    """What her long memory has that's closest in meaning to text, the words of this turn, for its prompt
+    (longmem.recalled): a call of its own after memory_block, which the tests stand in for with their own."""
+    try:
+        return longmem.recalled(text, meaning()) if text else ""
+    except Exception as exc:
+        print(f"  couldn't recall from her long memory: {exc!r}")
+        return ""
+
+
+def memory_block(text=""):
     """What she remembers, the way Hermes Agent puts it in its system prompt: who you are, then her own notes.
-    Read fresh each time, so something saved a moment ago, or forgotten in the Memory tab, counts straight away."""
+    Read fresh each time, so something saved a moment ago, or forgotten in the Memory tab, counts straight away.
+    With text, the words of this turn, what her long memory has that's closest to them too (long_recall)."""
     try:
         MEMORY.load_from_disk()
         blocks = [b for b in (MEMORY.format_for_system_prompt("user"), MEMORY.format_for_system_prompt("memory")) if b]
     except Exception as exc:
         print(f"  couldn't read her memory: {exc!r}")
         return ""
-    return "".join("\n\n" + b for b in blocks) if blocks else "\n\nYour memory is empty so far."
+    out = "".join("\n\n" + b for b in blocks) if blocks else "\n\nYour memory is empty so far."
+    return out + long_recall(text)
 
 
 def skills_block(text=""):
@@ -5808,7 +5820,7 @@ def make_room(target, content, failed):
         asked = json.loads(raw[raw.index("{"):raw.rindex("}") + 1]).get("operations")
     except Exception as exc:
         print(f"  couldn't make room in her memory: {exc!r}")
-        return failed
+        return room_by_moving(target, content, failed)
     changes, adds, touched = [], [], set()
     for o in asked if isinstance(asked, list) else []:
         action = o.get("action") if isinstance(o, dict) else None
@@ -5831,7 +5843,7 @@ def make_room(target, content, failed):
             changes.append(op)
     if not adds:
         print("  (making room in her memory: the model let the new one go)")
-        return failed  # and nothing else changes for it
+        return room_by_moving(target, content, failed)  # nothing else of the model's changes for it
     # its changes in its order, only until there's the room it was asked for: on 24 October, asked to free 100
     # characters, it took out 10 entries and 700, among them "Hari prefers I don't repeat his requests back to him"
     # and careerid.in. However many it takes, the add stays: it came 14th, and a cap of 10 had cut it off
@@ -5853,6 +5865,25 @@ def make_room(target, content, failed):
     print(f"  made room in her memory: {took['remove']} removed, {took['replace'] + took['patch']} shortened"
           if result.get("success")
           else f"  couldn't make room in her memory: {str(result.get('error'))[:120]}")
+    return result if result.get("success") else room_by_moving(target, content, failed)
+
+
+def room_by_moving(target, content, failed):
+    """Room for content made by herself when the model wouldn't (make_room): the entries least like what you've
+    asked about lately move out to her long memory (longmem.move_out), nothing dropped, and content goes in.
+    memory_tool's result, or failed if nothing could be moved (31 October 2026: "my memory is full, tell me
+    something to forget" was hers to sort out, not yours)."""
+    MEMORY.load_from_disk()
+    found = list(MEMORY._entries_for(target))
+    sep = hermes_memory.memory_store.ENTRY_DELIMITER
+    need = len(sep.join(found + [str(content).strip()])) - MEMORY._char_limit(target) + ROOM_SPARE
+    try:
+        lately = [said for _, said, _ in history.recent(40, within=7 * 86400, cold=False)]
+    except Exception:
+        lately = []
+    if not longmem.move_out(MEMORY, target, need, meaning(), lately):
+        return failed
+    result = hermes_memory.memory_tool(MEMORY, "add", target, content)
     return result if result.get("success") else failed
 
 
@@ -6847,7 +6878,7 @@ def _think(text, gate, notify=None, sure=1.0):
                              + handmouse.prompt_block(text)  # and your hand as the mouse, for words of it
                              + focus.prompt_block(text)  # and the focus timer's, for words of focusing
                              + ("\n\n" + known if known else "")
-                             + memory_block() + context() + job_news(gate)
+                             + memory_block() + long_recall(text) + context() + job_news(gate)
                              + (cold if gate == "cold" else GATE_NOTE if gate else "")
                              + RETRYING[0],
                              len(fixed))
@@ -7435,11 +7466,12 @@ ON_MY_SCREEN = re.compile(r"\b(?:show me|let me see|i(?:'ll| will| want to| wann
 
 
 def for_her_browser(plan, words):
-    """True if the plan's task is on a web site and she has her own browser for it (herbrowser), so it's a job she
-    does there, out of your way, as OpenMuse's agent works in its own browser: the plan opens a site before the task,
-    or a task names a site she knows (SITES, or an address). Not one about what's on your screen now, nor when your
-    words ask to see it."""
-    if not herbrowser.available() or ON_MY_SCREEN.search(str(words or "")):
+    """True if the plan's task is on a web site, so it's a job in the background (backgrounded): in her own browser
+    when she has one (herbrowser), out of your way, as OpenMuse's agent works in its own browser, else in your own
+    browser, your mouse and keyboard taken only when it must type (the owner, 31 October 2026: Google wouldn't sign
+    in to hers). The plan opens a site before the task, or a task names a site she knows (SITES, or an address). Not
+    one about what's on your screen now, nor when your words ask to see it."""
+    if ON_MY_SCREEN.search(str(words or "")):
         return False
     steps = [s for s in plan.get("steps") or [] if isinstance(s, dict)]
     at = next((i for i, s in enumerate(steps) if s.get("do") in ("screen", "task")), None)
@@ -7454,9 +7486,9 @@ def for_her_browser(plan, words):
 
 def backgrounded(plan, words):
     """The plan's task in an app (screen or task) done in the background instead, when your words ask for that ("in
-    the background", "while I ...", "let me know when it's done"), or it's on a web site and she has her own browser
-    for it (for_her_browser): one background step for its goal, which prepare_task_steps makes a job. The steps that
-    opened its app go too: the job opens its own. As it was without such words, or with a question waiting."""
+    the background", "while I ...", "let me know when it's done"), or it's on a web site (for_her_browser): one
+    background step for its goal, which prepare_task_steps makes a job. The steps that opened its app go too: the
+    job opens its own. As it was without such words, or with a question waiting."""
     if plan.get("confirm") or not (BACKGROUND_WORDS.search(str(words or "")) or for_her_browser(plan, words)):
         return plan
     steps = [s for s in plan.get("steps") or [] if isinstance(s, dict)]
@@ -8376,6 +8408,27 @@ def profile_names(key):
     return names[:12] if len(names) > 1 else []
 
 
+_job_profile_said = []  # the profile Settings names but Chrome hasn't, said in the log once
+
+
+def job_profile():
+    """The profile of your browser her jobs open sites in (Settings, job_profile), when it's there: a window of their
+    own, made and signed in by you in Chrome the ordinary way, so Google lets it sign in where it refused her own
+    browser (31 October 2026, the owner's ask). "" for your usual one, or when there's no such profile (said once)."""
+    name = " ".join(str(settings.get("job_profile") or "").split())
+    if not name:
+        return ""
+    try:
+        key = default_browser()
+        find_profile(key, name)
+        return name
+    except (RuntimeError, KeyError) as exc:
+        if name not in _job_profile_said:
+            _job_profile_said.append(name)
+            print(f"  her jobs' profile: {exc}; using your usual one")
+        return ""
+
+
 def find_profile(key, spoken):
     """The folder of the profile they named: by its name, email or the start of the email, else part of one."""
     want = re.sub(r"\b(?:profile|account|the|my)\b", "", key_of(spoken)).strip()
@@ -8969,6 +9022,8 @@ def do_step(step):
         result = hermes_memory.memory_tool(MEMORY, action, target, step.get("content"), step.get("old_text"))
         if not result.get("success") and action == "add" and "current_entries" in result:
             result = make_room(target, step.get("content"), result)  # full: not "tell me something to forget"
+        if not result.get("success") and action == "remove" and longmem.forget(step.get("old_text")):
+            result = {"success": True}  # it was in her long memory
         if not result.get("success"):
             raise RuntimeError(memory_trouble(str(result.get("error") or "")))
         if action in ("add", "replace") and step.get("content"):

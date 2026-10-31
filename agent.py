@@ -947,7 +947,7 @@ def do_held(r, held):
         elif do in ("open", "website") and in_browser(r, s):  # in her own browser, as the job would have
             act(_to_browser, r, s)
         elif do in ("open", "website"):  # a site you hadn't named, opened now you've said yes to it
-            act(host.do_step, {k: v for k, v in s.items() if k in ("do", "app", "url")})
+            act(host.do_step, own_window(r, s))
             if do == "website":
                 r.trusted |= {win.site_of(s.get("url"))} - {None}
                 if url_text(s.get("url")):  # a mail it filled in, as she'd have typed it
@@ -2081,7 +2081,7 @@ def replay(r, start=0, notify=None):
                 # where a check after it that a control's gone reads (_seen): not a window it's yet to open
                 r.hwnd = None if do in ("open", "website") else win.foreground()[0]
                 done = win.ui_act(el, s.get("text"), s.get("state"), caret=caret) if el is not None else \
-                    _to_browser(r, s) if in_browser(r, s) else host.do_step(s)
+                    _to_browser(r, s) if in_browser(r, s) else host.do_step(own_window(r, s))
         except RuntimeError as exc:
             return failed(r, i, s, str(exc)[:1].lower() + str(exc)[1:].rstrip("."), notify=notify)
         except Exception as exc:  # the app went away under it, or UI Automation gave up on it
@@ -3265,8 +3265,21 @@ def perform(s, el, point):
     elif do == "switch":
         return switch_to(s.get("to") or s.get("app"))  # the window, which a job pins (do_one)
     else:
-        host.do_step({k: v for k, v in s.items() if k in ("do", "app", "url")})
+        host.do_step(own_window(RUN.get(), s))
     return do
+
+
+def own_window(r, s):
+    """Step s, opening a site or a browser, for job run r: in the profile of your browser Settings gives her jobs
+    (siri.job_profile), so they get a window of their own and yours is left alone, unless the step names a browser
+    or profile itself, or it's a turn's step, which you're watching. Only the keys siri.do_step takes."""
+    kept = {k: v for k, v in s.items() if k in ("do", "app", "url", "browser", "profile")}
+    if r is not None and r.job is not None and not s.get("profile") and not s.get("browser") and (
+            s.get("do") == "website" or BROWSER_APPS.fullmatch(str(s.get("app") or "").strip().lower())):
+        name = host.job_profile()
+        if name:
+            kept["profile"] = name
+    return kept
 
 
 def opened(r, s, before):

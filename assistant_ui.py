@@ -20,6 +20,7 @@ import activity
 import hearing
 import hermes_memory
 import history
+import longmem
 import identity
 import messaging
 import onboarding
@@ -2437,6 +2438,13 @@ class AssistantWindow:
         self.memories = []
         return page
 
+    def _chrome_profiles(self):
+        """The names of your Chrome's profiles, for the job profile to pick from; [] without a Chrome."""
+        try:
+            return [siri._shown(name) for _, name, _ in siri.profiles("chrome")]
+        except Exception:
+            return []
+
     def _load_memory(self, message=None):
         store = hermes_memory.store()
         try:
@@ -2447,9 +2455,9 @@ class AssistantWindow:
             self.mem_message.configure(text=f"Couldn't read her memory: {exc}", fg=ERROR)
             return
         self.memories = [("user", e) for e in store.user_entries] + [("memory", e) for e in store.memory_entries] + \
-                        [("skill", s) for s in learned]
+                        [("long", e["text"]) for e in longmem.entries()] + [("skill", s) for s in learned]
         self.mem_table.delete(*self.mem_table.get_children())
-        about = {"user": "You", "memory": "Her notes", "skill": "Skill"}
+        about = {"user": "You", "memory": "Her notes", "long": "Long memory", "skill": "Skill"}
         for row, (target, entry) in enumerate(self.memories):
             if target == "skill":  # "work-mode: Their work setup (you say: work mode)"
                 entry = skill_line(entry)
@@ -2478,6 +2486,9 @@ class AssistantWindow:
             self.mem_message.configure(text="Skills change when you teach her again: “when I say ..., do ...”",
                                        fg=ERROR)
             return
+        if target == "long":
+            self.mem_message.configure(text="Long memory: Forget this, then Add it the way you want it", fg=ERROR)
+            return
         MemoryEditor(self, target, entry, "Change what she remembers")
 
     def forget_memory(self):
@@ -2489,6 +2500,8 @@ class AssistantWindow:
         if target == "skill":
             # you asked: gone, not archived; one put in by hand from skills\imported, not hers of the same name
             result = skills.delete_skill(entry["dir"], really=True, imported=bool(entry.get("imported")))
+        elif target == "long":
+            result = {"success": longmem.forget(entry), "error": "Couldn't find that in her long memory"}
         else:
             result = hermes_memory.memory_tool(hermes_memory.store(), "remove", target, old_text=entry)
         if result.get("success"):
@@ -2842,7 +2855,7 @@ class AssistantWindow:
         # in parts, each a card with its colour and its name along the top to jump to (29 October 2026, the owner:
         # one long list was hard to find things in and to scroll): (name, colour, icon, its rows by number below)
         parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14)),
-                 ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23)),
+                 ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23, 24)),
                  ("Models", "green", "\ue99a", (1, 21, 22)), ("Speaking up", "amber", "\uea8f", (12, 13)),
                  ("Phone", "rose", "\ue8ea", (16,)), ("Window", "slate", "\ue737", (4, 5, 6, 19)))
         cards, where, form = {}, {}, None
@@ -3073,14 +3086,27 @@ class AssistantWindow:
         row(23, "Her own browser", "Jobs on websites happen in a Chrome of her own, out of your way, never on your "
                                    "screen. Sign her in to the sites she should use: press Show it (or say “sign "
                                    "in to LinkedIn in your browser”), sign in, then say “hide your "
-                                   "browser”. Her sign-ins stay in it; she never types a password. Off, her jobs "
-                                   "work on your screen.")
+                                   "browser”. Her sign-ins stay in it; she never types a password. Off, as it is "
+                                   "now, her jobs on websites run in the background in your own browser, which "
+                                   "is signed in already; Google won't sign in to hers.")
         own = tk.Frame(form, bg=BG)
         own.grid(row=46, column=1, rowspan=2, sticky="e")
         self.own_browser_var = tk.BooleanVar(value=bool(settings.get("own_browser")))
         ttk.Button(own, text="Show it", command=self.show_her_browser).pack(side="left", padx=(0, self.px(8)))
         ttk.Checkbutton(own, text="Her own browser", variable=self.own_browser_var,
                         command=lambda: settings.put("own_browser", self.own_browser_var.get())).pack(side="left")
+        row(24, "A window of her own", "Her jobs on websites open sites in this profile of your Chrome, so they get "
+                                      "a window of their own and yours is left alone. Make a profile called Harry "
+                                      "in Chrome (your picture at the top right, Add), sign in there to the sites "
+                                      "she should use, and pick it here. Google signs in there, as it's your "
+                                      "ordinary Chrome. She still borrows your keyboard to type, after a pause in "
+                                      "yours.")
+        names = [""] + list(self._chrome_profiles())
+        self.job_profile_box = ttk.Combobox(form, state="readonly", width=24, values=names)
+        self.job_profile_box.set(str(settings.get("job_profile") or ""))
+        self.job_profile_box.bind("<<ComboboxSelected>>",
+                                  lambda e: settings.put("job_profile", self.job_profile_box.get()))
+        self.job_profile_box.grid(row=48, column=1, rowspan=2, sticky="e")
         self.settings_note = self._label(page, "", self.f_small, MUTED, wraplength=self.px(660))
         self.settings_note.pack(fill="x", pady=(self.px(18), 0))
         self.models_loaded = False

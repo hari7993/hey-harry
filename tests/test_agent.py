@@ -188,7 +188,7 @@ class FakeApp:
 
     # siri's side
     def do_step(self, step):
-        self.opened.append({k: v for k, v in step.items() if k in ("do", "app", "url")})
+        self.opened.append({k: v for k, v in step.items() if k in ("do", "app", "url", "profile")})
         key = str(step.get("app") or winplatform.site_of(step.get("url")) or "").lower()
         if key not in self.windows:
             raise RuntimeError(f"I couldn't find an app called {step.get('app')}")
@@ -708,8 +708,13 @@ class Mail(Live):
                                       {"do": "click", "id": self.app.id("Message Body"), "text": body},
                                       {"do": "click", "id": self.app.id("Send")}],
                             "done": True, "expect": {"gone": "Subject"}, "say": "Sent."})
-        with self.planner({"do": "website", "url": "https://mail.google.com/mail/u/0/#inbox"},
-                          {"do": "screen", "task": task}):
+        # a turn's run, you watching: a task on a site is a job in the background since 31 October 2026
+        # (siri.for_her_browser), and what's tested here is the send gate, which is the same in both
+        # a turn's run, you watching: a task on a site is a job in the background since 31 October 2026
+        # (siri.for_her_browser), and what's tested here is the send gate, which is the same in both
+        turn = mock.patch.object(siri, "for_her_browser", lambda *a: False)
+        with turn, self.planner({"do": "website", "url": "https://mail.google.com/mail/u/0/#inbox"},
+                                {"do": "screen", "task": task}):
             siri.handle(ASKED)
 
     def test_the_first_time_she_asks_before_sending_and_learns_it_with_no_example_kept(self):

@@ -763,11 +763,16 @@ class Planner(unittest.TestCase):
         self.assertFalse(siri.for_her_browser(self.plan({"do": "screen", "task": "click linkedin's sign in"}), "x"))
         self.assertFalse(siri.for_her_browser(self.plan({"do": "website", "url": "https://youtube.com"}), "open yt"))
 
-    def test_not_without_her_browser(self):
+    def test_without_her_browser_its_a_job_in_yours(self):
+        """Her browser off (the owner, 31 October 2026, Google refusing to sign in to it): a task on a site is still
+        a job in the background, on your screen in your own browser."""
         with mock.patch.object(herbrowser, "available", lambda: False):
             plan = self.plan({"do": "website", "url": "https://www.linkedin.com"}, {"do": "screen", "task": "post"})
-            self.assertFalse(siri.for_her_browser(plan, "post on linkedin"))
-            self.assertIs(siri.backgrounded(plan, "post on linkedin"), plan)
+            self.assertTrue(siri.for_her_browser(plan, "post on linkedin"))
+            (job,) = siri.backgrounded(plan, "post on linkedin")["steps"]
+            self.assertEqual((job["do"], job["goal"]), ("background", "post"))
+            self.assertIn("Open https://www.linkedin.com first", job["hints"])
+            self.assertIs(siri.backgrounded(plan, "post on linkedin on my screen"), plan)  # you watching: a turn's
 
 
 if __name__ == "__main__":
