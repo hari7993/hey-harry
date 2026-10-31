@@ -1270,5 +1270,21 @@ class ListenReport(Case):
         self.assertEqual(test_listen.pair(phrases[:1] + phrases[3:], lines), [[0], [], [1]])  # one not heard
 
 
+class Lean(unittest.TestCase):
+    """31 October 2026, measured on battery: her process kept about a core busy with nobody talking to her, the
+    most of it Nemotron's spinning threads and numpy's 11 idle maths threads."""
+
+    def test_nemotron_runs_on_one_thread(self):
+        self.assertEqual(speech.STREAM_THREADS, 1)
+
+    def test_numpys_maths_on_one_thread_and_still_right(self):
+        self.addCleanup(speech.few_maths_threads, speech.BLAS_THREADS)
+        self.assertEqual(speech.few_maths_threads(), 1)
+        a = np.arange(300 * 300, dtype=np.float64).reshape(300, 300) / 1e4
+        self.assertTrue(np.allclose(a @ a.T, np.einsum("ij,kj->ik", a, a)))  # one thread, the same sums
+        with mock.patch("glob.glob", lambda pattern: []), contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(speech.few_maths_threads())  # another numpy build: left as it is, never an error
+
+
 if __name__ == "__main__":
     unittest.main()

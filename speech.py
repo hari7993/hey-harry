@@ -62,9 +62,31 @@ SHA256 = {"turn": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967
 PARAKEET_THREADS = 2  # as quick as 4 on this 12th gen i5 (315 vs 294 ms a command), and half the CPU; 6+ was slower
 # Nemotron while someone talks, fed in real time, and its last words once they stop: 4.5 cores and 174 ms at 3
 # threads, 2.3 cores and 222 ms at 2, 0.34 cores and 342 ms at 1. Most of it is sherpa-onnx's own onnxruntime
-# keeping its helper threads spinning between pieces, which it has no setting for (Turn turns it off for Smart Turn)
-STREAM_THREADS = 2
+# keeping its helper threads spinning between pieces, which it has no setting for (Turn turns it off for Smart Turn).
+# 1 since 31 October 2026, the owner's pick: measured on battery, her process kept about a core busy with nobody
+# talking to her, sherpa-onnx's spinning threads the most of it, for 0.12 s quicker last words
+STREAM_THREADS = 1
 TURN_THREADS = 4  # Smart Turn: 16 ms at 4 threads, 26 at 2, 55 at 1. It only runs at pauses
+BLAS_THREADS = 1  # numpy's own maths (OpenBLAS): see few_maths_threads
+
+
+def few_maths_threads(most=BLAS_THREADS):
+    """numpy's OpenBLAS down to most threads, while she runs: it starts one for every CPU thread, 12 here, and on 31
+    October its 11 helpers took 5 to 9% of a core between them, woken for the small sums she does (a sentence's
+    meaning, a sound's features) and left spinning after. None of hers is big enough to need more than one. Set
+    while running rather than by OPENBLAS_NUM_THREADS, which is read only before numpy is first imported, and her
+    window imports it long before this. The number it's now, or None where it couldn't be set."""
+    import ctypes
+    import glob
+    try:
+        import numpy
+        libs = glob.glob(os.path.join(os.path.dirname(os.path.dirname(numpy.__file__)), "numpy.libs", "*openblas*"))
+        lib = ctypes.CDLL(libs[0])
+        lib.scipy_openblas_set_num_threads64_(int(most))
+        return lib.scipy_openblas_get_num_threads64_()
+    except Exception as exc:  # another numpy build: it keeps its own threads, as before
+        print(f"  couldn't set numpy's threads: {exc!r}")
+        return None
 # Nemotron gives the same words about 0.08 less than Parakeet: 0.88 against 0.97 for clear speech, 0.67 against
 # 0.75 for Telugu and Hindi said by Windows' English voices. Moved up by that, so siri.py's 55% and 70% lines, worked
 # out on Parakeet with 62 clips from this room, mean the same
@@ -298,6 +320,7 @@ class Ears:
     def __init__(self, engine="parakeet", notify=None):
         self.engine = engine
         self.live = engine == "nemotron"
+        few_maths_threads()  # once, as her ears start: numpy's maths on one thread from here (few_maths_threads)
         if not self.live:
             self._whole = transcriber(engine, notify)
             return
