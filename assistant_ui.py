@@ -410,6 +410,72 @@ class HintEntry(ttk.Entry):
             self.insert(0, hint)
 
 
+def change_memory(text, target, old=None, old_target=None):
+    """One thing she remembers added (old None) or changed, by hand from the Memory tab (31 October 2026, after
+    OpenMuse's editable memories): through Hermes' memory tool, so its scanner turns away what it turns away when you
+    say "remember ...", and the size limit holds. target: "user" (about you) or "memory" (her own notes); a change
+    can move it from one to the other. "" once it's kept, else why not."""
+    text = "\n".join(line.rstrip() for line in str(text or "").strip().splitlines()).strip()
+    if not text:
+        return "Write something for her to remember first"
+    store = hermes_memory.store()
+    if old is None:
+        result = hermes_memory.memory_tool(store, "add", target, content=text)
+    elif (old_target or target) == target:
+        result = hermes_memory.memory_tool(store, "replace", target, content=text, old_text=old)
+    else:  # moved: kept in the new place first, so it's never lost between the two
+        result = hermes_memory.memory_tool(store, "add", target, content=text)
+        if result.get("success"):
+            result = hermes_memory.memory_tool(store, "remove", old_target, old_text=old)
+    return "" if result.get("success") else str(result.get("error") or "Couldn't keep that")[:200]
+
+
+class MemoryEditor:
+    """The Memory tab's Add and Edit this: one thing she remembers, about you or a note of hers, written or changed
+    by hand, kept by change_memory. Enter in the box is a new line; Save keeps it, Escape leaves it."""
+
+    def __init__(self, app, target, text, title):
+        self.app, self.old, self.old_target, px = app, text or None, target, app.px
+        top = self.top = tk.Toplevel(app.root, bg=BG)
+        top.title(title)
+        top.transient(app.root)
+        w, h = px(560), px(320)
+        x = app.root.winfo_rootx() + (app.root.winfo_width() - w) // 2
+        y = app.root.winfo_rooty() + (app.root.winfo_height() - h) // 3
+        top.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        top.protocol("WM_DELETE_WINDOW", top.destroy)
+        top.bind("<Escape>", lambda e: top.destroy())
+        body = tk.Frame(top, bg=BG, padx=px(16), pady=px(14))
+        body.pack(fill="both", expand=True)
+        row = tk.Frame(body, bg=BG)
+        row.pack(fill="x")
+        app._label(row, "About", app.f_bold).pack(side="left")
+        self.about = ttk.Combobox(row, state="readonly", width=14, values=["You", "Her notes"])
+        self.about.current(0 if target == "user" else 1)
+        self.about.pack(side="left", padx=(px(8), 0))
+        self.box = tk.Text(body, height=6, wrap="word", font=app.f_body, relief="solid", bd=1, padx=px(6),
+                           pady=px(6))
+        self.box.insert("1.0", text or "")
+        self.box.pack(fill="both", expand=True, pady=(px(10), px(6)))
+        self.note = app._label(body, "Like: “My work account is the second one in Chrome”. Never a "
+                                     "password or a code.", app.f_small, MUTED, wraplength=px(520))
+        self.note.pack(fill="x")
+        bar = tk.Frame(body, bg=BG)
+        bar.pack(fill="x", pady=(px(10), 0))
+        ttk.Button(bar, text="Cancel", command=top.destroy).pack(side="right")
+        ttk.Button(bar, text="Save", command=self.save).pack(side="right", padx=(0, px(8)))
+        self.box.focus_set()
+
+    def save(self):
+        target = "user" if self.about.current() == 0 else "memory"
+        why = change_memory(self.box.get("1.0", "end"), target, self.old, self.old_target)
+        if why:
+            self.note.configure(text=why, fg=ERROR)
+            return
+        self.top.destroy()
+        self.app._load_memory("Changed" if self.old else "Kept")
+
+
 class ModelPicker:
     """Settings > Answer model's picker, the way OpenClaw's /model and Hermes Agent's `hermes model` work: every
     provider's models in one list, newest first, narrowed as you type. The providers are down the side, with a key box
@@ -2349,7 +2415,8 @@ class AssistantWindow:
         frame.pack(fill="both", expand=True)
         bar = tk.Frame(page, bg=BG)
         bar.pack(fill="x", pady=(self.px(10), 0))
-        for i, (text, command) in enumerate((("Forget this", self.forget_memory),
+        for i, (text, command) in enumerate((("Add", self.add_memory), ("Edit this", self.edit_memory),
+                                             ("Forget this", self.forget_memory),
                                              ("Edit personality", self.edit_personality),
                                              ("Open notes", self.open_notes), ("Open the folder", self.open_memory_folder),
                                              ("Clear conversations", self.clear_conversations))):
@@ -2383,6 +2450,24 @@ class AssistantWindow:
         kept = f"She keeps what you say to her ({turns:,} so far) and can look back through it." if turns else ""
         empty = "" if self.memories else "Nothing yet. Say \u201cHey Harry, remember that \u2026\u201d. "
         self.mem_message.configure(text=message or (empty + kept), fg=MUTED)
+
+    def add_memory(self):
+        """Something for her to remember, written by hand (MemoryEditor)."""
+        MemoryEditor(self, "user", "", "Add to her memory")
+
+    def edit_memory(self):
+        """What she remembers, picked in the list, changed by hand (MemoryEditor). A skill's changed by teaching her
+        again, in words."""
+        sel = self.mem_table.selection()
+        if not sel:
+            self.mem_message.configure(text="Pick one in the list first", fg=ERROR)
+            return
+        target, entry = self.memories[int(sel[0])]
+        if target == "skill":
+            self.mem_message.configure(text="Skills change when you teach her again: “when I say ..., do ...”",
+                                       fg=ERROR)
+            return
+        MemoryEditor(self, target, entry, "Change what she remembers")
 
     def forget_memory(self):
         sel = self.mem_table.selection()
@@ -2673,7 +2758,7 @@ class AssistantWindow:
         # in parts, each a card with its colour and its name along the top to jump to (29 October 2026, the owner:
         # one long list was hard to find things in and to scroll): (name, colour, icon, its rows by number below)
         parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14)),
-                 ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20)),
+                 ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23)),
                  ("Models", "green", "\ue99a", (1, 21, 22)), ("Speaking up", "amber", "\uea8f", (12, 13)),
                  ("Phone", "rose", "\ue8ea", (16,)), ("Window", "slate", "\ue737", (4, 5, 6, 19)))
         cards, where, form = {}, {}, None

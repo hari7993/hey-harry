@@ -7262,9 +7262,24 @@ def run_job(task):
     agent.forget_job(tid)
     ok = ended == "done"
     TASK_STORE.finish(tid, line if ok else "", "" if ok else (line or ended))
+    remember_job(task, line, ended)
     JOB_NEWS.append(f"[Background job {tid} finished]\nGoal: {payload.get('goal')}\nStatus: {ended}\n"
                     f"Result: {' '.join(str(line or '').split())[:NEWS_CHARS] or '(nothing said)'}")
     tell_task(task, _task_result_line(task, line, ok))
+
+
+def remember_job(task, line, ended):
+    """A finished job kept in her history (31 October 2026): what it was for, as you asked it, and how it ended, so
+    "did you finish the laptop research?" or "what happened with the Zomato order?" finds it by its words or its
+    meaning, as a turn of yours is found. Only her history: never a fact in her memory, as what it found may be a
+    page's words."""
+    goal = (task.get("payload") or {}).get("goal") or task.get("description") or "a job"
+    said = " ".join(str(line or "").split())[:600]
+    try:
+        remember_meaning(history.add(f"(task {task['id']}) {goal}", f"background job, {ended}", said or ended,
+                                     json.dumps({"steps": [], "say": said}, ensure_ascii=False), origin="job"))
+    except Exception as exc:  # bookkeeping: never in the way of telling you how it went
+        print(f"  couldn't keep task {task['id']} in her history: {exc!r}")
 
 
 def ask_job(task, asked):
