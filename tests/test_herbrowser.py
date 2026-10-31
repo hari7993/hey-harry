@@ -30,10 +30,10 @@ class FakeChrome:
         self.focused, self.selected, self.scroll, self.history = None, False, (0, 0), [url]
 
     def add(self, role, name, box=(0, 0, 80, 20), value=None, checked=None, attrs=None, on=None, parent=None,
-            disabled=False, ignored=False, tag="DIV"):
+            disabled=False, ignored=False, tag="DIV", clickable=False):
         n = 100 + len(self.order)
         self.controls[n] = dict(role=role, name=name, box=box, value=value, checked=checked, attrs=attrs or {}, on=on,
-                                parent=parent, disabled=disabled, ignored=ignored, tag=tag)
+                                parent=parent, disabled=disabled, ignored=ignored, tag=tag, clickable=clickable)
         self.order.append(n)
         return n
 
@@ -74,13 +74,15 @@ class FakeChrome:
         if c["disabled"]:
             props.append({"name": "disabled", "value": {"value": True}})
         node = {"nodeId": str(n), "backendDOMNodeId": n, "role": {"value": c["role"]}, "name": {"value": c["name"]},
-                "properties": props, "ignored": c["ignored"], "parentId": str(c["parent"]) if c["parent"] else "1"}
+                "properties": props, "ignored": c["ignored"], "parentId": str(c["parent"]) if c["parent"] else "1",
+                "childIds": [str(k) for k in self.order if self.controls[k]["parent"] == n]}
         if c["value"] is not None:
             node["value"] = {"value": c["value"]}
         return node
 
     def _Accessibility_getFullAXTree(self):
-        root = {"nodeId": "1", "backendDOMNodeId": 1, "role": {"value": "RootWebArea"}, "name": {"value": self.title}}
+        root = {"nodeId": "1", "backendDOMNodeId": 1, "role": {"value": "RootWebArea"}, "name": {"value": self.title},
+                "childIds": [str(k) for k in self.order if not self.controls[k]["parent"]]}
         return {"nodes": [root] + [self._node(n) for n in self.order]}
 
     def _Accessibility_getPartialAXTree(self, backendNodeId, fetchRelatives=False):
@@ -93,7 +95,7 @@ class FakeChrome:
         return {"nodes": nodes}
 
     def _DOMSnapshot_captureSnapshot(self, computedStyles=()):
-        strings, ids, attrs, index, bounds = [], [1], [[]], [], []
+        strings, ids, attrs, index, bounds, clickable = [], [1], [[]], [], [], []
         sx, sy = self.scroll
 
         def at(text):
@@ -103,11 +105,14 @@ class FakeChrome:
             c = self.controls[n]
             ids.append(n)
             attrs.append([i for k, v in c["attrs"].items() for i in (at(k), at(v))])
+            if c["clickable"]:
+                clickable.append(len(ids) - 1)
             if c["box"] is not None:
                 x, y, w, h = c["box"]
                 index.append(len(ids) - 1)
                 bounds.append([x * self.K, y * self.K, w * self.K, h * self.K])
-        return {"strings": strings, "documents": [{"nodes": {"backendNodeId": ids, "attributes": attrs},
+        return {"strings": strings, "documents": [{"nodes": {"backendNodeId": ids, "attributes": attrs,
+                                                             "isClickable": {"index": clickable}},
                                                    "layout": {"nodeIndex": index, "bounds": bounds},
                                                    "scrollOffsetX": sx * self.K, "scrollOffsetY": sy * self.K}]}
 
@@ -924,3 +929,78 @@ class PhoneTaps(unittest.TestCase):
 
     def test_anyone_elses_do_nothing(self):
         self.assertEqual(self.tap(99, "b:a1b2c3:c4"), [])
+
+
+class PlainBlocks(Page):
+    """What a site built from plain blocks that Chrome says is clicked on (DOMSnapshot's isClickable): offered as a
+    button named by its own text, for her jobs and your phone, as real Zomato's restaurant cards and its own buttons
+    weren't on 31 October."""
+
+    def page(self):
+        c = self.chrome
+        self.scroll_btn = c.add("generic", "", (600, 860, 90, 20), clickable=True)
+        inner = c.add("generic", "", (600, 860, 80, 20), clickable=True, parent=self.scroll_btn)  # nested in it
+        c.add("StaticText", "Scroll down", (600, 860, 80, 20), parent=inner)
+        card = c.add("generic", "", (40, 300, 300, 200), clickable=True)  # a card round a real link
+        c.add("link", "Paneer Palace", (50, 310, 120, 20), parent=card)
+        c.add("generic", "", (0, 0, 1280, 3000), clickable=True)  # the whole page, a click catcher
+        c.add("generic", "", (700, 300, 50, 50), clickable=True)  # nothing in it to name it by
+        self.order_btn = c.add("generic", "", (900, 800, 140, 40), clickable=True)
+        c.add("StaticText", "Place order", (900, 800, 140, 40), parent=self.order_btn)
+        c.add("generic", "Not clickable", (900, 100, 100, 20))  # no click handler: just text
+
+    def test_a_clickable_block_is_a_button_named_by_its_text(self):
+        self.page()
+        names = [(it["role"], it["name"]) for it in herbrowser.ui_snapshot()["items"]]
+        self.assertIn(("button", "Scroll down"), names)
+        self.assertIn(("button", "Place order"), names)
+        self.assertIn(("link", "Paneer Palace"), names)
+        self.assertEqual(names.count(("button", "Scroll down")), 1)  # the outer block, once, not the one in it
+        self.assertEqual(sum(1 for r, n in names if "Paneer Palace" in n), 1)  # the card round it isn't offered
+        self.assertEqual([n for r, n in names if r == "button"], ["Scroll down", "Place order"])
+        self.assertNotIn("Not clickable", [n for _, n in names])
+
+    def test_it_is_found_again_and_known_by_its_name(self):
+        self.page()
+        node = herbrowser.find_ui("Scroll down", "button")
+        self.assertEqual(node, herbrowser.Node(self.scroll_btn))
+        info = herbrowser.ui_info(node)
+        self.assertEqual((info["role"], info["name"]), ("button", "Scroll down"))
+
+    def test_the_very_sensitive_ones_still_ask(self):
+        self.page()
+        r = agent.Run(goal="add dal to my zomato cart")
+        r.job = SimpleNamespace(id=1)
+        el = herbrowser.ui_info(herbrowser.find_ui("Place order", "button"))
+        with mock.patch.object(agent, "front", lambda run=None: (herbrowser.TAB, "chrome.exe", "Zomato")),                 mock.patch.object(agent, "site_in", lambda run, exe: "zomato.com"):
+            self.assertEqual(agent.gate(r, 0, {"do": "click", "id": 1}, el), ("ask", "Place order can't be undone"))
+
+
+class PhoneOrder(Page):
+    """Your phone's buttons as you'd read the page, not in its code's order, each control once, labelled by its words."""
+
+    def setUp(self):
+        super().setUp()
+        c = self.chrome
+        c.add("link", "Bottom link", (40, 600, 100, 20))  # first in the page's code, low on the screen
+        c.add("searchbox", "Search for restaurant, cuisine or a dish", (500, 10, 400, 40), tag="INPUT")
+        c.add("link", "Home /", (80, 90, 50, 20))
+        c.add("link", "Home /", (80, 90, 50, 20))  # read twice in one place, as Zomato's breadcrumbs were
+        c.add("tab", "illustration Dining Out", (80, 120, 200, 80))
+        c.add("button", "location-fill", (240, 20, 20, 20))
+        self.addCleanup(herbrowser.remote_end)
+        herbrowser.remote_start(42)
+
+    def test_in_reading_order_once_each_icons_last(self):
+        _, _, rows = herbrowser.remote_view()
+        labels = [label for row in rows[:-2] for label, _ in row]
+        self.assertEqual(labels, ["1. Search for restaurant, cui (box)", "2. Home /", "3. Dining Out", "4. Bottom link",
+                                  "5. location-fill"])
+
+    def test_labels_lose_icon_words(self):
+        self.assertEqual(herbrowser._label("illustration Dining Out"), "Dining Out")
+        self.assertEqual(herbrowser._label("filter Filters"), "Filters")
+        self.assertEqual(herbrowser._label("Cuisines chevron-down"), "Cuisines")
+        self.assertEqual(herbrowser._label("App Download Logo"), "App Download")
+        self.assertEqual(herbrowser._label("location-fill"), "")
+        self.assertEqual(herbrowser._label("Add to cart"), "Add to cart")

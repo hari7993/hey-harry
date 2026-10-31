@@ -511,10 +511,16 @@ def public(address):
     if parts.scheme.lower() not in ("http", "https") or not parts.hostname or \
             (port not in (None, 80, 443) and not LOCAL_OK):
         return False
-    try:
-        found = {a[4][0] for a in socket.getaddrinfo(parts.hostname, port or 443, proto=socket.IPPROTO_TCP)}
-    except OSError:
-        return None  # not found now: a name only your home network knows is never let through on trust
+    found = None
+    for attempt in range(2):  # a second look after a moment: on 31 October one lookup of zomato.com failed in a blip
+        try:
+            found = {a[4][0] for a in socket.getaddrinfo(parts.hostname, port or 443, proto=socket.IPPROTO_TCP)}
+            break
+        except OSError:
+            if attempt == 0:
+                time.sleep(1.0)
+    if found is None:
+        return None  # not found: a name only your home network knows is never let through on trust
     for a in found:
         ip = ipaddress.ip_address(a.split("%")[0])
         if LOCAL_OK and ip.is_loopback:
@@ -592,6 +598,7 @@ def _layout():
     nodes, layout = doc.get("nodes") or {}, doc.get("layout") or {}
     backend = nodes.get("backendNodeId") or []
     attrs = nodes.get("attributes") or []
+    clickable = set((nodes.get("isClickable") or {}).get("index") or [])  # what Chrome says responds to a click
     sx, sy = doc.get("scrollOffsetX") or 0, doc.get("scrollOffsetY") or 0
     for i, box in zip(layout.get("nodeIndex") or [], layout.get("bounds") or []):
         if i >= len(backend) or len(box) < 4:
@@ -601,7 +608,8 @@ def _layout():
                  if pairs[k] < len(strings) and pairs[k + 1] < len(strings)}
         x, y, w, h = (v * k for v in box[:4])
         x, y = x - sx * k, y - sy * k
-        out[backend[i]] = {"rect": (round(x), round(y), round(x + w), round(y + h)), "attrs": named}
+        out[backend[i]] = {"rect": (round(x), round(y), round(x + w), round(y + h)), "attrs": named,
+                           "click": i in clickable}
     return out
 
 
@@ -613,12 +621,58 @@ def _password(attrs):
     return str((attrs or {}).get("type") or "").lower() == "password"
 
 
+# What a site may build a control from instead of a button or a link: a block Chrome says is clicked on (DOMSnapshot's
+# isClickable), offered as a button named by the text in it (_controls)
+PLAIN = {"generic", "heading", "image", "img", "paragraph", "group", "article", "figure", "cell", "row", "section",
+         "region", "LabelText", "none", "presentation"}
+
+
+def _inside(a, b):
+    """True if box a is inside box b."""
+    return a[0] >= b[0] and a[1] >= b[1] and a[2] <= b[2] and a[3] <= b[3]
+
+
+def _text_under(n, by_id, most=60):
+    """What a plain block says: the text and the pictures' names in it, in reading order, up to most characters."""
+    words, todo, looked = [], list(n.get("childIds") or []), 0
+    while todo and looked < 150 and sum(len(w) + 1 for w in words) < most:
+        node = by_id.get(todo.pop(0))
+        looked += 1
+        if node is None:
+            continue
+        if str((node.get("role") or {}).get("value") or "") in ("StaticText", "image", "img"):
+            if not node.get("ignored") and _name(node):
+                words.append(_name(node))
+            continue
+        todo[:0] = list(node.get("childIds") or [])
+    return win.clean_name(" ".join(words))[:most]
+
+
+def _rank(n, by_id, rect):
+    """0 in an open dialog, 1 on the screen, 2 scrolled away."""
+    left, top, right, bottom = rect
+    rank = 1 if left < W and right > 0 and top < H and bottom > 0 else 2
+    up, steps = n.get("parentId"), 0
+    while up is not None and steps < 40:
+        parent = by_id.get(up)
+        if parent is None:
+            break
+        if str((parent.get("role") or {}).get("value") or "") in DIALOGS:
+            return 0
+        up, steps = parent.get("parentId"), steps + 1
+    return rank
+
+
 def _controls(nodes, places):
-    """Every shown, enabled control of the page, in its order: (item without an id, AX node, rank), rank 0 in an
-    open dialog, 1 on the screen, 2 scrolled away."""
+    """Every shown, enabled control of the page, in its order: (item without an id, AX node, rank, its whole name),
+    rank 0 in an open dialog, 1 on the screen, 2 scrolled away. A control by its role (ROLE_OF), and a block a site
+    built one from that Chrome says is clicked on: on 31 October Zomato's delivery page had 124 of those (restaurant
+    cards, its own buttons) to 76 with a control's role, and they were offered to neither her jobs nor your phone.
+    Each is a button named by the text in it: the outermost of those nested, never one round or in a real control
+    (that's offered itself) or as big as half the page, and never one with no words."""
     by_id = {n.get("nodeId"): n for n in nodes}
-    out = []
-    for n in nodes:
+    found = []
+    for i, n in enumerate(nodes):
         role = _role(n)
         if not role or n.get("ignored") or _prop(n, "disabled"):
             continue
@@ -636,22 +690,39 @@ def _controls(nodes, places):
         state = _prop(n, "checked")
         state = _prop(n, "pressed") if state is None else state
         state = {"true": "on", True: "on", "false": "off", False: "off"}.get(state)
-        rank, up, steps = 2, n.get("parentId"), 0
-        if left < W and right > 0 and top < H and bottom > 0:
-            rank = 1
-        while up is not None and steps < 40:
-            parent = by_id.get(up)
-            if parent is None:
-                break
-            if str((parent.get("role") or {}).get("value") or "") in DIALOGS:
-                rank = 0
-                break
-            up, steps = parent.get("parentId"), steps + 1
-        out.append(({"role": role, "name": name[:win.SNAP_NAME],
-                     "value": " ".join(str(value).split()) if value not in (None, "") else None,
-                     "state": state, "password": password, "focus": bool(_prop(n, "focused")),
-                     "aid": str(place["attrs"].get("id") or ""), "rect": place["rect"],
-                     "el": Node(n["backendDOMNodeId"])}, n, rank))
+        found.append((i, {"role": role, "name": name[:win.SNAP_NAME],
+                          "value": " ".join(str(value).split()) if value not in (None, "") else None,
+                          "state": state, "password": password, "focus": bool(_prop(n, "focused")),
+                          "aid": str(place["attrs"].get("id") or ""), "rect": place["rect"],
+                          "el": Node(n["backendDOMNodeId"])}, n, _rank(n, by_id, place["rect"]), name))
+    real, kept = [f[1]["rect"] for f in found], []
+    for i, n in enumerate(nodes):
+        if _role(n) or n.get("ignored") or _prop(n, "disabled") or \
+                str((n.get("role") or {}).get("value") or "") not in PLAIN:
+            continue
+        place = places.get(n.get("backendDOMNodeId"))
+        if place is None or not place.get("click"):
+            continue
+        rect = place["rect"]
+        if rect[2] - rect[0] < 4 or rect[3] - rect[1] < 4 or (rect[2] - rect[0]) * (rect[3] - rect[1]) > W * H // 2:
+            continue
+        if any(_inside(r, rect) or _inside(rect, r) for r in real) or any(_inside(rect, r) for r in kept):
+            continue
+        name = _name(n) or _text_under(n, by_id)
+        if not name:
+            continue
+        kept.append(rect)
+        found.append((i, {"role": "button", "name": name[:win.SNAP_NAME], "value": None, "state": None,
+                          "password": False, "focus": bool(_prop(n, "focused")),
+                          "aid": str(place["attrs"].get("id") or ""), "rect": rect,
+                          "el": Node(n["backendDOMNodeId"])}, n, _rank(n, by_id, rect), name))
+    found.sort(key=lambda f: f[0])  # in the page's own order
+    out, twins = [], set()
+    for _, item, n, rank, name in found:  # one of each: Zomato's breadcrumb links were each read twice, in one place
+        twin = (item["role"], name, item["rect"])
+        if twin not in twins:
+            twins.add(twin)
+            out.append((item, n, rank, name))
     return out
 
 
@@ -665,7 +736,7 @@ def ui_snapshot(hwnd=None, most=60):
     except Exception as exc:
         print(f"  her browser: {exc!r}")
         return None
-    ordered = [c for c, _, _ in sorted(found, key=lambda c: c[2])]
+    ordered = [c for c, _, _, _ in sorted(found, key=lambda c: c[2])]
     items, lists = [], 0
     for it in ordered:
         if it["role"] in LISTED:
@@ -674,7 +745,7 @@ def ui_snapshot(hwnd=None, most=60):
                 continue
         if len(items) < most:
             items.append({**it, "id": len(items) + 1})
-    focused = next(((c["role"], c["name"], c["value"]) for c, _, _ in found if c["focus"]), None)
+    focused = next(((c["role"], c["name"], c["value"]) for c, _, _, _ in found if c["focus"]), None)
     return {"hwnd": TAB, "title": title(), "exe": exe(), "site": site(), "url": url(),
             "focus": next((it["id"] for it in items if it["focus"]), None), "total": len(found),
             "focused": focused, "cut": len(items) < len(found), "items": items}
@@ -701,11 +772,16 @@ def _attrs(el):
     return {str(pairs[k]).lower(): pairs[k + 1] for k in range(0, len(pairs) - 1, 2)}
 
 
-def ui_info(el):
-    """What a control is, as winplatform.ui_info: {"name", "role", "aid", "password", "el"}."""
+def ui_info(el, plain=True):
+    """What a control is, as winplatform.ui_info: {"name", "role", "aid", "password", "el"}. plain: a block with no
+    control's role is a button named by the text in it, as _controls offered it."""
     node, attrs = _node(el), _attrs(el)
-    role = _role(node)
-    return {"name": _name(node), "role": role, "aid": str(attrs.get("id") or ""),
+    role, name = _role(node), _name(node)
+    if not role and plain:
+        nodes = _tree()
+        mine = next((x for x in nodes if x.get("backendDOMNodeId") == el.id), node)
+        role, name = "button", name or _text_under(mine, {x.get("nodeId"): x for x in nodes})
+    return {"name": name, "role": role, "aid": str(attrs.get("id") or ""),
             "password": role == "edit" and _password(attrs), "el": el}
 
 
@@ -757,25 +833,18 @@ def ui_dialog_text(el, most=300):
         return ""
 
 
-def _match(n, places, want, role, aid):
-    r = _role(n)
-    if not r or n.get("ignored") or _prop(n, "disabled") or (role and r != role):
-        return False
-    place = places.get(n.get("backendDOMNodeId"))
-    if place is None or place["rect"][2] <= place["rect"][0] or place["rect"][3] <= place["rect"][1]:
-        return False
-    if aid:
-        return str(place["attrs"].get("id") or "") == str(aid)
-    return _name(n).lower() == want
-
-
 def _find(name, role, aid):
+    """The shown, enabled controls (_controls) of this role by their id, else by their whole name."""
     want = win.clean_name(name).lower()
-    nodes, places = _tree(), _layout()
-    hits = [Node(n["backendDOMNodeId"]) for n in nodes if _match(n, places, want, role, aid)]
-    if not hits and aid and want:  # its id changed with the site's version: then by its name
-        hits = [Node(n["backendDOMNodeId"]) for n in nodes if _match(n, places, want, role, None)]
-    return hits
+    found = _controls(_tree(), _layout())
+
+    def hits(by_aid):
+        return [c["el"] for c, _, _, whole in found if (not role or c["role"] == role) and
+                (str(c["aid"]) == str(aid) if by_aid else whole.lower() == want)]
+    out = hits(True) if aid else hits(False)
+    if not out and aid and want:  # its id changed with the site's version: then by its name
+        out = hits(False)
+    return out
 
 
 def find_ui(name=None, role=None, aid=None, hwnd=None, wait=0.0, unique=True, strict=False):
@@ -829,7 +898,7 @@ def ui_fields(el=None):
                 break
             up, steps = n.get("parentId"), steps + 1
     out = []
-    for c, n, _ in _controls(nodes, places):
+    for c, n, _, _ in _controls(nodes, places):
         if scope is not None:
             up, inside, steps = n.get("parentId"), False, 0
             while up is not None and steps < 60:
@@ -853,7 +922,7 @@ def ui_focused():
         node = call("DOM.describeNode", objectId=obj).get("node") or {}
         if str(node.get("nodeName") or "").upper() in ("BODY", "HTML", "IFRAME"):
             return None
-        info = ui_info(Node(node["backendNodeId"]))
+        info = ui_info(Node(node["backendNodeId"]), plain=False)  # a box, or a control with its own role
         return info if info["role"] else None
     except Exception:
         return None
@@ -1120,7 +1189,7 @@ def _mine(name, args, kw, on):
 # wait while you have it (shown), and a password is never taken over Telegram: you sign in at the PC. A small JPEG
 # made only when you tap, nothing kept running for it
 REMOTE_IDLE = 300  # seconds after your last tap that her jobs wait for you, then carry on
-REMOTE_MOST = 10  # controls with a button of their own
+REMOTE_MOST = 16  # controls with a button of their own: two to a row, as Telegram shows them on a phone
 _remote = {"chat": None, "message": None, "token": "", "nodes": {}, "typing": False, "at": 0.0}
 NO_PASSWORDS = "I won't take a password over Telegram. Sign in at the PC: say show me your browser there."
 
@@ -1143,21 +1212,40 @@ def remote_wants_text():
     return _remote["typing"] and remote_on()
 
 
+# An icon's own name in a control's ("location-fill", "chevron-down"), or a word for a picture, left out of a button's
+# label on your phone; a control named by nothing else goes after the ones with words (remote_view)
+ICON_WORD = re.compile(r"[a-z]+(?:-[a-z0-9]+)+|illustration|icon|image|img|logo|svg", re.I)
+
+
+def _label(name):
+    """A control's name as a button on your phone: "illustration Dining Out" is Dining Out, "filter Filters" Filters,
+    "Cuisines chevron-down" Cuisines. "" if it's only an icon's."""
+    words = [w for w in str(name).split() if not ICON_WORD.fullmatch(w)]
+    words = [w for i, w in enumerate(words) if not (i + 1 < len(words) and
+                                                     w.lower().rstrip("s") == words[i + 1].lower().rstrip("s"))]
+    return " ".join(words)
+
+
 def remote_view():
     """Her page for your phone: (a JPEG of it, a caption, rows of buttons as (label, data)): a number drawn on each of
-    the first REMOTE_MOST controls on the screen, a button for each, then Type, scrolling, Back, a new picture and
-    Done. A button's data carries this picture's token, so a tap on an older picture clicks nothing."""
+    the first REMOTE_MOST controls on the screen, an open dialog's first, then as you'd read them, top to bottom and
+    left to right (a page's own order put Zomato's search box at 17, under its links), those named by words before
+    those that are only an icon, a button for each, then Type, scrolling, Back, a new picture and Done. A button's
+    data carries this picture's token, so a tap on an older picture clicks nothing."""
     import base64
     import cv2
     import numpy as np
-    snap = ui_snapshot() or {"items": []}
+    _keep_away()
+    found = [(it, rank) for it, _, rank, _ in _controls(_tree(), _layout()) if rank < 2]
     picture = cv2.imdecode(np.frombuffer(base64.b64decode(call("Page.captureScreenshot", format="png")["data"]),
                                          np.uint8), cv2.IMREAD_COLOR)
     token, nodes, buttons = os.urandom(3).hex(), {}, []
-    seen = [it for it in snap["items"] if it["name"] and not it["password"] and it["rect"][1] < H and it["rect"][3] > 0]
+    found.sort(key=lambda f: (f[1], not _label(f[0]["name"]), max(0, f[0]["rect"][1]) // 24, f[0]["rect"][0]))
+    seen = [it for it, _ in found if it["name"] and not it["password"] and it["rect"][1] < H and it["rect"][3] > 0]
     for n, it in enumerate(seen[:REMOTE_MOST], 1):
         nodes[str(n)] = it["el"]
-        buttons.append((f"{n}. {it['name'][:26]}" + (" (box)" if it["role"] == "edit" else ""), f"b:{token}:c{n}"))
+        label = _label(it["name"]) or it["name"]
+        buttons.append((f"{n}. {label[:26]}" + (" (box)" if it["role"] == "edit" else ""), f"b:{token}:c{n}"))
         if picture is not None:  # its number on the picture, on its top left corner, clear of most of its label
             x, y = max(11, it["rect"][0]), max(11, it["rect"][1])
             cv2.circle(picture, (x, y), 11, (36, 99, 235), -1)
