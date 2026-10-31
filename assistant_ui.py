@@ -3079,8 +3079,9 @@ class AssistantWindow:
         row(23, "Her own browser", "Jobs on websites happen in a Chrome of her own, out of your way, never on your "
                                    "screen. Sign her in to the sites she should use: press Show it (or say “sign "
                                    "in to LinkedIn in your browser”), sign in, then say “hide your "
-                                   "browser”. Her sign-ins stay in it; she never types a password. Off, her jobs "
-                                   "work on your screen.")
+                                   "browser”. Her sign-ins stay in it; she never types a password. Off, as it is "
+                                   "now, her jobs on websites run in the background in your own browser, which "
+                                   "is signed in already; Google won't sign in to hers.")
         own = tk.Frame(form, bg=BG)
         own.grid(row=46, column=1, rowspan=2, sticky="e")
         self.own_browser_var = tk.BooleanVar(value=bool(settings.get("own_browser")))

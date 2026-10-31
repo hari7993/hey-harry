@@ -4178,7 +4178,7 @@ POST_WORDS = re.compile(r"\b(?:post|posts|posting|tweet|comment|reply|apply|appl
                         r"indeed)\b", re.I)
 POST_STEPS = ("Posting, commenting, replying, applying or filling in a form on a site (LinkedIn, X, Instagram, Reddit, a "
               "job site): website for the site, then a screen task saying what to post or fill in, in full. It's done "
-              "in your own browser, and what you'd post or send is read back for their yes before it goes, so never "
+              "as a job in the background, and what you'd post or send is read back for their yes before it goes, so never "
               "say you can't, and never only open the site or offer to draft it for them. \"Can you post X for me?\" "
               "is the ask: do it. Write the post yourself when they give the topic, not the words.")
 # A job of several parts (agent.task, 27 October): one loop that looks things up, works in apps and keeps notes,
@@ -7466,11 +7466,12 @@ ON_MY_SCREEN = re.compile(r"\b(?:show me|let me see|i(?:'ll| will| want to| wann
 
 
 def for_her_browser(plan, words):
-    """True if the plan's task is on a web site and she has her own browser for it (herbrowser), so it's a job she
-    does there, out of your way, as OpenMuse's agent works in its own browser: the plan opens a site before the task,
-    or a task names a site she knows (SITES, or an address). Not one about what's on your screen now, nor when your
-    words ask to see it."""
-    if not herbrowser.available() or ON_MY_SCREEN.search(str(words or "")):
+    """True if the plan's task is on a web site, so it's a job in the background (backgrounded): in her own browser
+    when she has one (herbrowser), out of your way, as OpenMuse's agent works in its own browser, else in your own
+    browser, your mouse and keyboard taken only when it must type (the owner, 31 October 2026: Google wouldn't sign
+    in to hers). The plan opens a site before the task, or a task names a site she knows (SITES, or an address). Not
+    one about what's on your screen now, nor when your words ask to see it."""
+    if ON_MY_SCREEN.search(str(words or "")):
         return False
     steps = [s for s in plan.get("steps") or [] if isinstance(s, dict)]
     at = next((i for i, s in enumerate(steps) if s.get("do") in ("screen", "task")), None)
@@ -7485,9 +7486,9 @@ def for_her_browser(plan, words):
 
 def backgrounded(plan, words):
     """The plan's task in an app (screen or task) done in the background instead, when your words ask for that ("in
-    the background", "while I ...", "let me know when it's done"), or it's on a web site and she has her own browser
-    for it (for_her_browser): one background step for its goal, which prepare_task_steps makes a job. The steps that
-    opened its app go too: the job opens its own. As it was without such words, or with a question waiting."""
+    the background", "while I ...", "let me know when it's done"), or it's on a web site (for_her_browser): one
+    background step for its goal, which prepare_task_steps makes a job. The steps that opened its app go too: the
+    job opens its own. As it was without such words, or with a question waiting."""
     if plan.get("confirm") or not (BACKGROUND_WORDS.search(str(words or "")) or for_her_browser(plan, words)):
         return plan
     steps = [s for s in plan.get("steps") or [] if isinstance(s, dict)]
