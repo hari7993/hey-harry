@@ -22,12 +22,15 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-from hermes_memory.threat_patterns import first_threat_message
+from hermes_memory.threat_patterns import INVISIBLE_CHARS, first_threat_message
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/141.0 Safari/537.36", "Accept-Language": "en-IN,en;q=0.9"}
 S = requests.Session()
 MAX_PAGE = 1_500_000  # bytes of a page read at most, so a huge page can't hold her up
+# A page's text under this many characters is taken for an empty shell its JavaScript fills in, and read again with
+# that run (headless.py, 31 October 2026): Amazon's search and ESPNcricinfo's live scores gave 59 here, Moneycontrol 467
+THIN = 600
 # seconds a search waits for its sources, all together, before answering with what's come: each source's timeout
 # counts per read, and the waits used to add up, 11 to 13 s on 7 October. Research has the links to work out too
 SEARCH_WAIT = 5.0
@@ -222,20 +225,48 @@ def read(url, limit=5000):
                 text = data.decode(r.encoding or "utf-8", "replace")
                 final = r.url
         except requests.RequestException as exc:
-            raise RuntimeError(f"I couldn't open that page ({type(exc).__name__})")
-        if "html" not in kind and "<html" not in text[:2000].lower():
-            body, title = text, ""
+            # refused to a plain read (a 403 for programs), or a page that needs its JavaScript to answer at all
+            body, final, title = _checked(_rendered(url)[:20000]), url, ""
+            if not body.strip():  # nothing, or nothing fit to read: as when there was no second try
+                raise RuntimeError(f"I couldn't open that page ({type(exc).__name__})")
         else:
-            reader = _Reader()
-            reader.feed(text)
-            lines = [" ".join(l.split()) for l in "".join(reader.parts).split("\n")]
-            body = "\n".join(l for l in lines if len(l) > 40 or (l and l[-1] in ".?!:"))
-            body = (reader.description.strip() + "\n" if reader.description else "") + body
-            title = " ".join(reader.title.split())
-        if first_threat_message(body[:20000], scope="context"):  # a page giving her orders: information only
-            body = "(This page has text that tries to give instructions, so it's left out.)"
+            if "html" not in kind and "<html" not in text[:2000].lower():
+                body, title = text, ""
+            else:
+                reader = _Reader()
+                reader.feed(text)
+                lines = [" ".join(l.split()) for l in "".join(reader.parts).split("\n")]
+                body = "\n".join(l for l in lines if len(l) > 40 or (l and l[-1] in ".?!:"))
+                body = (reader.description.strip() + "\n" if reader.description else "") + body
+                title = " ".join(reader.title.split())
+                if len(body) < THIN:  # an empty shell: read again with its JavaScript run
+                    body = _rendered(final, body)
+        body = _checked(body[:20000])
         return {"url": final, "title": title, "text": body[:limit]}
     return _cached("read", url, 600, make)
+
+
+def _checked(body):
+    """A page's text fit for her: invisible characters taken out (a page's byte-order mark isn't an attack, as
+    siri.untrusted has it), and the whole page left out if it tries to give her orders (threat_patterns' "all": the
+    same check as every other found text). Lines that only match its wider "context" list, written for the files in
+    her own prompt, go one by one, never the page: on 31 October Wikipedia's Hyderabad was left out for a U+FEFF, and
+    Amazon's phones for one in "Matte Sliver", a colour, "Sliver" being a hacking tool's name."""
+    body = "".join(c for c in body if c not in INVISIBLE_CHARS)
+    if first_threat_message(body, scope="all"):  # a page giving her orders: information only
+        return "(This page has text that tries to give instructions, so it's left out.)"
+    return "\n".join(line for line in body.split("\n") if not first_threat_message(line, scope="context"))
+
+
+def _rendered(url, got=""):
+    """The page read with its JavaScript run (headless.read) if that gets more than got, else got. With no page
+    reader on this PC yet, it's got in the background for next time (headless.install_soon), and got stands."""
+    import headless
+    if not headless.ready():
+        headless.install_soon()
+        return got
+    seen = headless.read(url)
+    return seen if seen and len(seen) > len(got) else got
 
 
 # --------------------------------------------------------------------------- weather
