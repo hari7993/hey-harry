@@ -2930,6 +2930,8 @@ QUICK = [(re.compile(p), make) for p, make in (
     (r"approve task (?P<id>\d+)", _task_control("approve")),
     # a job paused, carried on from where it got to, or tried again, and what it did (31 October 2026)
     (r"(?:pause|hold) task (?P<id>\d+)", _task_control("pause")),
+    (r"(?:from now on )?(?:ask me|check with me)(?: first)?(?: before \w+ing)? (?:on|for|with|in) task (?P<id>\d+)",
+     _task_control("ask_first")),
     (r"(?:carry on|go on|keep going|continue) with task (?P<id>\d+)|(?:resume|unpause|continue) task (?P<id2>\d+)",
      lambda m: make_plan([{"do": "task_control", "action": "resume", "id": int(m["id"] or m["id2"])}])),
     (r"(?:try|do|run) task (?P<id>\d+) again|retry task (?P<id2>\d+)",
@@ -4018,7 +4020,7 @@ lookup, recall, web, read, weather, news and skill_view send you the results: on
 {"do":"skill","action":"create","name":"work-mode","description":"Their work setup","triggers":["work mode"],"steps":[...],"say":"Work mode's on.","notes":"..."}  learn something to do again: a routine they teach ("when I say X, do Y") with steps that act (not lookups), so X runs at once next time; else how to do it in "notes". action create, patch ("old" and "new" text) or delete
 {"do":"research","topic":"budget phones in India under 20,000"}  "look into", "research", "find out all about": you work on it in the background, then tell them and save a note
 {"do":"note","title":"Shopping list","text":"..."}  save a note for them. {"do":"open_notes"}  show their notes
-{"do":"command","command":"...","cwd":"C:\\\\full\\\\folder"}  {"do":"code","task":"...","cwd":"C:\\\\full\\\\git\\\\folder"}  {"do":"schedule","when":"tomorrow at 6 PM","repeat":"","description":"...","task":{"kind":"reminder","text":"..."}} (or kind lookup "what", research "topic", command "command" and "cwd")  {"do":"task_control","action":"cancel|approve","id":3}  terminal work (never for files or folders), coding, work at a time or on repeat, and cancelling such a task, when they ask
+{"do":"command","command":"...","cwd":"C:\\\\full\\\\folder"}  {"do":"code","task":"...","cwd":"C:\\\\full\\\\git\\\\folder"}  {"do":"schedule","when":"tomorrow at 6 PM","repeat":"","description":"...","task":{"kind":"reminder","text":"..."}} (or kind lookup "what", research "topic", command "command" and "cwd", agent "goal")  {"do":"task_control","action":"cancel|approve","id":3}  terminal work (never for files or folders), coding, work at a time or on repeat, and cancelling such a task, when they ask
 {"do":"send_screenshot"}  their screen to their own phone, when asked ("send me a screenshot"; on the phone, "screenshot")
 {"do":"install","app":"VLC"}  install or update an app, named as they said: she finds it, reads it back and asks first. Never a website, google or command for it
 {"do":"share","contact":"Mum","caption":""}  sends on WhatsApp the file they just sent you or selected in File Explorer
@@ -7125,9 +7127,11 @@ def background_payload(raw):
         if not goal:
             raise RuntimeError("I didn't catch what to do")
         pinned = raw.get("pin") if isinstance(raw.get("pin"), int) and not isinstance(raw.get("pin"), bool) else None
+        standing = [v for v in raw.get("standing") or () if v in agent.STANDING_VERBS]  # by your words only (job_words)
         return {"goal": goal[:GOAL_MOST], "words": " ".join(str(raw.get("words") or goal).split())[:WORDS_MOST],
                 "named": bool(raw.get("named")), "ui": bool(raw.get("ui")), "read": bool(raw.get("read")),
-                "hints": " ".join(str(raw.get("hints") or "").split())[:GOAL_MOST], "pin": pinned}
+                "hints": " ".join(str(raw.get("hints") or "").split())[:GOAL_MOST], "pin": pinned,
+                **({"standing": standing} if standing else {})}
     raise RuntimeError("That kind of background task isn't supported")
 
 
@@ -7161,12 +7165,20 @@ class JobAsk(str):
 MARKED = agent.DISPATCH | {"background"}
 
 
+def job_words(goal):
+    """What a job takes from this turn, never from the model: your words pinned to it (agent.SAID, never later
+    turns'), whether you asked plainly (agent.NAMED, which learning from it needs), and the standing yes your own
+    words gave it (agent.standing_of), none if there are none of yours."""
+    said = agent.SAID.get()
+    return {"words": said or goal, "named": agent.NAMED.get(), "ui": settings.get("vision"),
+            "standing": agent.standing_of(said)}
+
+
 def queue_job(goal, description=None, **more):
-    """A job for goal queued in the background: a task row of kind agent, with your words of this turn pinned to it
-    (agent.SAID, never later turns'), whether you asked plainly (agent.NAMED, which learning from it needs), and
-    where it was asked from. more: hints, the window (pin) and read, from a run handed over (hand_over). Its id."""
-    payload = {**background_payload({"kind": "agent", "goal": goal, "words": agent.SAID.get() or goal,
-                                     "named": agent.NAMED.get(), "ui": settings.get("vision"), **more}),
+    """A job for goal queued in the background: a task row of kind agent, with what it takes from this turn
+    (job_words) and where it was asked from. more: hints, the window (pin) and read, from a run handed over
+    (hand_over). Its id."""
+    payload = {**background_payload({"kind": "agent", "goal": goal, **job_words(goal), **more}),
                "origin": asked_from()}
     title = description or agent.task_words(payload["goal"]) or payload["goal"]
     return TASK_STORE.create(title, "agent", payload)
@@ -7181,6 +7193,10 @@ def control_job(task_id, action):
         return f"I don't have a task {task_id}."
     if task["kind"] != "agent":
         return f"Task {task_id} isn't a job I can {'pause' if action == 'pause' else 'pick up again'}."
+    if action == "ask_first":
+        if TASK_STORE.ask_first(task_id):
+            return f"Okay, task {task_id} will ask you first from now on."
+        return f"Task {task_id} asks you first already."
     if action == "pause":
         if not TASK_STORE.pause(task_id):
             return f"Task {task_id} isn't going, so there's nothing to pause."
@@ -7255,6 +7271,7 @@ def run_job(task):
     job.read = job.read or bool(payload.get("read"))
     job.on_progress = lambda text: TASK_STORE.update_progress(tid, text)
     job.on_save = lambda saved: TASK_STORE.checkpoint(tid, saved)
+    job.standing = tuple(payload.get("standing") or ())
     if payload.get("carry_on") or payload.get("interrupted"):  # paused, stopped by a restart, or tried again
         job.hints = " ".join(h for h in (carry_on_hints(payload), job.hints) if h)
     hold = payload.get("hold") if payload.get("approved") else None
@@ -7509,7 +7526,9 @@ def show_task(task, state, note=None):
     if task["kind"] not in SHOWN_TASKS:
         return False
     waiting = state == "waiting_yes"
-    note = note if note is not None else f"Or say approve task {tid}" if waiting else TASK_DOING.get(task["kind"], "")
+    standing = (task.get("payload") or {}).get("standing")
+    note = note if note is not None else f"Or say approve task {tid}" if waiting else \
+        f"Will {' or '.join(standing)} without asking: your OK" if standing else TASK_DOING.get(task["kind"], "")
     activity.publish(key, title=task["description"], kind=task["kind"], state=state, note=note, origin="task",
                      needs=str(tid) if waiting else "", stop=lambda: stop_task(tid), answer=task_answer(tid))
     return True
@@ -7754,6 +7773,8 @@ def prepare_task_steps(plan):
             if do == "schedule":
                 raw = step.get("task") if isinstance(step.get("task"), dict) else {}
                 kind = str(raw.get("kind") or "").lower()
+                if kind == "agent":  # any job, on repeat too (31 October 2026): what it takes from you, never the model
+                    raw = {**raw, **job_words(raw.get("goal") or raw.get("task") or "")}
                 payload = {**background_payload(raw), "origin": asked_from()}
                 if kind == "command" and tasking.command_policy(payload["command"], payload["cwd"])[0] != "allow":
                     raise RuntimeError("scheduled commands must be read-only checks or declared tests")
@@ -7762,6 +7783,8 @@ def prepare_task_steps(plan):
                                             due=due, repeat=repeat)
                 kept.append({"do": "task_queued", "id": task_id})
                 again = " and it will repeat" if repeat else ""
+                if payload.get("standing"):  # said back, so you know it won't ask
+                    again += f", and it'll {' or '.join(payload['standing'])} without asking you, as you said"
                 notices.append(f"Task {task_id} is scheduled for {tasking.describe_due(due)}{again}.")
                 continue
             if do == "background":  # a job done while you go on talking to her (run_job)
@@ -7777,7 +7800,7 @@ def prepare_task_steps(plan):
                 asking = action == "approve" and "asking" in ((TASK_STORE.get(task_id) or {}).get("payload") or {})
                 # the very question or held step a yes was said to: a coding job's question (ask) or a job's step (hold)
                 heard = (step.get("ask") or step.get("hold")) if action == "approve" else None
-                if action in ("pause", "resume", "retry"):  # a job paused, carried on or tried again
+                if action in ("pause", "resume", "retry", "ask_first"):  # a job paused, carried on, tried again
                     notices.append(control_job(task_id, action))
                     kept.append({"do": "task_queued", "id": task_id})
                     continue
@@ -8020,11 +8043,22 @@ def task_worker():
         if time.time() - last_look[0] > 90:
             missed[0] = time.time()
         last_look[0] = time.time()
+        for gone in TASK_STORE.expire_reviews():  # a repeating job's question left unanswered: not done this time
+            agent.forget_job(gone["id"])
+            nxt = TASK_STORE.get(gone["id"]) or gone
+            tell_task(gone, f"Task {gone['id']} waited half an hour for your yes, so I didn't do it this time: "
+                            f"{gone['description']}. It comes round again {tasking.describe_due(nxt['due'])}.")
         task = TASK_STORE.claim_due(skip=skip)
         if task is None:
             TASK_STORE.wait(30, skip)
             continue
         task["missed"] = task["due"] < missed[0] and time.time() - task["due"] > tasking.LATE
+        if task["kind"] == "agent" and tasking.stale(task):  # a repeating job long missed, the PC off or asleep
+            TASK_STORE.finish(task["id"], error="missed: the PC was off or asleep")
+            nxt = TASK_STORE.get(task["id"]) or task
+            tell_task(task, f"Task {task['id']} was due {tasking.describe_due(task['due'])} while the PC was off, so "
+                            f"I've left it till {tasking.describe_due(nxt['due'])}: {task['description']}.")
+            continue
         if task["kind"] in tasking.CHANGES_PC and not task["repeat"] and task["missed"]:
             # due while the PC was off or asleep: it doesn't run late by itself, it asks again
             TASK_STORE.wait_for_approval(task["id"], f"It was due {tasking.describe_due(task['due'])} and didn't run "

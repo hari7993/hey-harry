@@ -29,6 +29,12 @@ STATUSES = {"queued", "running", "waiting_approval", "completed", "failed", "can
 # work in apps, so it changes the PC as a command does
 KINDS = {"command", "reminder", "lookup", "research", "install", "code", "watch", "agent", "self"}
 CHANGES_PC = {"command", "install", "code", "agent"}  # never re-run by themselves after Harry stopped part-way: asked again
+# A repeating job's question waits this long for your yes, then that time's go is let go, nothing done without it, and
+# the job comes round at its next time (31 October 2026, after OpenMuse's reviews, which expire after 30 minutes): an
+# unanswered "post it?" at 9 never kept the next morning's from running
+REVIEW_MOST = 1800.0
+# What one go of a repeating job keeps, cleared before its next: each comes round from the start, and asks afresh
+ONE_GO = ("approved", "hold", "asking", "checkpoint", "carry_on", "interrupted", "went_wrong", "paused")
 # Hermes Agent's cron rule (cron/jobs.py): a one-off job that comes due more than 2 minutes late, as after the PC was
 # off or asleep, doesn't run late by itself. One that changes the PC asks again; a reminder says when it was for
 LATE = 120.0
@@ -417,8 +423,8 @@ class Store:
         now = time.time()
         if task["repeat"]:
             due = next_due(task["due"], task["repeat"], now)
-            payload = dict(task["payload"])
-            payload.pop("approved", None)  # a mutating recurring command needs approval every time
+            # a mutating recurring command needs approval every time, and a repeating job starts afresh (ONE_GO)
+            payload = {k: v for k, v in task["payload"].items() if k not in ONE_GO}
             with self._db() as con:
                 con.execute("""UPDATE tasks SET status='queued', payload=?, due=?, result=?, error=?, started=NULL,
                             finished=?, updated=? WHERE id=? AND status='running'""",
@@ -431,6 +437,46 @@ class Store:
                             "status='running'", (status, str(result)[:OUTPUT_LIMIT], str(error)[:2000], now, now,
                                                  int(task_id)))
         WAKE.set()
+
+    def expire_reviews(self, now=None):
+        """Repeating jobs whose question has waited REVIEW_MOST for your yes: that time's go is let go, with nothing
+        done, and each comes round at its next time, asked afresh. Never a paused one, nor one whose running job is
+        asking now (its own wait ends that). Returns their rows as they were."""
+        self.init()
+        now = float(now if now is not None else time.time())
+        with self._db() as con:
+            rows = [self._row(r) for r in con.execute(
+                "SELECT * FROM tasks WHERE status='waiting_approval' AND kind='agent' AND repeat_spec IS NOT NULL "
+                "AND updated<=?", (now - REVIEW_MOST,)).fetchall()]
+        gone = []
+        for task in rows:
+            if not task["repeat"] or task["payload"].get("paused") or "asking" in task["payload"]:
+                continue
+            payload = {k: v for k, v in task["payload"].items() if k not in ONE_GO}
+            with self._db() as con:
+                cur = con.execute("UPDATE tasks SET status='queued', payload=?, due=?, error=?, started=NULL, "
+                                  "updated=? WHERE id=? AND status='waiting_approval' AND updated=?",
+                                  (json.dumps(payload, ensure_ascii=False), next_due(task["due"], task["repeat"], now),
+                                   "Not done that time: no yes within 30 minutes", now, task["id"], task["updated"]))
+            if cur.rowcount:
+                activity.update(f"task:{task['id']}", state="queued", needs="", note="Not done this time")
+                gone.append(task)
+        if gone:
+            WAKE.set()
+        return gone
+
+    def ask_first(self, task_id):
+        """A job's standing yes taken back ("ask me first on task 5"): it asks before it sends or posts again. True
+        if it had one."""
+        self.init()
+        task = self.get(task_id)
+        if not task or task["kind"] != "agent" or not task["payload"].get("standing"):
+            return False
+        payload = {k: v for k, v in task["payload"].items() if k != "standing"}
+        with self._db() as con:
+            cur = con.execute("UPDATE tasks SET payload=?, updated=? WHERE id=?",
+                              (json.dumps(payload, ensure_ascii=False), time.time(), int(task_id)))
+        return bool(cur.rowcount)
 
     def again(self, task_id, due, payload=None):
         """A running task queued again for another go at due, its payload replaced if given: a watch that's still

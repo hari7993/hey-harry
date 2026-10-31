@@ -73,6 +73,20 @@ HIGH = re.compile(r"\b(send|post|publish|share|comment|reply|respond|tweet|retwe
                   r"place (?:your |the |my )?order|order now|checkout|check out|transfer|delete|erase|empty|"
                   r"permanently|install|uninstall|format|shut ?down|restart|grant|give access)\b", re.I)
 CONFIRM_WORDS = re.compile(r"ok|okay|yes|continue|apply|done|got it", re.I)  # the whole name: risky in a risky dialog
+# A standing yes (31 October 2026, the owner: a job every morning at 9 that posts, "with my approval it needs to
+# post"): your words when you ask for a job can say it may send or post without asking you each time. Only for those
+# of HIGH that send or post, only the ways your words name, and only in that job; paying, ordering, deleting,
+# installing, shutting down and giving access always ask, as does every other sort of question (a site you didn't
+# name, what it read steering it). Never "with my approval", which as often means "ask me"
+STANDING_VERBS = ("send", "post", "publish", "share", "comment", "reply", "respond", "tweet", "retweet", "repost")
+STANDING_GIVEN = re.compile(r"\bwithout (?:asking|checking|a question|my (?:ok|okay|yes|approval|permission))\b|"
+                            r"\b(?:don'?t|do not|no need to|needn'?t|never) (?:ask|check with)\b|"
+                            r"\b(?:you don'?t need|no need for) my (?:ok|okay|yes|approval|permission)\b|"
+                            r"\b(?:you have|you'?ve got|i give you) my (?:ok|okay|yes|approval|permission)\b", re.I)
+STANDING_NOT = re.compile(r"\b(?:don'?t|do not|never|not)\b[^.?!]{0,40}\bwithout\b", re.I)  # "don't post without asking"
+STANDING_SAID = re.compile(r"\b(" + "|".join(STANDING_VERBS) + r")(?:s|es|ed|ing)?\b", re.I)
+# the questions a standing yes answers: a button that can't be undone, and Enter or Space on one, by its own name
+STANDING_ASKS = re.compile(r"can't be undone$|^(?:enter|space) on ")
 RISKY_KEYS = {"ctrl+enter", "ctrl+shift+enter", "alt+s", "shift+delete", "alt+f4"}  # send, send, send, delete, close
 # What sends what's in the window for others to read: its question reads back what's in the window, not only what she
 # typed (outgoing). By a button's name or the model's "what", or by its keys
@@ -294,6 +308,7 @@ class Job:
         # someone else's words; and where to tell how far it's got (the Tasks tab's progress)
         self.pin, self.hints, self.read, self.on_progress = None, "", False, None
         self.on_save = None  # where to keep how far it's got (saved), so a later go carries on from there
+        self.standing = ()  # the ways it may send or post without asking, as your words gave it (standing_of)
         self._stop = threading.Event()
 
     def progress(self, text):
@@ -331,6 +346,30 @@ def saved(r):
     seen = r.seen or {}
     return {"notes": [str(n)[:200] for n in r.notes[-12:]], "todo": checklist(r)[:800],
             "site": seen.get("site"), "url": herbrowser.url() if on_tab(r) else None, "at": round(time.time())}
+
+
+def standing_of(words):
+    """The ways of sending or posting your words give a job a standing yes for: ["post"] for "every morning at 9 post
+    on LinkedIn about AI, you can post it without asking me". [] unless they say so in as many words."""
+    words = str(words or "")
+    if not STANDING_GIVEN.search(words) or STANDING_NOT.search(words):
+        return []
+    return sorted({m.lower() for m in STANDING_SAID.findall(words)})
+
+
+def standing_ok(r, s, el, why):
+    """True if a job's question about step s needn't be asked: your words gave it a standing yes (standing_of), the
+    question is one a button or key that can't be undone raised (STANDING_ASKS), and that control's own name is only
+    ways of sending or posting the yes covers. Never by what the model says it is: a nameless control asks."""
+    job = r.job
+    if job is None or not getattr(job, "standing", ()) or not STANDING_ASKS.search(why or ""):
+        return False
+    if s.get("do") == "keys":
+        name = win.clean_name((win.ui_focused() or {}).get("name"))
+    else:
+        name = win.clean_name((el or {}).get("name"))
+    said = {m.lower() for m in HIGH.findall(name or "")}
+    return bool(said) and said <= set(job.standing)
 
 
 def job_for(task_id, goal="", words="", named=False, origin=None):
@@ -1583,6 +1622,15 @@ def read_safe(s):
 
 
 def gate(r, i, s, el=None, checked=False, trusted=()):
+    """_gate's verdict on step i of run r, with a job's standing yes (standing_ok) taken as your yes to it."""
+    verdict, why = _gate(r, i, s, el, checked, trusted)
+    if verdict == "ask" and standing_ok(r, s, el, why):
+        print(f"  job {r.job.id}: {why}, done on your standing yes")
+        return None, ""
+    return verdict, why
+
+
+def _gate(r, i, s, el=None, checked=False, trusted=()):
     """What may happen with step i of run r: (None, "") to go ahead, ("ask", why) for your yes first, or ("stop",
     why) to leave it to you. s is a step of a procedure (ui, keys, website, open, scroll, wait) or of a live run
     (click, type, keys, scroll, wait, open, website); el the control it's on now (winplatform.ui_info), never a name
