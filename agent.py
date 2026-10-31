@@ -285,6 +285,7 @@ class Job:
         # from a run handed over to it (siri.hand_over): the window it worked on, what it got done, whether it read
         # someone else's words; and where to tell how far it's got (the Tasks tab's progress)
         self.pin, self.hints, self.read, self.on_progress = None, "", False, None
+        self.on_save = None  # where to keep how far it's got (saved), so a later go carries on from there
         self._stop = threading.Event()
 
     def progress(self, text):
@@ -295,6 +296,15 @@ class Job:
         except Exception as exc:
             print(f"  couldn't keep job {self.id}'s progress: {exc!r}")
 
+    def save(self, run):
+        """Where run has got (saved), kept in its task row as it goes (tasks.Store.checkpoint), never in the way of
+        the job."""
+        try:
+            if self.on_save is not None:
+                self.on_save(saved(run))
+        except Exception as exc:
+            print(f"  couldn't keep where job {self.id} got to: {exc!r}")
+
     def stop(self):
         """This job stops, and no other: its own flag, and Hermes' interrupt bit for the thread it's on."""
         self._stop.set()
@@ -304,6 +314,15 @@ class Job:
 
     def cancelled(self):
         return self._stop.is_set() or interrupt.is_thread_interrupted(self.tid)
+
+
+def saved(r):
+    """Where job run r has got, as its task row keeps it (31 October 2026): what it's done (its notes), its
+    checklist, the site it's on, and its page in her own browser, so a go after a restart, a pause or a retry
+    carries on from there rather than doing it all again, and "what did task 3 do?" has an answer."""
+    seen = r.seen or {}
+    return {"notes": [str(n)[:200] for n in r.notes[-12:]], "todo": checklist(r)[:800],
+            "site": seen.get("site"), "url": herbrowser.url() if on_tab(r) else None, "at": round(time.time())}
 
 
 def job_for(task_id, goal="", words="", named=False, origin=None):
@@ -2393,6 +2412,8 @@ def _rounds(r, notify=None):
             continue
         if line is not None:
             return line
+        if r.job is not None:  # how far it's got, kept after each round (saved)
+            r.job.save(r)
     handed = handed_over(r)
     if handed:
         return finish(r, "handed", handed)
@@ -3685,6 +3706,8 @@ def finish(r, outcome, line=""):
     if r.finished:
         return line
     r.outcome, r.finished = outcome, True
+    if r.job is not None:  # where it got to, for a later go and for "what did task 3 do?"
+        r.job.save(r)
     if r.name:
         try:
             r.archived = _note_run(r)

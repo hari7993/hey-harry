@@ -473,8 +473,18 @@ Examples:
 - "Check git status in `C:\path\to\project`.", then "Do that at 6 PM." — the later task copies the already validated command; it is not reinterpreted later.
 - "Run the tests in `C:\path\to\project`." Harry uses a project's declared `npm test`, pytest, `dotnet test`, `go test` or `cargo test`; if none is declared, she asks rather than guessing.
 - "What tasks are running?", "What is scheduled?", "Cancel my reminders", "Stop reminding me to drink water", "Cancel task 3", "Approve task 3."
+- "Pause task 3", then "carry on with task 3"; "try task 3 again"; "what did task 3 do?" — see Jobs that carry on, below.
 
 Commands run through hidden, non-interactive PowerShell with an existing working folder, at most 120 seconds and 64 KB of stored output. Read-only diagnostics, `git status/diff/log`, and declared test/build/lint/typecheck commands run automatically. Anything that can install, write, delete, move, commit, push, stop a process or change the system waits in **waiting approval**; approve it by voice, in the Tasks tab, or with Approve on her island. The Tasks tab shows each task as it starts, moves on and ends, with how far a running one has got. Disk formatting, broad forced deletion, registry/security/Defender/firewall changes, restart/shutdown, encoded or nested PowerShell, downloads, credentials/private keys, `.env`, forced Git operations, elevation and similar commands are blocked even if asked. Output is redacted, kept locally and shown in Tasks; Harry only speaks success, exit code or that details are there.
+
+**Jobs that carry on.** A job in the background keeps where it's got to in its task row as it goes, after every round: what it's done, its checklist and the page it's on in her browser. So it carries on from there rather than doing it all again, the way OpenMuse's tasks pick up interrupted work:
+
+- If she's closed or restarted in the middle of one, she asks "I'd stopped in the middle of ... Should I carry on with it?" once she's back, as before nothing she was doing is done again without your yes. On a yes, or "carry on with task 3", it goes on from where it got to.
+- "Pause task 3" stops it where it is, and its row waits, saying nothing, till "carry on with task 3" (or Approve on its card). A yes it was waiting for goes with the pause.
+- "Try task 3 again" picks up a job that failed or was stopped, told what went wrong. Never one that's done: a post or an order would be done twice.
+- "What did task 3 do?" says, from its row: "Task 3, add paneer tikka to my Zomato cart: done. It went to zomato.com, then clicked Add (after your yes). Added paneer tikka to your cart."
+
+Only her jobs pause and carry on: a command, an install or a coding job can't be stopped half way and picked up again.
 
 Scheduled work is deliberately limited to reminders, PC lookups, research, guarded commands and watches (see Watches), which can lock the PC and, after a clear yes, put it to sleep or shut it down. It cannot send messages or email, type/click later, buy, pay, publish, delete, change accounts or security, because those need a person present to verify the target and result.
 

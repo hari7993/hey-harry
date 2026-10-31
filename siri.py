@@ -2922,6 +2922,15 @@ QUICK = [(re.compile(p), make) for p, make in (
      r"what(?:'s| is) (?:running|going on) in the background", lambda m: make_plan(say=working_on())),
     (r"(?:cancel|stop) task (?P<id>\d+)", _task_control("cancel")),
     (r"approve task (?P<id>\d+)", _task_control("approve")),
+    # a job paused, carried on from where it got to, or tried again, and what it did (31 October 2026)
+    (r"(?:pause|hold) task (?P<id>\d+)", _task_control("pause")),
+    (r"(?:carry on|go on|keep going|continue) with task (?P<id>\d+)|(?:resume|unpause|continue) task (?P<id2>\d+)",
+     lambda m: make_plan([{"do": "task_control", "action": "resume", "id": int(m["id"] or m["id2"])}])),
+    (r"(?:try|do|run) task (?P<id>\d+) again|retry task (?P<id2>\d+)",
+     lambda m: make_plan([{"do": "task_control", "action": "retry", "id": int(m["id"] or m["id2"])}])),
+    (r"what (?:did|has) task (?P<id>\d+) (?:do|done|get done)|how did task (?P<id2>\d+) go|"
+     r"what happened (?:to|with) task (?P<id3>\d+)",
+     lambda m: make_plan(say=task_receipt(int(m["id"] or m["id2"] or m["id3"])))),
     # the weather, straight from Open-Meteo. "for tomorrow" is a day, not a place: "get me the weather for tomorrow"
     # looked up a town called tomorrow, and "for the day after tomorrow" one called "the"
     (r"(?:(?:what(?:'s| is)|how(?:'s| is)|tell me|check|give me|get me)(?: the)? )?(?:weather|temperature|forecast)"
@@ -7152,6 +7161,69 @@ def queue_job(goal, description=None, **more):
     return TASK_STORE.create(title, "agent", payload)
 
 
+def control_job(task_id, action):
+    """"pause task 3", "carry on with task 3", "try task 3 again": what she says once it's done, or why it
+    couldn't be. A paused job stops where it is (agent.stop_job) and keeps how far it got; carried on or tried again,
+    it starts from there (run_job)."""
+    task = TASK_STORE.get(task_id)
+    if task is None:
+        return f"I don't have a task {task_id}."
+    if task["kind"] != "agent":
+        return f"Task {task_id} isn't a job I can {'pause' if action == 'pause' else 'pick up again'}."
+    if action == "pause":
+        if not TASK_STORE.pause(task_id):
+            return f"Task {task_id} isn't going, so there's nothing to pause."
+        agent.stop_job(task_id)
+        return f"Paused task {task_id}. Say carry on with task {task_id} when you want it."
+    if action == "resume":
+        if TASK_STORE.carry_on(task_id):
+            return f"Carrying on with task {task_id} from where it got to."
+        if task["status"] == "waiting_approval":
+            return f"Task {task_id} is waiting for your yes: {task.get('error') or 'say approve task ' + str(task_id)}"
+        return f"Task {task_id} isn't paused."
+    if TASK_STORE.retry(task_id):
+        return f"Trying task {task_id} again, from where it got to."
+    if task["status"] == "completed":
+        return f"Task {task_id} is done already, so I won't do it twice. Ask me again if you want it done again."
+    return f"Task {task_id} hasn't stopped, so there's nothing to try again."
+
+
+def task_receipt(task_id):
+    """"What did task 3 do?": its row's status, what it got done (its checkpoint's notes, agent.saved) and how it
+    ended, from tasks.db alone."""
+    task = TASK_STORE.get(task_id)
+    if task is None:
+        return f"I don't have a task {task_id}."
+    status = {"completed": "done", "failed": "it didn't work out", "cancelled": "stopped", "running": "going now",
+              "queued": "waiting its turn", "waiting_approval": "waiting for you"}.get(task["status"], task["status"])
+    line = f"Task {task_id}, {str(task['description']).rstrip('.')}: {status}."
+    notes = ((task["payload"] or {}).get("checkpoint") or {}).get("notes") or []
+    if notes:
+        line += " It " + ", then ".join(notes[-6:]) + "."
+    end = str(task.get("result") or task.get("error") or "").strip()
+    if end and task["status"] != "running":
+        line += " " + end[:300].rstrip(".") + "."
+    return line
+
+
+def carry_on_hints(payload):
+    """What a job carrying on from a go before is told (run_job): what that go got done, its checklist, the page it
+    was on, and what went wrong if it's being tried again, so it carries on rather than doing it all again."""
+    saved = payload.get("checkpoint") or {}
+    bits = []
+    if saved.get("notes"):
+        bits.append("A go before this one got this far: " + "; ".join(saved["notes"]) + ".")
+    if saved.get("todo"):
+        bits.append(f"Its checklist then: {saved['todo']}.")
+    if saved.get("url"):
+        bits.append(f"It was on {saved['url']}.")
+    if payload.get("went_wrong"):
+        bits.append(f"It ended with: {payload['went_wrong']}")
+    if not bits:
+        return ""
+    return " ".join(bits) + " Carry on from there: look first, and don't do again what's done."
+
+
 def stop_task(task_id):
     """Stop or Deny, "stop task 3" or "cancel task 3": that task's row cancelled, and a job of it stopped, only it.
     True if there was one to stop."""
@@ -7171,11 +7243,17 @@ def run_job(task):
     job.pin, job.hints = job.pin or payload.get("pin"), job.hints or payload.get("hints") or ""
     job.read = job.read or bool(payload.get("read"))
     job.on_progress = lambda text: TASK_STORE.update_progress(tid, text)
+    job.on_save = lambda saved: TASK_STORE.checkpoint(tid, saved)
+    if payload.get("carry_on") or payload.get("interrupted"):  # paused, stopped by a restart, or tried again
+        job.hints = " ".join(h for h in (carry_on_hints(payload), job.hints) if h)
     hold = payload.get("hold") if payload.get("approved") else None
     line, ended = agent.background(job, hold)
+    if TASK_STORE.paused(tid):  # paused as it went: it waits as it is for "carry on", saying nothing now
+        agent.forget_job(tid)
+        return
     if TASK_STORE.is_cancelled(tid) or ended == "stopped":
         agent.forget_job(tid)
-        TASK_STORE.finish(tid, error="stopped")  # nothing for one you cancelled: finish leaves it cancelled
+        TASK_STORE.finish(tid, error="stopped")  # nothing for one you cancelled or paused: finish leaves it
         return
     if ended == "held":
         TASK_STORE.wait_for_approval(tid, job.asked["question"], hold=job.asked["hold"])
@@ -7205,6 +7283,11 @@ def ask_again(task):
     """A job Harry stopped in the middle of (tasks.Store.recover), asked about where it was asked from, as its held
     steps are: on the phone with buttons keyed by it and the fresh key recover gave it, else out loud once she's free.
     Till 27 October it only waited on the island, and nobody was asked."""
+    if (task["payload"].get("checkpoint") or {}).get("notes"):  # it got somewhere: carried on from there on a yes
+        ask_job(task, {"hold": task["payload"].get("hold") or "", "verb": "carry on|carry on with it|go on",
+                       "question": f"I'd stopped in the middle of {task['description'].rstrip('.')}. Should I carry "
+                                   f"on with it?"})
+        return
     ask_job(task, {"hold": task["payload"].get("hold") or "", "verb": "start|start it|start it again",
                    "question": f"I'd stopped in the middle of {task['description'].rstrip('.')}. Should I start it "
                                f"again?"})
@@ -7668,6 +7751,10 @@ def prepare_task_steps(plan):
                 asking = action == "approve" and "asking" in ((TASK_STORE.get(task_id) or {}).get("payload") or {})
                 # the very question or held step a yes was said to: a coding job's question (ask) or a job's step (hold)
                 heard = (step.get("ask") or step.get("hold")) if action == "approve" else None
+                if action in ("pause", "resume", "retry"):  # a job paused, carried on or tried again
+                    notices.append(control_job(task_id, action))
+                    kept.append({"do": "task_queued", "id": task_id})
+                    continue
                 ok = TASK_STORE.approve(task_id, heard) if action == "approve" else \
                     stop_task(task_id) if action == "cancel" else False
                 if not ok and heard is not None:
