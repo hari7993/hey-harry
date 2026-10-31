@@ -6839,6 +6839,7 @@ def _think(text, gate, notify=None, sure=1.0):
                              + ("\n\n" + LOOK_STEPS if looks else "")
                              + ("\n\n" + WINDOW_STEPS if WINDOW_WORDS.search(plain(text)) else "")
                              + ("\n\n" + ORDER_STEPS if ORDER_WORDS.search(text) else "")
+                             + ("\n\n" + POST_STEPS if POST_WORDS.search(text) else "")
                              + extras.prompt_block(text)  # the newer skills' steps, for the words that may ask for one
                              + dream.prompt_block(text)  # and dream mode's, for words of dreams, scenes and moods
                              + cues.prompt_block(text)  # and her camera's, for words of seeing you
@@ -6849,7 +6850,6 @@ def _think(text, gate, notify=None, sure=1.0):
                              + memory_block() + context() + job_news(gate)
                              + (cold if gate == "cold" else GATE_NOTE if gate else "")
                              + RETRYING[0],
-                             + ("\n\n" + POST_STEPS if POST_WORDS.search(text) else "")
                              len(fixed))
     messages = [{"role": "system", "content": system}]
     for _, said, plan in recent:
@@ -7299,6 +7299,12 @@ def run_job(task):
     if payload.get("carry_on") or payload.get("interrupted"):  # paused, stopped by a restart, or tried again
         job.hints = " ".join(h for h in (carry_on_hints(payload), job.hints) if h)
     hold = payload.get("hold") if payload.get("approved") else None
+    if payload.get("approved") and payload.get("screen_offer") and payload.get("screen_offer") == hold:
+        TASK_STORE.mark(tid, on_screen=True, screen_offer=None)  # your yes to your screen, kept for its later goes
+        payload, hold = {**payload, "on_screen": True}, None
+    job.on_screen, job.browser_trouble = bool(payload.get("on_screen")), ""
+    if job.on_screen:
+        job.hints = " ".join(h for h in (ON_SCREEN_HINT, job.hints) if h)
     line, ended = agent.background(job, hold)
     if TASK_STORE.paused(tid):  # paused as it went: it waits as it is for "carry on", saying nothing now
         agent.forget_job(tid)
@@ -7311,6 +7317,9 @@ def run_job(task):
         TASK_STORE.wait_for_approval(tid, job.asked["question"], hold=job.asked["hold"])
         ask_job(task, job.asked)
         return
+    if ended != "done" and job.browser_trouble and not job.on_screen:  # her browser itself: your screen offered
+        screen_offer(task, job)
+        return
     agent.forget_job(tid)
     ok = ended == "done"
     TASK_STORE.finish(tid, line if ok else "", "" if ok else (line or ended))
@@ -7318,6 +7327,23 @@ def run_job(task):
     JOB_NEWS.append(f"[Background job {tid} finished]\nGoal: {payload.get('goal')}\nStatus: {ended}\n"
                     f"Result: {' '.join(str(line or '').split())[:NEWS_CHARS] or '(nothing said)'}")
     tell_task(task, _task_result_line(task, line, ok))
+
+
+ON_SCREEN_HINT = ("My own browser couldn't be used, so this go is on their screen, in their own browser: open the "
+                  "site there and work on it as on any window.")
+
+
+def screen_offer(task, job):
+    """Her browser couldn't be used for a job (agent.Job.browser_trouble): asked, where the job was asked from,
+    whether to do it on your screen instead, your mouse and keyboard taken for it then (31 October 2026, the owner's
+    ask). The yes is keyed to this question, as a held step's is (hold), and on it the job goes again on your screen
+    (run_job, on_screen); a no, or nothing said, and nothing's done there. Never a switch by herself: on your screen
+    she takes your mouse and keyboard, which you should know before it happens."""
+    tid, hold = task["id"], os.urandom(6).hex()
+    question = (f"My browser isn't working ({job.browser_trouble.rstrip('.')}). Should I do it on your screen "
+                f"instead, with your mouse and keyboard?")
+    TASK_STORE.wait_for_approval(tid, question, hold=hold, more={"screen_offer": hold})
+    ask_job(task, {"hold": hold, "question": question, "verb": "do it on my screen|use my screen|go ahead"})
 
 
 def remember_job(task, line, ended):
