@@ -20,6 +20,7 @@ import activity
 import hearing
 import hermes_memory
 import history
+import longmem
 import identity
 import messaging
 import onboarding
@@ -2447,9 +2448,9 @@ class AssistantWindow:
             self.mem_message.configure(text=f"Couldn't read her memory: {exc}", fg=ERROR)
             return
         self.memories = [("user", e) for e in store.user_entries] + [("memory", e) for e in store.memory_entries] + \
-                        [("skill", s) for s in learned]
+                        [("long", e["text"]) for e in longmem.entries()] + [("skill", s) for s in learned]
         self.mem_table.delete(*self.mem_table.get_children())
-        about = {"user": "You", "memory": "Her notes", "skill": "Skill"}
+        about = {"user": "You", "memory": "Her notes", "long": "Long memory", "skill": "Skill"}
         for row, (target, entry) in enumerate(self.memories):
             if target == "skill":  # "work-mode: Their work setup (you say: work mode)"
                 entry = skill_line(entry)
@@ -2478,6 +2479,9 @@ class AssistantWindow:
             self.mem_message.configure(text="Skills change when you teach her again: “when I say ..., do ...”",
                                        fg=ERROR)
             return
+        if target == "long":
+            self.mem_message.configure(text="Long memory: Forget this, then Add it the way you want it", fg=ERROR)
+            return
         MemoryEditor(self, target, entry, "Change what she remembers")
 
     def forget_memory(self):
@@ -2489,6 +2493,8 @@ class AssistantWindow:
         if target == "skill":
             # you asked: gone, not archived; one put in by hand from skills\imported, not hers of the same name
             result = skills.delete_skill(entry["dir"], really=True, imported=bool(entry.get("imported")))
+        elif target == "long":
+            result = {"success": longmem.forget(entry), "error": "Couldn't find that in her long memory"}
         else:
             result = hermes_memory.memory_tool(hermes_memory.store(), "remove", target, old_text=entry)
         if result.get("success"):
