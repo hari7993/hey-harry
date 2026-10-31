@@ -374,7 +374,7 @@ class DynamicIsland:
         """After a setting changed in the Island tab: it shows the change straight away."""
         old_scale = self.scale
         self._read_settings()
-        if self.scale != old_scale:
+        if self.scale != old_scale or settings.get("island_font") != self.font_look:  # its words drawn afresh
             was = self.visible_window
             self._teardown()
             self._build()
@@ -398,6 +398,7 @@ class DynamicIsland:
     # ------------------------------------------------------------------ the window
     def _build(self):
         s = self.k = self.s * self.scale
+        self.font_look = settings.get("island_font")
         self.f_compact = Text(round(13.5 * s), 600)
         self.f_label = Text(round(12 * s), 600)
         self.f_main = Text(round(15 * s), 500)

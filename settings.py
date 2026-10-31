@@ -116,9 +116,9 @@ DEFAULTS = {
     # 2026): the edge's slider shows a change only with this off
     "level_notch": True,
     "island_corners": False,
-    # the island's, the dock's and the edges' type (bubble.glance_face, 30 October 2026): "glance", Glance's Plus
-    # Jakarta Sans and Poppins, as the owner asked, or "segoe", Windows' own
-    "island_font": "glance",
+    # the island's, the dock's and the edges' type (bubble.glance_face): "figtree", the owner's pick on 31 October
+    # 2026; "glance", Glance's Plus Jakarta Sans and Poppins, theirs the day before; or "segoe", Windows' own
+    "island_font": "figtree",
     # her light (island_light, 30 October 2026, after Glance's notch): lighting up in its colour as something comes
     "island_light": True,
     # her dock (dock.py, 30 October 2026, after bloom): off to start with; how it hides (smart: out of the way of the

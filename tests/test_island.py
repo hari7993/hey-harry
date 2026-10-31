@@ -1734,6 +1734,22 @@ class GlanceFonts(unittest.TestCase):
             self.assertEqual(face600, "Plus Jakarta Sans SemiBold")
             bubble._glance["loaded"] = None
 
+    def test_figtree_is_hers_now(self):
+        """Figtree, the owner's pick on 31 October 2026: hers to start with, each weight its own face, and Windows
+        gives it for each (so it's the font drawn, not Segoe in its place)."""
+        self.assertEqual(settings.DEFAULTS["island_font"], "figtree")
+        with mock.patch.object(settings, "get", return_value="figtree"):
+            bubble._glance["loaded"] = None
+            self.assertEqual(bubble.glance_face(400), ("Figtree", 400))
+            self.assertEqual(bubble.glance_face(600), ("Figtree SemiBold", 600))
+            self.assertEqual(bubble.glance_face(700), ("Figtree", 700))
+            t = bubble.Text(13, 600)
+            got = bubble.ctypes.create_unicode_buffer(64)
+            bubble._face(t.dc, 64, got)
+            t.close()
+            bubble._glance["loaded"] = None
+        self.assertEqual(got.value, "Figtree SemiBold")
+
 
 @needs_windows
 class Lights(unittest.TestCase):

@@ -469,14 +469,22 @@ FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "f
 GLANCE = ((350, "Poppins Light", 300), (450, "Poppins", 400), (550, "Poppins Medium", 500),
           (650, "Plus Jakarta Sans SemiBold", 600), (750, "Plus Jakarta Sans", 700),
           (1000, "Plus Jakarta Sans ExtraBold", 800))
+# Figtree (Erik Kennedy's, SIL Open Font License, assets\fonts), the island's type since 31 October 2026: the owner
+# picked it from eight drawn on her island, as it reads clearly at her small sizes and every label fits ("Do Not
+# Disturb" was cut short in Inter, Geist and Onest). It has only Latin letters: Windows draws Hindi, Telugu or
+# Japanese in a song's title in its own fonts, which it does by itself for a private font too
+FIGTREE = ((350, "Figtree Light", 300), (450, "Figtree", 400), (550, "Figtree Medium", 500),
+           (650, "Figtree SemiBold", 600), (750, "Figtree", 700), (1000, "Figtree ExtraBold", 800))
+FONT_LOOKS = {"figtree": FIGTREE, "glance": GLANCE}  # island_font: either, or "segoe", Windows' own
 _glance = {"loaded": None}
 
 
 def glance_face(weight):
-    """(face, weight) of Glance's type for a weight, loaded the first time; None if Settings has Windows' own
-    (island_font "segoe") or the files won't load."""
+    """(face, weight) of the island's type (island_font: Figtree, or Glance's) for a weight, loaded the first time;
+    None if Settings has Windows' own (island_font "segoe") or the files won't load."""
     import settings
-    if settings.get("island_font") == "segoe":
+    look = FONT_LOOKS.get(settings.get("island_font"))
+    if look is None:
         return None
     if _glance["loaded"] is None:
         add = ctypes.windll.gdi32.AddFontResourceExW
@@ -488,7 +496,7 @@ def glance_face(weight):
         _glance["loaded"] = bool(names) and all(add(os.path.join(FONT_DIR, n), 0x10, None) for n in names)
     if not _glance["loaded"]:
         return None
-    return next((face, w) for most, face, w in GLANCE if weight <= most)
+    return next((face, w) for most, face, w in look if weight <= most)
 
 
 class Text:

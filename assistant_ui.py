@@ -59,6 +59,7 @@ ISLAND_FACES = {"eyes": "Her eyes", "orb": "The orb", "wave": "The Siri wave"}
 ISLAND_THEMES = {"paper": "Paper, like her window", "amoled": "AMOLED black", "dark": "Dark", "light": "Light",
                  "system": "Like Windows"}
 ISLAND_ALIGN = {"center": "In the middle", "left": "On the left", "right": "On the right"}
+ISLAND_FONTS = {"figtree": "Figtree", "glance": "Plus Jakarta Sans and Poppins", "segoe": "Windows' own (Segoe)"}
 ISLAND_STATUS = {"": "Nothing", "time": "The time", "weather": "The weather", "battery": "The battery",
                  "time,battery": "The time and battery", "weather,time": "The weather and time",
                  "weather,battery": "The weather and battery", "weather,time,battery": "The time, weather and battery",
@@ -2612,6 +2613,8 @@ class AssistantWindow:
         combo(row("Theme", "Paper is white with faint dots, like this window. AMOLED is pure black, like a phone's "
                            "notch. Like Windows follows light and dark mode."),
               "island_theme", ISLAND_THEMES)
+        combo(row("Font", "Her words on the island. Figtree is clear at small sizes; Plus Jakarta Sans and "
+                          "Poppins are Glance's; Segoe is Windows' own."), "island_font", ISLAND_FONTS)
         check(row("Border", "A thin line round it, so it shows on a dark wallpaper."), "island_border",
               "Show a border")
         combo(row("Where", "Along the top of the screen you're working on."), "island_align", ISLAND_ALIGN)
