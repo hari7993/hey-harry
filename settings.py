@@ -42,6 +42,9 @@ DEFAULTS = {
     "paraphrase_routines": "shadow",
     "voice": "",  # her Fish Audio voice, an ID from VOICES or a pasted fish.audio link. Empty: the first in VOICES
     "vision": True,  # she may look at the screen when you ask about it, see siri.see()
+    # her own browser (herbrowser.py, 31 October 2026): her jobs on websites work in a Chrome of her own, out of your
+    # way, signed in wherever you've signed it in; off, they work on your screen as before
+    "own_browser": True,
     # her eyes on you through the laptop's camera, and her ears for claps and snaps (cues.py, 29 October 2026): she
     # welcomes you back when she sees you, and does what your rules say ("when I clap, start work mode"). Off till
     # you turn it on, in Settings > Let her see you or by saying "turn on your camera"

@@ -180,6 +180,10 @@ PRIVACY = (
      "laptop is worked out on this PC, a frame every few seconds while you're idle, and none are kept. Only for a "
      "look rule (\u201cwhen I wear my glasses...\u201d) does one small picture go to the vision model, as you come back "
      "and every few minutes while you're there. Claps and snaps are heard on this PC."),
+    ("Her own browser  \u00b7  the sites she works on", "Only for a job on a website, with Her own browser on in "
+     "Settings: the sites she opens see her browser, signed in wherever you signed it in, and her page goes to the "
+     "answer model as a task's screen does. Its sign-ins stay in its own profile on this PC, and she never types a "
+     "password. It's driven over a pipe only she holds, never a network port, and opens public sites only."),
     ("Speech to text by a provider  \u00b7  your voice", "Only if you pick Sarvam, ElevenLabs, AssemblyAI or Deepgram "
      "in Settings > Speech to text: the audio of what you say to her, once she's taken it as hers (with her name, right "
      "Alt, just after she answers, or dictating), with her name and yours as words to listen for. This PC hears "
@@ -2897,10 +2901,32 @@ class AssistantWindow:
         ttk.Checkbutton(form, text="Heal herself", variable=self.heal_var,
                         command=lambda: settings.put("self_heal", self.heal_var.get())).grid(row=44, column=1,
                                                                                            rowspan=2, sticky="e")
+        row(23, "Her own browser", "Jobs on websites happen in a Chrome of her own, out of your way, never on your "
+                                   "screen. Sign her in to the sites she should use: press Show it (or say “sign "
+                                   "in to LinkedIn in your browser”), sign in, then say “hide your "
+                                   "browser”. Her sign-ins stay in it; she never types a password. Off, her jobs "
+                                   "work on your screen.")
+        own = tk.Frame(form, bg=BG)
+        own.grid(row=46, column=1, rowspan=2, sticky="e")
+        self.own_browser_var = tk.BooleanVar(value=bool(settings.get("own_browser")))
+        ttk.Button(own, text="Show it", command=self.show_her_browser).pack(side="left", padx=(0, self.px(8)))
+        ttk.Checkbutton(own, text="Her own browser", variable=self.own_browser_var,
+                        command=lambda: settings.put("own_browser", self.own_browser_var.get())).pack(side="left")
         self.settings_note = self._label(page, "", self.f_small, MUTED, wraplength=self.px(660))
         self.settings_note.pack(fill="x", pady=(self.px(18), 0))
         self.models_loaded = False
         return page
+
+    def show_her_browser(self):
+        """Her own browser put in front of you, to sign her in (herbrowser.show), off the window's thread."""
+        import herbrowser
+
+        def go():
+            try:
+                herbrowser.show()
+            except Exception as exc:
+                print(f"  her browser: {exc!r}")
+        threading.Thread(target=go, name="show-her-browser", daemon=True).start()
 
     def open_builder_picker(self):
         if self.picker is not None:
