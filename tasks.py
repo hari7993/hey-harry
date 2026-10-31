@@ -126,11 +126,13 @@ class Store:
                     payload.pop("hold", None)
                     if row["kind"] == "agent":
                         payload["hold"] = os.urandom(6).hex()
+                        payload["interrupted"] = True  # it carries on from where it got to (checkpoint), on a yes
                     again.append(row["id"])
                     con.execute("UPDATE tasks SET payload=?, status='waiting_approval', error=?, started=NULL, "
                                 "updated=? WHERE id=?", (json.dumps(payload, ensure_ascii=False),
                                 f"{identity.name()} stopped while this {'job' if row['kind'] == 'agent' else row['kind']} was "
-                                f"running; approve it to retry", now, row["id"]))
+                                f"running; approve it to {'carry on' if row['kind'] == 'agent' else 'retry'}", now,
+                                row["id"]))
                 else:
                     con.execute("UPDATE tasks SET status='queued', started=NULL, updated=? WHERE id=?", (now, row["id"]))
             # A job that was asking about one of its steps when she stopped (ask) is gone with its question: the
@@ -227,6 +229,8 @@ class Store:
         if "asking" in task["payload"]:  # a running job's question (ask): answered, never the job queued twice
             answer = asking(task_id, hold)
             return bool(answer is not None and answer(True))
+        if hold is None and task["payload"].get("paused"):  # Approve on a paused job's card: carried on from there
+            return self.carry_on(task_id)
         # a yes to a step or question that's gone (its key no longer the one waiting): never the whole job's yes instead
         if hold is not None and str((task["payload"] or {}).get("hold") or "") != str(hold):
             return False
@@ -280,6 +284,87 @@ class Store:
             con.execute("UPDATE tasks SET status='waiting_approval', error=?, payload=?, started=NULL, updated=? "
                         "WHERE id=? AND status='running'",
                         (str(reason)[:500], json.dumps(payload, ensure_ascii=False), time.time(), int(task_id)))
+
+    def checkpoint(self, task_id, saved):
+        """Where a running job has got (agent.saved): what it's done, its checklist and the page it's on, kept in its
+        payload as it goes, so a go after a restart, a pause or a retry carries on from there (siri.run_job), and
+        "what did task 3 do?" has an answer. Only while it runs. True if it was kept."""
+        self.init()
+        task = self.get(task_id)
+        if not task or task["status"] != "running":
+            return False
+        payload = {**task["payload"], "checkpoint": saved}
+        with self._db() as con:
+            cur = con.execute("UPDATE tasks SET payload=?, updated=? WHERE id=? AND status='running'",
+                              (json.dumps(payload, ensure_ascii=False), time.time(), int(task_id)))
+        return bool(cur.rowcount)
+
+    def pause(self, task_id):
+        """A job of hers paused ("pause task 3"), queued, running or waiting on a yes: its row waits for you, keeping
+        where it got to, and only carry_on ("carry on with task 3") starts it again. A yes it was waiting for is gone
+        with the pause. Only a job (agent): a command, an install or a coding job can't be stopped half way and picked
+        up again. True if it's paused; the job itself is stopped by siri (agent.stop_job)."""
+        self.init()
+        task = self.get(task_id)
+        if not task or task["kind"] != "agent" or task["status"] not in ("queued", "running", "waiting_approval"):
+            return False
+        payload = {**task["payload"], "paused": True}
+        for gone in ("approved", "hold", "asking"):
+            payload.pop(gone, None)
+        with self._db() as con:
+            cur = con.execute("UPDATE tasks SET status='waiting_approval', payload=?, error=?, started=NULL, updated=? "
+                              "WHERE id=? AND status IN ('queued','running','waiting_approval')",
+                              (json.dumps(payload, ensure_ascii=False), f"Paused: say carry on with task {int(task_id)}",
+                               time.time(), int(task_id)))
+        WAKE.set()
+        if cur.rowcount:
+            activity.update(f"task:{int(task_id)}", state="waiting_yes", needs="", note="Paused")
+        return bool(cur.rowcount)
+
+    def paused(self, task_id):
+        task = self.get(task_id)
+        return bool(task and task["status"] == "waiting_approval" and task["payload"].get("paused"))
+
+    def carry_on(self, task_id):
+        """A paused job, or one she stopped in the middle of when she last closed (recover), queued again to carry
+        on from where it got to ("carry on with task 3"): approved, as your asking for it is the yes. Never a job
+        waiting on your yes to one of its steps: that's answered by yes or "approve task 3", to its own question.
+        True if it was one of those."""
+        self.init()
+        task = self.get(task_id)
+        if not task or task["kind"] != "agent" or task["status"] != "waiting_approval" or \
+                not (task["payload"].get("paused") or task["payload"].get("interrupted")):
+            return False
+        payload = {**task["payload"], "approved": True, "carry_on": True}
+        for gone in ("paused", "hold", "asking"):
+            payload.pop(gone, None)
+        with self._db() as con:
+            cur = con.execute("UPDATE tasks SET status='queued', payload=?, error='', due=?, updated=? WHERE id=? AND "
+                              "status='waiting_approval'", (json.dumps(payload, ensure_ascii=False), time.time(),
+                                                            time.time(), int(task_id)))
+        WAKE.set()
+        if cur.rowcount:
+            activity.update(f"task:{int(task_id)}", state="queued", needs="", note="Carrying on")
+        return bool(cur.rowcount)
+
+    def retry(self, task_id):
+        """A job that failed or was stopped, tried again ("try task 3 again"), carrying on from where it got to with
+        what went wrong in front of it. Never one that's done: what it did would be done twice (a post, an order).
+        True if it's queued again."""
+        self.init()
+        task = self.get(task_id)
+        if not task or task["kind"] != "agent" or task["status"] not in ("failed", "cancelled"):
+            return False
+        payload = {**task["payload"], "approved": True, "carry_on": True,
+                   "went_wrong": str(task.get("error") or "")[:300]}
+        for gone in ("paused", "hold", "asking", "interrupted"):
+            payload.pop(gone, None)
+        with self._db() as con:
+            cur = con.execute("UPDATE tasks SET status='queued', payload=?, error='', result='', finished=NULL, "
+                              "started=NULL, due=?, updated=? WHERE id=? AND status IN ('failed','cancelled')",
+                              (json.dumps(payload, ensure_ascii=False), time.time(), time.time(), int(task_id)))
+        WAKE.set()
+        return bool(cur.rowcount)
 
     def update_progress(self, task_id, text):
         """How far a running job has got, for the Tasks tab ("Part 2 of 4", "Using the screen"): only while it runs,

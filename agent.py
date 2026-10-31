@@ -26,16 +26,22 @@ import time
 from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
 
 import activity
+import herbrowser
 import outcomes
 import toolbox
 import vision
-import winplatform as win
+import winplatform
 from hermes_memory import goal_bits, interrupt, skills, tool_bits
 from hermes_memory._compat import atomic_write_text
 from hermes_memory.iteration_budget import IterationBudget
 from hermes_memory.threat_patterns import INVISIBLE_CHARS, first_threat_message
 from hermes_memory.todo_store import TodoStore, todo_tool
 from hermes_memory.tool_guardrails import ToolCallGuardrailConfig, ToolCallGuardrailController
+
+# winplatform as everything here reaches it, except while a job works in her own browser (31 October 2026): then what's
+# about its window and controls is answered from her browser's page (herbrowser.Surface), so every gate, check and
+# read-back below works on her page as on a window, with none of them written twice
+win = herbrowser.Surface(winplatform, on=lambda: on_tab(RUN.get()))
 
 host = None  # siri, once bind() is called: her steps, voice, the yes and the turn's state come from there
 
@@ -58,6 +64,14 @@ RISKY = re.compile(r"\b(send|delete|remove|erase|trash|bin|empty|clear|buy|pay|p
                    r"submit|share|invite|grant|give access|block|report|sign ?out|log ?out|uninstall|install|format|"
                    r"reset|discard|unsubscribe|transfer|confirm|allow|accept|shut ?down|restart|comment|reply|respond|"
                    r"tweet|retweet|repost)\b", re.I)
+# The very sensitive of those, the only ones a click still waits for your yes on (the owner, 31 October: "only high
+# sensitive places"): what sends or posts for others to read, what pays or places an order, what deletes for good, what
+# installs, shuts down or restarts, and what gives someone access, as AGENTS.md's safety rule has it. The rest of
+# RISKY (remove, clear, trash, submit, confirm, allow, accept, block, report, sign out, unsubscribe, discard, invite)
+# goes ahead without a question, and a payment or password page is still left to you (OFF_LIMITS)
+HIGH = re.compile(r"\b(send|post|publish|share|comment|reply|respond|tweet|retweet|repost|buy|pay|purchase|"
+                  r"place (?:your |the |my )?order|order now|checkout|check out|transfer|delete|erase|empty|"
+                  r"permanently|install|uninstall|format|shut ?down|restart|grant|give access)\b", re.I)
 CONFIRM_WORDS = re.compile(r"ok|okay|yes|continue|apply|done|got it", re.I)  # the whole name: risky in a risky dialog
 RISKY_KEYS = {"ctrl+enter", "ctrl+shift+enter", "alt+s", "shift+delete", "alt+f4"}  # send, send, send, delete, close
 # What sends what's in the window for others to read: its question reads back what's in the window, not only what she
@@ -279,6 +293,7 @@ class Job:
         # from a run handed over to it (siri.hand_over): the window it worked on, what it got done, whether it read
         # someone else's words; and where to tell how far it's got (the Tasks tab's progress)
         self.pin, self.hints, self.read, self.on_progress = None, "", False, None
+        self.on_save = None  # where to keep how far it's got (saved), so a later go carries on from there
         self._stop = threading.Event()
 
     def progress(self, text):
@@ -289,6 +304,15 @@ class Job:
         except Exception as exc:
             print(f"  couldn't keep job {self.id}'s progress: {exc!r}")
 
+    def save(self, run):
+        """Where run has got (saved), kept in its task row as it goes (tasks.Store.checkpoint), never in the way of
+        the job."""
+        try:
+            if self.on_save is not None:
+                self.on_save(saved(run))
+        except Exception as exc:
+            print(f"  couldn't keep where job {self.id} got to: {exc!r}")
+
     def stop(self):
         """This job stops, and no other: its own flag, and Hermes' interrupt bit for the thread it's on."""
         self._stop.set()
@@ -298,6 +322,15 @@ class Job:
 
     def cancelled(self):
         return self._stop.is_set() or interrupt.is_thread_interrupted(self.tid)
+
+
+def saved(r):
+    """Where job run r has got, as its task row keeps it (31 October 2026): what it's done (its notes), its
+    checklist, the site it's on, and its page in her own browser, so a go after a restart, a pause or a retry
+    carries on from there rather than doing it all again, and "what did task 3 do?" has an answer."""
+    seen = r.seen or {}
+    return {"notes": [str(n)[:200] for n in r.notes[-12:]], "todo": checklist(r)[:800],
+            "site": seen.get("site"), "url": herbrowser.url() if on_tab(r) else None, "at": round(time.time())}
 
 
 def job_for(task_id, goal="", words="", named=False, origin=None):
@@ -318,9 +351,10 @@ def stop_job(task_id):
 
 
 def forget_job(task_id):
-    """A job that's over: its held step and its Job go."""
+    """A job that's over: its held step and its Job go, and its hold on her browser."""
     JOB_HELD.pop(int(task_id), None)
     JOBS.pop(int(task_id), None)
+    herbrowser.let_go(int(task_id))
 
 
 def _count(cell, n):
@@ -349,9 +383,35 @@ def turn_acting():
     return RUNNING.is_set() or PLAN_ACTING[0] > 0
 
 
+# What opens her own browser for a job, said as an app: "Chrome", "Edge", "the browser"
+BROWSER_APPS = re.compile(r"(?:google )?chrome|(?:microsoft )?edge|(?:a |the |your |my |her )?(?:web )?browser")
+
+
+def on_tab(r):
+    """True if run r is a job working in her own browser (herbrowser) now: its pin is her page."""
+    return r is not None and r.job is not None and r.pin == herbrowser.TAB
+
+
+def in_browser(r, s):
+    """True if job run r's step s is done in her own browser, never on your screen: a web site it opens, or a
+    browser it opens, when she has one (herbrowser.available), and what it does on her page once it's there. Never
+    a turn's step: you're watching yours."""
+    if r is None or r.job is None:
+        return False
+    do = s.get("do")
+    if do == "website":
+        return herbrowser.available() and bool(re.match(r"https?://", str(s.get("url") or ""), re.I))
+    if do == "open":
+        return herbrowser.available() and BROWSER_APPS.fullmatch(str(s.get("app") or "").strip().lower()) is not None
+    return on_tab(r) and do in ("click", "type", "keys", "scroll", "wait")
+
+
 def needs_screen(s, obs=None):
     """True if step s of a job's needs the screen: SCREEN_STEPS, a click at a point, or a click by id on a control
-    in obs (what it saw of its window) that takes it by no pattern (focus_free), so the mouse or a paste would."""
+    in obs (what it saw of its window) that takes it by no pattern (focus_free), so the mouse or a paste would.
+    Never one done in her own browser (in_browser)."""
+    if in_browser(RUN.get(), s):
+        return False
     if s.get("do") in SCREEN_STEPS or (s.get("do") == "click" and s.get("id") is None):
         return True
     if s.get("do") != "click" or obs is None:
@@ -833,8 +893,12 @@ def do_held(r, held):
             target = {**target, "el": el}
             if s.get("text") is not None:  # a box filled in: Enter after it asks, and a send reads it back
                 note_typed(s["text"])
+        elif do == "keys" and on_tab(r):
+            act(herbrowser.press_keys, s.get("keys"))
         elif do == "keys":
             act(on_pin, r, host.press_keys, s.get("keys"))
+        elif do in ("open", "website") and in_browser(r, s):  # in her own browser, as the job would have
+            act(_to_browser, r, s)
         elif do in ("open", "website"):  # a site you hadn't named, opened now you've said yes to it
             act(host.do_step, {k: v for k, v in s.items() if k in ("do", "app", "url")})
             if do == "website":
@@ -1567,9 +1631,15 @@ def gate(r, i, s, el=None, checked=False, trusted=()):
     # step outside siri.READ_SAFE, as think() asks before such a plan (needs_asking): what it read could be steering
     # it. A wait does nothing, and keys that only move around (siri.SAFE_KEYS) are as safe as there. Nor does a click
     # that only puts the cursor in a box to type in: the typing after it asks, with what it would type. Run live on 27
-    # October, "the weather, into Notepad" asked "Should I press Text editor?", a question that tells you nothing
+    # October, "the weather, into Notepad" asked "Should I press Text editor?", a question that tells you nothing.
+    # Nor on a site your own words named, or she opened for you through this gate (the owner, 31 October: "I don't
+    # need many yeses, only sensitive places"): three dishes into a Zomato cart were three questions. There a click or
+    # typing goes ahead, and the very sensitive places still ask below: what sends, posts, pays, places an order,
+    # deletes for good or installs (HIGH), its keys (RISKY_KEYS), and Enter after typing; a payment or password page is
+    # left to you (OFF_LIMITS, above), and a link to a site you didn't name asks again, as does a mail or a document
     focus_only = do in ("ui", "click") and text is None and (el or {}).get("role") in EDITABLE
-    if r.task and r.read and not read_safe(s) and not focus_only:
+    yours = bool(site) and (site in trusted or allowed_site(r, site))
+    if r.task and r.read and not read_safe(s) and not focus_only and not yours:
         return "ask", "what I read could be steering this"
     # setup.exe in File Explorer, opened by a click on it (by id it's opened, as a double-click does) or by Enter, or
     # Enter in its address bar on what isn't a folder: it runs as from the Run box, an install with nobody asked
@@ -1578,16 +1648,16 @@ def gate(r, i, s, el=None, checked=False, trusted=()):
             (do == "keys" and host.combo(s.get("keys")).split("+")[-1] == "enter" and explorer_enter_runs(focus))):
         return "ask", "that could start a program"
     if do in ("ui", "click") and text is None:  # a switch too: a model could set "state" on Send to slip past
-        if RISKY.search(name) or RISKY.search(win.clean_name(s.get("what"))):
+        if HIGH.search(name) or HIGH.search(win.clean_name(s.get("what"))):
             return "ask", f"{name or s.get('what')} can't be undone"
         if CONFIRM_WORDS.fullmatch(name) and el is not None and \
-                (RISKY.search(win.ui_dialog_text(el["el"])) or RISKY.search(title)):
+                (HIGH.search(win.ui_dialog_text(el["el"])) or HIGH.search(title)):
             return "ask", f"{name} says yes to something that can't be undone"
         if not name and r.typed and (el or {}).get("role") not in EDITABLE:  # a box to type in is fine
             return "stop", "I can't tell what that button does after what I typed, so you'll need to press it yourself."
         # nor on a page about what can't be undone ("Delete your account - Example"): judged by the page's name, its
         # title, till ui_at stopped giving the page for a nameless thing in it, and then a click there went unasked
-        if not name and (el or {}).get("role") not in EDITABLE and RISKY.search(win.clean_name(title)):
+        if not name and (el or {}).get("role") not in EDITABLE and HIGH.search(win.clean_name(title)):
             return "stop", "I can't tell what that does on a page like this, so you'll need to press it yourself."
     if do == "keys":
         keys = host.combo(s.get("keys"))
@@ -1596,7 +1666,7 @@ def gate(r, i, s, el=None, checked=False, trusted=()):
             return "ask", f"{keys} sends or deletes"
         if last == "delete" and (focus is None or focus["role"] not in EDITABLE):
             return "ask", "delete outside a text box"
-        if last in ("enter", "space") and focus and RISKY.search(focus["name"]):
+        if last in ("enter", "space") and focus and HIGH.search(focus["name"]):
             return "ask", f"{last} on {focus['name']}"
         # Enter or Space presses the OK or Yes with the focus, and a letter (Alt or not) a dialog's button by its
         # underlined letter, Y for Yes whatever has the focus: in "Delete these 37 items?" that waits for your yes, as
@@ -1604,7 +1674,7 @@ def gate(r, i, s, el=None, checked=False, trusted=()):
         if focus and focus.get("el") is not None and focus["role"] not in EDITABLE and \
                 ((last in ("enter", "space") and CONFIRM_WORDS.fullmatch(focus["name"])) or
                  re.fullmatch(r"(?:alt\+)?[a-z]", keys)) and \
-                (RISKY.search(win.ui_dialog_text(focus["el"])) or RISKY.search(title)):
+                (HIGH.search(win.ui_dialog_text(focus["el"])) or HIGH.search(title)):
             return "ask", f"{keys} says yes to something that can't be undone"
         # in any browser, its site read or not: WhatsApp Web installed as an app has no address bar, and Enter after
         # typing there sent the message with nobody asked
@@ -1955,7 +2025,7 @@ def replay(r, start=0, notify=None):
                 # where a check after it that a control's gone reads (_seen): not a window it's yet to open
                 r.hwnd = None if do in ("open", "website") else win.foreground()[0]
                 done = win.ui_act(el, s.get("text"), s.get("state"), caret=caret) if el is not None else \
-                    host.do_step(s)
+                    _to_browser(r, s) if in_browser(r, s) else host.do_step(s)
         except RuntimeError as exc:
             return failed(r, i, s, str(exc)[:1].lower() + str(exc)[1:].rstrip("."), notify=notify)
         except Exception as exc:  # the app went away under it, or UI Automation gave up on it
@@ -2356,6 +2426,8 @@ def _rounds(r, notify=None):
             continue
         if line is not None:
             return line
+        if r.job is not None:  # how far it's got, kept after each round (saved)
+            r.job.save(r)
     handed = handed_over(r)
     if handed:
         return finish(r, "handed", handed)
@@ -2672,6 +2744,8 @@ def observe(r):
     (r.read). A job in the background reads only its own window (front, Run.pin), in front or not, never yours: with
     none yet, nothing at all (own), till it opens one."""
     own = r.job is not None
+    if on_tab(r):
+        _browser_free(r)
     hwnd, exe, title = front(r)
     if own and hwnd is None:
         r.pin = None  # closed: it opens or switches to what it needs again
@@ -2688,7 +2762,7 @@ def observe(r):
         if snap is not None:  # total and focused: what's past the controls she reads changes too (unchanged); cut:
             # some left out, so a name once in items may be twice in the window (_twins)
             obs.update(items=snap["items"], focus=snap["focus"], site=snap["site"] or site, total=snap.get("total"),
-                       focused=snap.get("focused"), cut=bool(snap.get("cut")))
+                       focused=snap.get("focused"), cut=bool(snap.get("cut")), url=snap.get("url"))
             # invisible characters taken out rather than counted, as siri.untrusted does: an emoji's joiner in a
             # mail's subject isn't an attack
             said = " ".join(f"{it['name']} {it.get('value') or ''}" for it in snap["items"])
@@ -2723,8 +2797,8 @@ def off_limits(obs):
     their own messaging) or a payment or password page (OFF_LIMITS). None if not, or if she's seen only its title."""
     if not obs["full"]:
         return None
-    address = next((it.get("value") or "" for it in obs["items"] or ()
-                    if it["role"] == "edit" and it["name"] == win.OMNIBOX), "")  # instagram.com/direct, in full
+    address = obs.get("url") or next((it.get("value") or "" for it in obs["items"] or ()
+                                      if it["role"] == "edit" and it["name"] == win.OMNIBOX), "")  # in full
     if chat_in_front(obs["exe"], obs["title"], obs["site"], address):
         return "chat", CHAT_LINE
     if OFF_LIMITS.search(obs["title"] or "") or OFF_LIMITS.search(obs["site"] or ""):
@@ -2757,7 +2831,7 @@ def capture(r):
         except Exception as exc:  # the picture without the ring will do
             print(f"  no pointer: {exc!r}")
     try:  # a job's own window, as it looks behind others too: never the screen you're using
-        shot = vision.of_window(r.pin) if r.job is not None else \
+        shot = herbrowser.shot() if on_tab(r) else vision.of_window(r.pin) if r.job is not None else \
             vision.capture(pointer) if pointer is not None else vision.capture()
     except Exception as exc:
         print(f"  no screenshot: {exc!r}")
@@ -2860,6 +2934,8 @@ def messages(r, obs, shot, task=None):
     if r.stuck:
         lines.append("That last go changed nothing on the screen: try another way, or if there isn't one, no steps "
                      "and say what's in the way.")
+    if r.job is not None and (on_tab(r) or herbrowser.available()):  # sites it opens go to her own browser
+        lines.append(herbrowser.prompt_line())
     lines.append(screen_text(obs, shot))
     if shot is not None and getattr(shot, "pointer", False):  # "what is this?": the ringed pointer, and what's there
         lines.append(POINTER_NOTE + (f"\nUnder it:\n{wrapped('screen', r.pointed)}" if r.pointed else ""))
@@ -3044,10 +3120,60 @@ def do_one(r, s, obs, shot, finishing=None, at=-1):
     return True
 
 
+def _browser_free(r):
+    """Waits while you have her browser in front (herbrowser.show): her clicks would land among yours."""
+    try:
+        herbrowser.wait_till_free(lambda: stopped(r), r.deadline)
+    except TimeoutError:
+        raise Refused("You had my browser the whole time, so I've left it.")
+    if stopped(r):
+        raise Halted()
+
+
+def _to_browser(r, s):
+    """A job's open or website step done in her own browser: the site on her page, or her browser itself for one
+    asking for a browser. Her page is the job's own from here (opened)."""
+    if s.get("do") == "website":
+        herbrowser.go(s.get("url"))
+    else:
+        herbrowser.start()
+    r.pin = herbrowser.TAB
+    herbrowser.keep_open(r.job.id)
+    return s["do"]
+
+
+def in_her_browser(s, el, point):
+    """perform's step s for a job working in her own browser: on her page, by her browser alone, never your mouse
+    or keyboard (herbrowser)."""
+    r = RUN.get()
+    _browser_free(r)
+    do = s["do"]
+    if do in ("website", "open"):
+        return _to_browser(r, s)
+    if do == "click" and point is None:
+        state = s.get("state") if s.get("state") in ("on", "off") else None
+        return herbrowser.ui_act(el["el"], s.get("text"), state)
+    if do == "click":
+        return herbrowser.click(*point, button="right" if s.get("button") == "right" else "left",
+                                double=bool(s.get("double")))
+    if do == "type":
+        if (el or {}).get("el") is None:
+            raise RuntimeError("there was nowhere to type it")
+        return herbrowser.ui_act(el["el"], str(s.get("text") or ""), caret=True)
+    if do == "keys":
+        return herbrowser.press_keys(s.get("keys"))
+    if do == "scroll":
+        return herbrowser.scroll(5 if str(s.get("direction") or "").lower() == "up" else -5)
+    raise RuntimeError(f"I can't {do} in my browser")
+
+
 def perform(s, el, point):
     """Step s done, holding ACT (act): a click by id through the control itself (winplatform.ui_act: Invoke, a
     switch set, a box filled in), one at a point by the mouse, typing into the box with the focus, keys, a scroll,
-    or opening an app or a site (siri.do_step). Returns what ui_act says happened, or the step."""
+    or opening an app or a site (siri.do_step). Returns what ui_act says happened, or the step. A job's step in her
+    own browser is done there (in_her_browser)."""
+    if in_browser(RUN.get(), s):
+        return in_her_browser(s, el, point)
     do = s["do"]
     if do == "click" and point is None:
         state = s.get("state") if s.get("state") in ("on", "off") else None
@@ -3084,6 +3210,9 @@ def opened(r, s, before):
     new tab in its browser), and is the app's or a browser for a site (is_opened). Waited for up to PIN_WAIT: on 27
     October it pinned what was in front after half a second, your window when the app was slow to come up, and read
     and pressed your document as its own."""
+    if r.pin == herbrowser.TAB and in_browser(r, s):  # her own browser: her page, already the job's (_to_browser)
+        r.job.progress("Working in my browser")
+        return herbrowser.TAB
     avoid = {r.job.yours} | ({before} if before != r.pin else set())
     end = _clock() + PIN_WAIT
     pause(host.WAIT_AFTER.get(s["do"], 0.5))
@@ -3591,6 +3720,8 @@ def finish(r, outcome, line=""):
     if r.finished:
         return line
     r.outcome, r.finished = outcome, True
+    if r.job is not None:  # where it got to, for a later go and for "what did task 3 do?"
+        r.job.save(r)
     if r.name:
         try:
             r.archived = _note_run(r)

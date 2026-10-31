@@ -10,6 +10,7 @@ import time
 import activity
 import agent
 import helpers
+import herbrowser
 import winplatform as win
 
 host = None
@@ -31,6 +32,18 @@ def on():
     return host.settings.get("jobview") is not False
 
 
+def window_of(job):
+    """The window job works in now: its latest go's (agent.Run.pin), whatever it opened since it started, else the
+    one it was handed; her own browser's window for one working there (herbrowser.window), which Windows draws a live
+    picture of though it's off your screens (31 October 2026). None if it has none."""
+    if job is None:
+        return None
+    runs = getattr(job, "runs", None) or []
+    pin = getattr(runs[-1], "pin", None) if runs else None
+    pin = pin or getattr(job, "pin", None)
+    return herbrowser.window() if pin == herbrowser.TAB else pin
+
+
 def sections():
     """One section for each background job going: what the card shows."""
     out = []
@@ -47,7 +60,7 @@ def sections():
         except Exception:
             name = None
         job = agent.JOBS.get(tid)
-        pin = getattr(job, "pin", None) if job is not None else None
+        pin = window_of(job)
         if pin and not (win.window_exists(pin) and not win.minimised(pin)):
             pin = None
         title = name or item.get("title") or f"Task {tid}"
@@ -72,7 +85,11 @@ def _clicked(key):
             _card[0].hide()
         return
     job = agent.JOBS.get(int(key)) if str(key).isdigit() else None
-    pin = getattr(job, "pin", None)
+    runs = getattr(job, "runs", None) or []
+    if runs and getattr(runs[-1], "pin", None) == herbrowser.TAB:  # her browser: put in front of you to take over
+        herbrowser.show()
+        return
+    pin = window_of(job)
     if pin and win.window_exists(pin):
         win.bring_to_front(pin)
 
