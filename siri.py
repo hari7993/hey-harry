@@ -4168,6 +4168,19 @@ ORDER_WORDS = re.compile(r"\b(?:order|ordered|ordering|buy|purchase|deliver\w*|z
 ORDER_STEPS = ("Ordering food or shopping (Zomato, Swiggy, Amazon): open the site, then a screen task that searches for "
                "what they want and shows the choices. They pick, pay and place the order themselves: never check out "
                "or pay.")
+# Posting, commenting, applying and filling in forms on a site, after the cached prompt for words about it: on 31
+# October "can you post LinkedIn post for me?" was answered "I can't post on LinkedIn for you directly. I can open
+# it in your profile so you can write the post yourself", the model taking a post for others to read as not hers to
+# do, though a screen task on a site is a job in her own browser (for_her_browser), and what it would post waits
+# for your yes (agent.HIGH). "Can you ... for me?" is the ask itself, not a question about what she can do
+POST_WORDS = re.compile(r"\b(?:post|posts|posting|tweet|comment|reply|apply|applying|publish|upload|fill (?:in|out)|"
+                        r"submit|share|linkedin|twitter|x\.com|instagram|facebook|reddit|threads|quora|naukri|"
+                        r"indeed)\b", re.I)
+POST_STEPS = ("Posting, commenting, replying, applying or filling in a form on a site (LinkedIn, X, Instagram, Reddit, a "
+              "job site): website for the site, then a screen task saying what to post or fill in, in full. It's done "
+              "in your own browser, and what you'd post or send is read back for their yes before it goes, so never "
+              "say you can't, and never only open the site or offer to draft it for them. \"Can you post X for me?\" "
+              "is the ask: do it. Write the post yourself when they give the topic, not the words.")
 # A job of several parts (agent.task, 27 October): one loop that looks things up, works in apps and keeps notes,
 # re-planning after each thing it finds, where a plan made up front has to guess what a look-up will say. In a block
 # of its own after the cached prompt, only for words that may ask for one (GOAL_WORDS: something to find, then
@@ -6826,6 +6839,7 @@ def _think(text, gate, notify=None, sure=1.0):
                              + memory_block() + context() + job_news(gate)
                              + (cold if gate == "cold" else GATE_NOTE if gate else "")
                              + RETRYING[0],
+                             + ("\n\n" + POST_STEPS if POST_WORDS.search(text) else "")
                              len(fixed))
     messages = [{"role": "system", "content": system}]
     for _, said, plan in recent:
