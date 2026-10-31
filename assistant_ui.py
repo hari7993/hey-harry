@@ -2855,7 +2855,7 @@ class AssistantWindow:
         # in parts, each a card with its colour and its name along the top to jump to (29 October 2026, the owner:
         # one long list was hard to find things in and to scroll): (name, colour, icon, its rows by number below)
         parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14)),
-                 ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23)),
+                 ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23, 24)),
                  ("Models", "green", "\ue99a", (1, 21, 22)), ("Speaking up", "amber", "\uea8f", (12, 13)),
                  ("Phone", "rose", "\ue8ea", (16,)), ("Window", "slate", "\ue737", (4, 5, 6, 19)))
         cards, where, form = {}, {}, None
