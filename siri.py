@@ -8408,6 +8408,27 @@ def profile_names(key):
     return names[:12] if len(names) > 1 else []
 
 
+_job_profile_said = []  # the profile Settings names but Chrome hasn't, said in the log once
+
+
+def job_profile():
+    """The profile of your browser her jobs open sites in (Settings, job_profile), when it's there: a window of their
+    own, made and signed in by you in Chrome the ordinary way, so Google lets it sign in where it refused her own
+    browser (31 October 2026, the owner's ask). "" for your usual one, or when there's no such profile (said once)."""
+    name = " ".join(str(settings.get("job_profile") or "").split())
+    if not name:
+        return ""
+    try:
+        key = default_browser()
+        find_profile(key, name)
+        return name
+    except (RuntimeError, KeyError) as exc:
+        if name not in _job_profile_said:
+            _job_profile_said.append(name)
+            print(f"  her jobs' profile: {exc}; using your usual one")
+        return ""
+
+
 def find_profile(key, spoken):
     """The folder of the profile they named: by its name, email or the start of the email, else part of one."""
     want = re.sub(r"\b(?:profile|account|the|my)\b", "", key_of(spoken)).strip()

@@ -188,7 +188,7 @@ class FakeApp:
 
     # siri's side
     def do_step(self, step):
-        self.opened.append({k: v for k, v in step.items() if k in ("do", "app", "url")})
+        self.opened.append({k: v for k, v in step.items() if k in ("do", "app", "url", "profile")})
         key = str(step.get("app") or winplatform.site_of(step.get("url")) or "").lower()
         if key not in self.windows:
             raise RuntimeError(f"I couldn't find an app called {step.get('app')}")

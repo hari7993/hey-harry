@@ -2438,6 +2438,13 @@ class AssistantWindow:
         self.memories = []
         return page
 
+    def _chrome_profiles(self):
+        """The names of your Chrome's profiles, for the job profile to pick from; [] without a Chrome."""
+        try:
+            return [siri._shown(name) for _, name, _ in siri.profiles("chrome")]
+        except Exception:
+            return []
+
     def _load_memory(self, message=None):
         store = hermes_memory.store()
         try:
@@ -3088,6 +3095,18 @@ class AssistantWindow:
         ttk.Button(own, text="Show it", command=self.show_her_browser).pack(side="left", padx=(0, self.px(8)))
         ttk.Checkbutton(own, text="Her own browser", variable=self.own_browser_var,
                         command=lambda: settings.put("own_browser", self.own_browser_var.get())).pack(side="left")
+        row(24, "A window of her own", "Her jobs on websites open sites in this profile of your Chrome, so they get "
+                                      "a window of their own and yours is left alone. Make a profile called Harry "
+                                      "in Chrome (your picture at the top right, Add), sign in there to the sites "
+                                      "she should use, and pick it here. Google signs in there, as it's your "
+                                      "ordinary Chrome. She still borrows your keyboard to type, after a pause in "
+                                      "yours.")
+        names = [""] + list(self._chrome_profiles())
+        self.job_profile_box = ttk.Combobox(form, state="readonly", width=24, values=names)
+        self.job_profile_box.set(str(settings.get("job_profile") or ""))
+        self.job_profile_box.bind("<<ComboboxSelected>>",
+                                  lambda e: settings.put("job_profile", self.job_profile_box.get()))
+        self.job_profile_box.grid(row=48, column=1, rowspan=2, sticky="e")
         self.settings_note = self._label(page, "", self.f_small, MUTED, wraplength=self.px(660))
         self.settings_note.pack(fill="x", pady=(self.px(18), 0))
         self.models_loaded = False
