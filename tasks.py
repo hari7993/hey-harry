@@ -34,7 +34,8 @@ CHANGES_PC = {"command", "install", "code", "agent"}  # never re-run by themselv
 # unanswered "post it?" at 9 never kept the next morning's from running
 REVIEW_MOST = 1800.0
 # What one go of a repeating job keeps, cleared before its next: each comes round from the start, and asks afresh
-ONE_GO = ("approved", "hold", "asking", "checkpoint", "carry_on", "interrupted", "went_wrong", "paused")
+ONE_GO = ("approved", "hold", "asking", "checkpoint", "carry_on", "interrupted", "went_wrong", "paused",
+          "screen_offer", "on_screen")  # on_screen: her browser may well work again by the next time
 # Hermes Agent's cron rule (cron/jobs.py): a one-off job that comes due more than 2 minutes late, as after the PC was
 # off or asleep, doesn't run late by itself. One that changes the PC asks again; a reminder says when it was for
 LATE = 120.0
@@ -273,10 +274,10 @@ class Store:
         finally:
             con.close()
 
-    def wait_for_approval(self, task_id, reason, hold=None):
+    def wait_for_approval(self, task_id, reason, hold=None, more=None):
         """A running task waits on your yes. hold: the id of the step a job held (agent.JOB_HELD), kept in its
         payload so only a yes to that step approves it (approve), and any approval it had is used up: one yes, one
-        action."""
+        action. more: kept in its payload with it (a screen_offer, siri.screen_offer)."""
         self.init()
         if hold is None:
             with self._db() as con:
@@ -286,10 +287,24 @@ class Store:
         payload = dict((self.get(task_id) or {}).get("payload") or {})
         payload.pop("approved", None)
         payload["hold"] = str(hold)
+        payload.update(more or {})
         with self._db() as con:
             con.execute("UPDATE tasks SET status='waiting_approval', error=?, payload=?, started=NULL, updated=? "
                         "WHERE id=? AND status='running'",
                         (str(reason)[:500], json.dumps(payload, ensure_ascii=False), time.time(), int(task_id)))
+
+    def mark(self, task_id, **more):
+        """A task's payload with more in it (a value of None takes that key out), whatever its status: a job's yes to
+        your screen kept for its later goes (siri.run_job, on_screen). True if it was there."""
+        self.init()
+        task = self.get(task_id)
+        if not task:
+            return False
+        payload = {k: v for k, v in {**task["payload"], **more}.items() if v is not None}
+        with self._db() as con:
+            cur = con.execute("UPDATE tasks SET payload=?, updated=? WHERE id=?",
+                              (json.dumps(payload, ensure_ascii=False), time.time(), int(task_id)))
+        return bool(cur.rowcount)
 
     def checkpoint(self, task_id, saved):
         """Where a running job has got (agent.saved): what it's done, its checklist and the page it's on, kept in its

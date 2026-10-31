@@ -181,6 +181,17 @@ class Told(ThinkTurn):
             self.think("open notepad and write hello", False, '{"steps": [], "say": "Sure."}')
         self.assertNotIn(siri.ORDER_STEPS, self.system())
 
+    def test_posting_on_a_site_is_hers_to_do(self):
+        """31 October 2026: "can you post LinkedIn post for me?" was answered "I can't post on LinkedIn for you
+        directly", the model taking it as not hers. Words about posting bring the block that says it is."""
+        for words in ("hey can you post lindin post for me ?", "apply to the Naukri job", "comment on Ravi's tweet"):
+            with quiet():
+                self.think(words, False, '{"steps": [], "say": "Sure."}')
+            self.assertIn(siri.POST_STEPS, self.system(), words)
+        with quiet():
+            self.think("open notepad and write hello", False, '{"steps": [], "say": "Sure."}')
+        self.assertNotIn(siri.POST_STEPS, self.system())
+
     def test_what_came_before_isnt_said_to_be_for_someone_else(self):
         siri.ROOM.append((time.time(), "They order BI on tomato"))
         self.addCleanup(siri.ROOM.clear)

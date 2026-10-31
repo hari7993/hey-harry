@@ -258,10 +258,16 @@ def _orphans():
                 pass
 
 
+class Trouble(RuntimeError):
+    """Her browser itself can't be used: it won't start, or it stopped answering. Not a page that won't have her
+    (a sign-in, a check), which is left to you. A job that hits this is offered on your screen instead
+    (siri.screen_offer, 31 October 2026, the owner's ask)."""
+
+
 def _start():
     path = program()
     if not path:
-        raise RuntimeError("there's no Chrome or Edge on this PC for my browser")
+        raise Trouble("there's no Chrome or Edge on this PC for my browser")
     os.makedirs(profile(), exist_ok=True)
     _orphans()
     was = win.front_window()
@@ -296,11 +302,16 @@ def _start():
 
 
 def _ensure():
-    """Her browser, started if it isn't running. Raises RuntimeError if it can't be."""
+    """Her browser, started if it isn't running. Raises Trouble if it can't be."""
     with _lock:
         _last[0] = time.monotonic()
         if not running():
-            _start()
+            try:
+                _start()
+            except Trouble:
+                raise
+            except Exception as exc:
+                raise Trouble(f"my browser didn't start ({exc})") from exc
         return _chrome[0]
 
 
@@ -311,9 +322,12 @@ def start():
 
 
 def call(method, timeout=CALL_WAIT, **params):
-    """One DevTools command on her page."""
+    """One DevTools command on her page. Trouble if her browser has stopped answering (its pipe gone)."""
     chrome = _ensure()
-    return chrome.call(method, session=_page["session"], timeout=timeout, **params)
+    try:
+        return chrome.call(method, session=_page["session"], timeout=timeout, **params)
+    except (OSError, EOFError) as exc:
+        raise Trouble(f"my browser stopped answering ({exc})") from exc
 
 
 def _browser_call(method, **params):

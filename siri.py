@@ -4168,6 +4168,19 @@ ORDER_WORDS = re.compile(r"\b(?:order|ordered|ordering|buy|purchase|deliver\w*|z
 ORDER_STEPS = ("Ordering food or shopping (Zomato, Swiggy, Amazon): open the site, then a screen task that searches for "
                "what they want and shows the choices. They pick, pay and place the order themselves: never check out "
                "or pay.")
+# Posting, commenting, applying and filling in forms on a site, after the cached prompt for words about it: on 31
+# October "can you post LinkedIn post for me?" was answered "I can't post on LinkedIn for you directly. I can open
+# it in your profile so you can write the post yourself", the model taking a post for others to read as not hers to
+# do, though a screen task on a site is a job in her own browser (for_her_browser), and what it would post waits
+# for your yes (agent.HIGH). "Can you ... for me?" is the ask itself, not a question about what she can do
+POST_WORDS = re.compile(r"\b(?:post|posts|posting|tweet|comment|reply|apply|applying|publish|upload|fill (?:in|out)|"
+                        r"submit|share|linkedin|twitter|x\.com|instagram|facebook|reddit|threads|quora|naukri|"
+                        r"indeed)\b", re.I)
+POST_STEPS = ("Posting, commenting, replying, applying or filling in a form on a site (LinkedIn, X, Instagram, Reddit, a "
+              "job site): website for the site, then a screen task saying what to post or fill in, in full. It's done "
+              "in your own browser, and what you'd post or send is read back for their yes before it goes, so never "
+              "say you can't, and never only open the site or offer to draft it for them. \"Can you post X for me?\" "
+              "is the ask: do it. Write the post yourself when they give the topic, not the words.")
 # A job of several parts (agent.task, 27 October): one loop that looks things up, works in apps and keeps notes,
 # re-planning after each thing it finds, where a plan made up front has to guess what a look-up will say. In a block
 # of its own after the cached prompt, only for words that may ask for one (GOAL_WORDS: something to find, then
@@ -5469,6 +5482,11 @@ STRONGER = (("anthropic", r"claude-sonnet-\d[\w.-]*", "claude-sonnet-5-5"), ("op
 SMALL = re.compile(r"haiku|mini|nano|flash|lite|small|tiny|(?<![\d.])\d{1,2}b\b")
 OFFER = {"words": None, "model": None, "plan": None, "until": 0.0}
 OFFER_LINE = "Want me to try that with {name}?"
+# Her own last line asking you something, a question or a thing for you to do ("Click Yes and I'll start it."): no
+# offer after it, as your yes to her would be taken for one to the stronger model, which you pay for (31 October 2026:
+# Windows asked to let Sound Recorder use the mic, she said "Click Yes and I'll start it", then offered Claude Sonnet)
+ASKS_YOU = re.compile(r"\?\s*$|(?:^|[.!]\s+)(?:please\s+)?(?:click|press|tap|sign in|log in|allow|accept|approve|"
+                      r"choose|pick|select|unlock|plug|connect|turn on)\b", re.I)
 TRY_STRONGER = re.compile(r"(?:(?:yes|yeah|sure|okay|ok|please)\W* )*(?:try|use|do) (?:it |that |that one )?(?:again )?"
                           r"(?:with|on|using) (?:it|that|that one|claude|sonnet|gpt|gemini|grok|the (?:stronger|better|"
                           r"smarter|other|paid) (?:one|model))(?: please)?")
@@ -5513,6 +5531,11 @@ def offer_stronger(words, record, gate=False):
         return ""
     OFFER.update(words=str(words), model=model, plan=record, gate=gate, until=time.time() + OFFER_FOR)
     return OFFER_LINE.format(name=model_name(model))
+
+
+def asks_you(lines):
+    """True if the last of lines, what she's said this turn, asks you something or asks you to do something."""
+    return bool(lines) and bool(ASKS_YOU.search(str(lines[-1]).strip()))
 
 
 def took_offer(words):
@@ -6816,6 +6839,7 @@ def _think(text, gate, notify=None, sure=1.0):
                              + ("\n\n" + LOOK_STEPS if looks else "")
                              + ("\n\n" + WINDOW_STEPS if WINDOW_WORDS.search(plain(text)) else "")
                              + ("\n\n" + ORDER_STEPS if ORDER_WORDS.search(text) else "")
+                             + ("\n\n" + POST_STEPS if POST_WORDS.search(text) else "")
                              + extras.prompt_block(text)  # the newer skills' steps, for the words that may ask for one
                              + dream.prompt_block(text)  # and dream mode's, for words of dreams, scenes and moods
                              + cues.prompt_block(text)  # and her camera's, for words of seeing you
@@ -7275,6 +7299,12 @@ def run_job(task):
     if payload.get("carry_on") or payload.get("interrupted"):  # paused, stopped by a restart, or tried again
         job.hints = " ".join(h for h in (carry_on_hints(payload), job.hints) if h)
     hold = payload.get("hold") if payload.get("approved") else None
+    if payload.get("approved") and payload.get("screen_offer") and payload.get("screen_offer") == hold:
+        TASK_STORE.mark(tid, on_screen=True, screen_offer=None)  # your yes to your screen, kept for its later goes
+        payload, hold = {**payload, "on_screen": True}, None
+    job.on_screen, job.browser_trouble = bool(payload.get("on_screen")), ""
+    if job.on_screen:
+        job.hints = " ".join(h for h in (ON_SCREEN_HINT, job.hints) if h)
     line, ended = agent.background(job, hold)
     if TASK_STORE.paused(tid):  # paused as it went: it waits as it is for "carry on", saying nothing now
         agent.forget_job(tid)
@@ -7287,6 +7317,9 @@ def run_job(task):
         TASK_STORE.wait_for_approval(tid, job.asked["question"], hold=job.asked["hold"])
         ask_job(task, job.asked)
         return
+    if ended != "done" and job.browser_trouble and not job.on_screen:  # her browser itself: your screen offered
+        screen_offer(task, job)
+        return
     agent.forget_job(tid)
     ok = ended == "done"
     TASK_STORE.finish(tid, line if ok else "", "" if ok else (line or ended))
@@ -7294,6 +7327,23 @@ def run_job(task):
     JOB_NEWS.append(f"[Background job {tid} finished]\nGoal: {payload.get('goal')}\nStatus: {ended}\n"
                     f"Result: {' '.join(str(line or '').split())[:NEWS_CHARS] or '(nothing said)'}")
     tell_task(task, _task_result_line(task, line, ok))
+
+
+ON_SCREEN_HINT = ("My own browser couldn't be used, so this go is on their screen, in their own browser: open the "
+                  "site there and work on it as on any window.")
+
+
+def screen_offer(task, job):
+    """Her browser couldn't be used for a job (agent.Job.browser_trouble): asked, where the job was asked from,
+    whether to do it on your screen instead, your mouse and keyboard taken for it then (31 October 2026, the owner's
+    ask). The yes is keyed to this question, as a held step's is (hold), and on it the job goes again on your screen
+    (run_job, on_screen); a no, or nothing said, and nothing's done there. Never a switch by herself: on your screen
+    she takes your mouse and keyboard, which you should know before it happens."""
+    tid, hold = task["id"], os.urandom(6).hex()
+    question = (f"My browser isn't working ({job.browser_trouble.rstrip('.')}). Should I do it on your screen "
+                f"instead, with your mouse and keyboard?")
+    TASK_STORE.wait_for_approval(tid, question, hold=hold, more={"screen_offer": hold})
+    ask_job(task, {"hold": hold, "question": question, "verb": "do it on my screen|use my screen|go ahead"})
 
 
 def remember_job(task, line, ended):
@@ -10933,7 +10983,7 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
     except Exception as exc:  # learning never gets in the way of the turn
         print(f"  couldn't learn from this turn: {exc!r}")
     if gate != "cold" and not plan.get("confirm") and not (origin() == "voice" and HER.stop.is_set()) and \
-            ((plan.get("llm_failed") and not plan.get("offline")) or (planned and fell)):
+            not asks_you(spoken) and ((plan.get("llm_failed") and not plan.get("offline")) or (planned and fell)):
         offered_line = offer_stronger(words or text, record, gate)  # "Want me to try that with Claude Sonnet?"
         if offered_line:
             voice_error = say(offered_line, notify) or voice_error

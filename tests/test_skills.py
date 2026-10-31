@@ -229,14 +229,15 @@ class Eligible(Fresh):
         write(skills.SKILLS_DIR / "secret-recipe", "---\nname: secret-recipe\ndescription: Grandma's recipe\n"
                                                    "disable-model-invocation: true\n---\nTwo eggs.\n")
         write(skills.SKILLS_DIR / "quiet", "---\nname: quiet\ndescription: Quiet\nuser-invocable: false\n"
-                                           "triggers: [\"go quiet\"]\n---\nShh.\n\n```json\n"
+                                           "triggers: [\"hush the speakers\"]\n---\nShh.\n\n```json\n"
                                            + json.dumps({"steps": [VOLUME], "say": ""}) + "\n```\n")
         entries = {e["dir"]: e for e in skills.list_skills()}
         self.assertFalse(entries["secret-recipe"]["model"])
         self.assertNotIn("secret-recipe", skills.system_prompt_block())
         self.assertIn("quiet", skills.system_prompt_block())
         self.assertEqual(entries["quiet"]["triggers"], [])  # not user-invocable: no words start it
-        self.assertIsNone(siri.quick("go quiet"))
+        # its words start nothing: not "go quiet", which is her own "take a break" now (siri.PAUSE_WORDS)
+        self.assertIsNone(siri.quick("hush the speakers"))
         self.assertEqual(siri.asked_skill("use the secret recipe skill", False), "secret-recipe")
         self.assertIsNone(siri.asked_skill("use the quiet skill", False))
 

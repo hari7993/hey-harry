@@ -309,6 +309,9 @@ class Job:
         self.pin, self.hints, self.read, self.on_progress = None, "", False, None
         self.on_save = None  # where to keep how far it's got (saved), so a later go carries on from there
         self.standing = ()  # the ways it may send or post without asking, as your words gave it (standing_of)
+        # on your screen, never her browser, by your yes once her browser couldn't be used (siri.screen_offer); and
+        # why it couldn't, this go, for that question
+        self.on_screen, self.browser_trouble = False, ""
         self._stop = threading.Event()
 
     def progress(self, text):
@@ -434,8 +437,8 @@ def on_tab(r):
 def in_browser(r, s):
     """True if job run r's step s is done in her own browser, never on your screen: a web site it opens, or a
     browser it opens, when she has one (herbrowser.available), and what it does on her page once it's there. Never
-    a turn's step: you're watching yours."""
-    if r is None or r.job is None:
+    a turn's step: you're watching yours. Nor a job you said to do on your screen (Job.on_screen)."""
+    if r is None or r.job is None or r.job.on_screen:
         return False
     do = s.get("do")
     if do == "website":
@@ -576,6 +579,11 @@ class Hold(Exception):
 
 class Refused(RuntimeError):
     """A step she leaves to you, and why, as she says it: a password box, a chat site."""
+
+
+class BrowserDown(Refused):
+    """Her own browser can't be used (herbrowser.Trouble): the run's left to you at once, not tried again step by
+    step (do_one), and siri offers the job on your screen (screen_offer)."""
 
 
 class Halted(Exception):
@@ -3136,7 +3144,7 @@ def do_one(r, s, obs, shot, finishing=None, at=-1):
     before = win.front_window() if r.job is not None and do in OPENS else None
     try:
         result = pause(s.get("seconds") or 1) if do == "wait" else act(perform, s, el, point)
-    except (Halted, Yielded):
+    except (Halted, Yielded, BrowserDown):  # her browser's own trouble ends the run, not the step (in_her_browser)
         raise
     except Exception as exc:  # RuntimeError: why, as she'd say it; else the app or UI Automation gave up on it
         print(f"  agent step failed: {exc!r}")
@@ -3192,8 +3200,17 @@ def _to_browser(r, s):
 
 def in_her_browser(s, el, point):
     """perform's step s for a job working in her own browser: on her page, by her browser alone, never your mouse
-    or keyboard (herbrowser)."""
+    or keyboard (herbrowser). Her browser itself not working (herbrowser.Trouble) ends the run as left to you, with
+    why kept on the job (browser_trouble), and siri offers it on your screen instead (screen_offer)."""
     r = RUN.get()
+    try:
+        return _in_her_browser(r, s, el, point)
+    except herbrowser.Trouble as exc:
+        r.job.browser_trouble = str(exc)
+        raise BrowserDown(f"My browser isn't working: {exc}.") from exc
+
+
+def _in_her_browser(r, s, el, point):
     _browser_free(r)
     do = s["do"]
     if do in ("website", "open"):
