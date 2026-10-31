@@ -239,7 +239,9 @@ def running():
 
 
 def shown():
-    return running() and _shown[0]
+    """True while you have her browser: in front of you on the PC (show), or from your phone (remote_on). Her jobs in
+    it wait meanwhile (wait_till_free)."""
+    return running() and (_shown[0] or remote_on())
 
 
 def _orphans():
@@ -363,6 +365,12 @@ def _keep_away():
         _put_away()
 
 
+def window():
+    """Its window's handle while it runs, else None: for the live picture of it on a job's card (jobview), which
+    Windows draws though it's off your screens, at no cost to her."""
+    return _window_handle() if running() else None
+
+
 def _window_handle():
     """Its window's handle, by its own process, never your Chrome's: they're the same program."""
     import ctypes
@@ -405,6 +413,7 @@ def hide():
             _shown[0] = False
             return False
         _shown[0] = False
+        remote_end()
         _last[0] = time.monotonic()
         _put_away()
         _give_back(_yours[0])
@@ -1104,6 +1113,148 @@ def _mine(name, args, kw, on):
     return bool(on())
 
 
+# --------------------------------------------------------------------------- From your phone
+# OpenMuse's Take control, tap to click, on Telegram (31 October 2026, the owner's ask): a picture of her page with each
+# control on the screen numbered, a button for each number, and Type, scrolling, Back, a new picture and Done. One
+# message, changed in place as you tap. Only your Telegram account's taps reach it (telegram_bot._tap), her jobs in it
+# wait while you have it (shown), and a password is never taken over Telegram: you sign in at the PC. A small JPEG
+# made only when you tap, nothing kept running for it
+REMOTE_IDLE = 300  # seconds after your last tap that her jobs wait for you, then carry on
+REMOTE_MOST = 10  # controls with a button of their own
+_remote = {"chat": None, "message": None, "token": "", "nodes": {}, "typing": False, "at": 0.0}
+NO_PASSWORDS = "I won't take a password over Telegram. Sign in at the PC: say show me your browser there."
+
+
+def remote_on():
+    """True while you're using her browser from your phone: a tap in the last REMOTE_IDLE seconds, and not Done."""
+    return _remote["chat"] is not None and time.monotonic() - _remote["at"] < REMOTE_IDLE
+
+
+def remote_start(chat):
+    _remote.update(chat=chat, message=None, typing=False, at=time.monotonic())
+
+
+def remote_end():
+    _remote.update(chat=None, message=None, typing=False, nodes={})
+
+
+def remote_wants_text():
+    """True if your next message on the phone is text for her browser (after Type)."""
+    return _remote["typing"] and remote_on()
+
+
+def remote_view():
+    """Her page for your phone: (a JPEG of it, a caption, rows of buttons as (label, data)): a number drawn on each of
+    the first REMOTE_MOST controls on the screen, a button for each, then Type, scrolling, Back, a new picture and
+    Done. A button's data carries this picture's token, so a tap on an older picture clicks nothing."""
+    import base64
+    import cv2
+    import numpy as np
+    snap = ui_snapshot() or {"items": []}
+    picture = cv2.imdecode(np.frombuffer(base64.b64decode(call("Page.captureScreenshot", format="png")["data"]),
+                                         np.uint8), cv2.IMREAD_COLOR)
+    token, nodes, buttons = os.urandom(3).hex(), {}, []
+    seen = [it for it in snap["items"] if it["name"] and not it["password"] and it["rect"][1] < H and it["rect"][3] > 0]
+    for n, it in enumerate(seen[:REMOTE_MOST], 1):
+        nodes[str(n)] = it["el"]
+        buttons.append((f"{n}. {it['name'][:26]}" + (" (box)" if it["role"] == "edit" else ""), f"b:{token}:c{n}"))
+        if picture is not None:  # its number on the picture, on its top left corner, clear of most of its label
+            x, y = max(11, it["rect"][0]), max(11, it["rect"][1])
+            cv2.circle(picture, (x, y), 11, (36, 99, 235), -1)
+            cv2.putText(picture, str(n), (x - (5 if n < 10 else 10), y + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (255, 255, 255), 1, cv2.LINE_AA)
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([("Type", f"b:{token}:t"), ("Scroll down", f"b:{token}:sd"), ("Scroll up", f"b:{token}:su")])
+    rows.append([("Back", f"b:{token}:bk"), ("New picture", f"b:{token}:r"), ("Done", f"b:{token}:x")])
+    jpeg = cv2.imencode(".jpg", picture, [cv2.IMWRITE_JPEG_QUALITY, 70])[1].tobytes() if picture is not None else b""
+    _remote.update(token=token, nodes=nodes, at=time.monotonic())
+    where = site()
+    caption = (f"{title() or 'My browser'}{' · ' + where if where else ''}. Tap a number to click it. To type, tap the "
+               f"box, then Type, then send me the text.")
+    return jpeg, caption, rows
+
+
+def remote_tap(data):
+    """A tap on one of remote_view's buttons: ("view", line) for a new picture, with line said first if any, or
+    ("say", line) for words alone."""
+    _, token, action = (str(data).split(":") + ["", ""])[:3]
+    if not running():
+        remote_end()
+        return "say", "My browser's closed. Say show me your browser to open it."
+    if token != _remote["token"]:
+        return "view", "That was an older picture, so I've not clicked anything. Here's the page now."
+    _remote["at"] = time.monotonic()
+    if action == "x":
+        remote_end()
+        return "say", "Done. I'll carry on with my jobs in it."
+    if action in ("sd", "su"):
+        scroll(-5 if action == "sd" else 5)
+    elif action == "bk":
+        press_keys("alt+left")
+    elif action == "t":
+        box = ui_focused()
+        if box is None or box["role"] not in ("edit", "combobox"):
+            return "say", "Tap a box first, then Type."
+        if box["password"]:
+            return "say", NO_PASSWORDS
+        _remote["typing"] = True
+        return "say", f"Send me what to type into {box['name'] or 'that box'}."
+    elif action.startswith("c") and action[1:] in _remote["nodes"]:
+        ui_act(_remote["nodes"][action[1:]])
+        _settle(3)
+    return "view", ""
+
+
+def remote_type(text):
+    """What you sent after Type, typed where the box you tapped has its cursor. Never into a password box."""
+    _remote["typing"] = False
+    box = ui_focused()
+    if box is None:
+        return "say", "The box isn't picked any more. Tap it again, then Type."
+    if box["password"]:
+        return "say", NO_PASSWORDS
+    ui_act(box["el"], str(text), caret=True)
+    _remote["at"] = time.monotonic()
+    return "view", ""
+
+
+def to_phone(chat, line=""):
+    """Her page sent to your phone (remote_view), with line said first if any; else in place of the last picture."""
+    send, control = host.PHONE.get("send"), host.PHONE.get("control")
+    if line and send:
+        send(chat, line)
+        _remote["message"] = None  # the picture under the words, not above them
+    picture, caption, rows = remote_view()
+    if control is not None and picture:
+        _remote["message"] = control(chat, picture, caption, rows, _remote["message"]) or _remote["message"]
+
+
+def phone_tap(data, chat):
+    """A tap on your phone (telegram_bot's on_browser), on a thread of its own: done, and answered there."""
+    try:
+        kind, line = remote_tap(data)
+        if kind == "view":
+            to_phone(chat, line)
+        elif line and host.PHONE.get("send"):
+            host.PHONE["send"](chat, line)
+    except Exception as exc:
+        print(f"  her browser, from your phone: {exc!r}")
+        if host.PHONE.get("send"):
+            host.PHONE["send"](chat, "That didn't work in my browser.")
+
+
+def phone_text(text, chat):
+    """The text you sent after Type, typed into her page, and a new picture back."""
+    try:
+        kind, line = remote_type(text)
+        if kind == "view":
+            to_phone(chat, line)
+        elif line and host.PHONE.get("send"):
+            host.PHONE["send"](chat, line)
+    except Exception as exc:
+        print(f"  her browser, from your phone: {exc!r}")
+
+
 # --------------------------------------------------------------------------- Said to her
 _YOUR = r"(?:your|ur|her|harry'?s)(?: own)? browser"
 SHOW = re.compile(rf"(?:(?:show|open|bring up|pull up|give)(?: me)? {_YOUR}|take control(?: of {_YOUR})?|let me "
@@ -1157,6 +1308,18 @@ def quick(words, plain, gate=False):
         address, name = _address((m["site"] or m["open"]) if m else "")
         if m and address is None:
             return _plan(f"I don't know where {name} is. Say its address, like sign in to example.com in your browser.")
+        chat = host.PHONE_CHAT.get() if host is not None and host.origin() == "phone" else None
+        if chat is not None:  # asked from your phone: her page comes to it, to tap (remote_view)
+            try:
+                start()
+                if address:
+                    go(address)
+                remote_start(chat)
+                to_phone(chat)
+            except Exception as exc:
+                print(f"  her browser: {exc!r}")
+                return _plan("My browser wouldn't open.")
+            return _plan("Here's my browser. Tap a number to click it; my jobs in it wait till you tap Done.")
         try:
             show(address)
         except Exception as exc:

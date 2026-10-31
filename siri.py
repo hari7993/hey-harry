@@ -10349,10 +10349,11 @@ PENDING = {"plan": None, "until": 0.0, "soon": 0.0, "origin": "voice", "id": "",
 # said that it's for, so the yes turn's agent.SAID is still that and not "yes"
 REPLY_TO = contextvars.ContextVar("reply_to", default=None)  # a turn from your phone: her lines go here, not out loud
 PHONE_CHAT = contextvars.ContextVar("phone_chat", default=None)  # and the chat it came from, for a task's result
-PHONE = {"send": None, "buttons": None, "photo": None, "progress": None, "document": None}  # set by
+PHONE = {"send": None, "buttons": None, "photo": None, "progress": None, "document": None, "control": None}  # set by
 # run_voice_assistant once Telegram is there: send(chat, line), buttons(chat, question, key) with Yes and No for a
 # background job's question (a coding job's, job_ask, or a held step's, ask_job), photo(chat, png bytes, caption),
-# progress(chat, key, text, final) and document(chat, path)
+# progress(chat, key, text, final) and document(chat, path); control(chat, jpeg, caption, rows, message) her browser's
+# picture with its buttons (herbrowser.to_phone)
 PHONE_SHOWN = ("A message from your phone", "Answered on your phone")  # all the PC shows of a phone turn
 TAPPED = contextvars.ContextVar("tapped", default=False)  # the phone's Yes button: the only yes for a phone question
 PHONE_PICTURES = {}  # chat -> ([pictures as data URLs], when): the last you sent from your phone, an album's together
@@ -12501,6 +12502,10 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             print("\n  (stopped her task in an app, from the phone)")
             phone.send(chat, "Stopping.")
             return
+        if not pictures and not files and chat == telegram_bot.owner() and herbrowser.remote_wants_text():
+            # what you sent after Type on her browser's picture: typed into her page, never a turn of yours
+            threading.Thread(target=herbrowser.phone_text, args=(text, chat), daemon=True).start()
+            return
         if not pictures and not files and chat == telegram_bot.owner() and \
                 PHONE_TASKS.fullmatch(" ".join(str(text or "").lower().replace("’", "'").split()).strip(" .!?")):
             phone.send(chat, tasks_said())  # from memory at once: never behind the very task you're asking about
@@ -12516,14 +12521,15 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                                                              f"({name} asked for it)" if name else
                                                              "Pairing was busy: press Pair again, then /start"),
                              on_stop=lambda why: phone_news("Telegram didn't take the bot's token, check it in Keys"
-                                                            if why == "InvalidToken" else f"Telegram stopped ({why})"))
+                                                            if why == "InvalidToken" else f"Telegram stopped ({why})"),
+                             on_browser=herbrowser.phone_tap)  # her browser's picture, tapped on your phone
     threading.Thread(target=phone_turn, daemon=True).start()
     threading.Thread(target=telegram_bot.prune_files, daemon=True).start()  # a day on, what came from the phone goes
     threading.Thread(target=phone_progress, daemon=True).start()
     PHONE.update(send=lambda chat, line: phone.send(chat, line),
                  buttons=lambda chat, question, key: phone.send(chat, question, ask=key),  # job_ask's and job_tap's
                  photo=lambda chat, picture, caption: phone.send_photo(chat, picture, caption),
-                 progress=phone.progress, document=phone.send_document)
+                 progress=phone.progress, document=phone.send_document, control=phone.send_control)
     # whenever a bot token is saved: paired, it's you; not yet, it only answers /start with how to pair
     phone.start()
 

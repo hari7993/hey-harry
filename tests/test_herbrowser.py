@@ -58,6 +58,8 @@ class FakeChrome:
 
     def press(self, n):
         c = self.controls[n]
+        if c["role"] in ("textbox", "searchbox"):  # a click in a box puts the cursor in it, as in Chrome
+            self.focused = n
         if c["checked"] is not None:
             c["checked"] = not c["checked"]
         if c["on"]:
@@ -754,3 +756,171 @@ class Planner(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveCard(unittest.TestCase):
+    """A job's card in the corner (jobview): a live picture of the window it works in now, her own browser's for one
+    working there, which Windows draws though it's off your screens; a click on its card hands you her browser."""
+
+    def setUp(self):
+        import activity
+        activity.clear()
+        self.addCleanup(activity.clear)
+        agent.JOBS.clear()
+        self.addCleanup(agent.JOBS.clear)
+        for name, value in (("window_exists", lambda h: h in (4242, 555)), ("minimised", lambda h: False)):
+            p = mock.patch.object(winplatform, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def job(self, tid, pin):
+        import activity
+        job = agent.Job(tid, "add dal to my zomato cart")
+        job.runs.append(SimpleNamespace(pin=pin))
+        agent.JOBS[tid] = job
+        activity.publish(f"task:{tid}", title="Add dal to my Zomato cart", kind="agent", state="running",
+                         note="Working in my browser")
+        return job
+
+    def test_a_job_in_her_browser_shows_her_page(self):
+        import jobview
+        self.job(7, herbrowser.TAB)
+        with mock.patch.object(herbrowser, "window", lambda: 4242):
+            (card,) = jobview.sections()
+        self.assertEqual((card["key"], card["thumb"]), (7, 4242))
+
+    def test_a_job_on_your_screen_shows_the_window_it_opened(self):
+        import jobview
+        self.job(8, 555)  # opened since it started: the job's own pin was never set
+        (card,) = jobview.sections()
+        self.assertEqual(card["thumb"], 555)
+
+    def test_clicking_its_card_hands_you_her_browser(self):
+        import jobview
+        self.job(7, herbrowser.TAB)
+        with mock.patch.object(herbrowser, "show") as shown, \
+                mock.patch.object(winplatform, "bring_to_front", side_effect=AssertionError("your window")):
+            jobview._clicked(7)
+        shown.assert_called_once_with()
+
+
+class Remote(Page):
+    """Take control from your phone (remote_view, remote_tap, remote_type): her page as a numbered picture with a
+    button for each number, your taps clicking in her page, and her jobs waiting while you have it."""
+
+    def setUp(self):
+        super().setUp()
+        self.kitchen()
+        self.addCleanup(herbrowser.remote_end)
+        self.sent, self.pictures = [], []
+        host = SimpleNamespace(PHONE={"send": lambda chat, line: self.sent.append((chat, line)),
+                                      "control": lambda chat, jpeg, caption, rows, message: self.pictures.append(
+                                          (chat, caption, rows, message)) or 77})
+        p = mock.patch.object(herbrowser, "host", host)
+        p.start()
+        self.addCleanup(p.stop)
+        herbrowser.remote_start(42)
+
+    def buttons(self, rows):
+        return {label: data for row in rows for label, data in row}
+
+    def test_each_control_on_the_screen_gets_a_numbered_button(self):
+        jpeg, caption, rows = herbrowser.remote_view()
+        self.assertTrue(jpeg.startswith(b"\xff\xd8"))  # a small JPEG
+        labels = list(self.buttons(rows))
+        self.assertIn("Test Kitchen", caption)
+        self.assertTrue(any(label.endswith(". OK") for label in labels))
+        self.assertTrue(any(label.endswith(". Search dishes (box)") for label in labels))
+        self.assertFalse(any("Password" in label for label in labels))  # never offered over Telegram
+        self.assertFalse(any("Far down" in label for label in labels))  # not on the screen
+        self.assertEqual(labels[-6:], ["Type", "Scroll down", "Scroll up", "Back", "New picture", "Done"])
+        self.assertTrue(all(len(data.encode()) <= 64 for data in self.buttons(rows).values()))  # Telegram's limit
+
+    def test_a_tap_clicks_in_her_page(self):
+        _, _, rows = herbrowser.remote_view()
+        add = next(data for label, data in self.buttons(rows).items() if label.endswith(". Add"))
+        self.assertEqual(herbrowser.remote_tap(add), ("view", ""))
+        self.assertEqual(self.cart[0], 1)
+
+    def test_a_tap_on_an_older_picture_clicks_nothing(self):
+        _, _, old = herbrowser.remote_view()
+        herbrowser.remote_view()  # a newer picture since
+        add = next(data for label, data in self.buttons(old).items() if label.endswith(". Add"))
+        kind, line = herbrowser.remote_tap(add)
+        self.assertEqual((kind, self.cart[0]), ("view", 0))
+        self.assertIn("older picture", line)
+
+    def test_typing_goes_into_the_box_you_tapped_never_a_password(self):
+        _, _, rows = herbrowser.remote_view()
+        tap = self.buttons(rows)
+        box = next(data for label, data in tap.items() if "Search dishes" in label)
+        herbrowser.remote_tap(box)  # a click puts the cursor in it
+        self.assertEqual(herbrowser.remote_tap(tap["Type"])[0], "say")
+        self.assertTrue(herbrowser.remote_wants_text())
+        self.assertEqual(herbrowser.remote_type("dal makhani"), ("view", ""))
+        self.assertEqual(herbrowser.ui_value(herbrowser.Node(self.search)), "dal makhani")
+        self.assertFalse(herbrowser.remote_wants_text())
+        self.chrome.focused = self.password  # the cursor in the password box
+        _, _, rows = herbrowser.remote_view()
+        self.assertEqual(herbrowser.remote_tap(self.buttons(rows)["Type"]), ("say", herbrowser.NO_PASSWORDS))
+        self.assertEqual(herbrowser.remote_type("hunter3"), ("say", herbrowser.NO_PASSWORDS))
+        self.assertIsNone(herbrowser.ui_value(herbrowser.Node(self.password)))
+
+    def test_her_jobs_wait_while_you_have_it_and_carry_on_after_done(self):
+        self.assertTrue(herbrowser.shown())
+        _, _, rows = herbrowser.remote_view()
+        self.assertEqual(herbrowser.remote_tap(self.buttons(rows)["Done"])[0], "say")
+        self.assertFalse(herbrowser.shown())
+        herbrowser.remote_start(42)
+        herbrowser._remote["at"] -= herbrowser.REMOTE_IDLE + 1  # no tap for 5 minutes
+        self.assertFalse(herbrowser.shown())
+
+    def test_a_tap_comes_back_as_a_new_picture_in_place(self):
+        herbrowser.to_phone(42)
+        self.assertEqual(self.pictures[-1][0], 42)
+        self.assertIsNone(self.pictures[-1][3])  # the first: a new message
+        _, _, rows, _ = self.pictures[-1]
+        herbrowser.phone_tap(self.buttons(rows)["Scroll down"], 42)
+        self.assertEqual(self.pictures[-1][3], 77)  # changed in place
+        herbrowser.phone_tap(self.buttons(self.pictures[-1][2])["Done"], 42)
+        self.assertEqual(self.sent[-1], (42, "Done. I'll carry on with my jobs in it."))
+
+    def test_show_me_your_browser_from_your_phone_comes_to_your_phone(self):
+        herbrowser.remote_end()
+        host = SimpleNamespace(PHONE=herbrowser.host.PHONE, PHONE_CHAT=SimpleNamespace(get=lambda: 42),
+                               origin=lambda: "phone", SITES=siri.SITES, key_of=siri.key_of)
+        with mock.patch.object(herbrowser, "host", host), mock.patch.object(herbrowser, "public", lambda a: True), \
+                mock.patch.object(herbrowser, "program", lambda: r"C:\Chrome\chrome.exe"), \
+                mock.patch.object(herbrowser, "show", side_effect=AssertionError("on the PC")):
+            plan = herbrowser.quick("open zomato in your browser", siri.plain)
+        self.assertIn("Tap a number", plan["say"])
+        self.assertEqual(self.chrome.url, "https://www.zomato.com")
+        self.assertEqual(self.pictures[-1][0], 42)
+        self.assertTrue(herbrowser.remote_on())
+
+
+class PhoneTaps(unittest.TestCase):
+    """telegram_bot: a tap on her browser's picture reaches her browser only from your account."""
+
+    def tap(self, user, data):
+        import asyncio
+        import telegram_bot
+        got = threading.Event()
+        seen = []
+        bot = telegram_bot.Bot(on_message=None, on_tap=lambda *a: seen.append(("yes/no", a)),
+                               on_browser=lambda data, chat: seen.append(("browser", data, chat)) or got.set())
+
+        async def answer():
+            return None
+        q = SimpleNamespace(data=data, message=SimpleNamespace(chat_id=42, message_id=5), answer=answer)
+        update = SimpleNamespace(callback_query=q, effective_user=SimpleNamespace(id=user))
+        with mock.patch.object(telegram_bot, "owner", lambda: 42):
+            asyncio.run(bot._tap(update, None))
+        got.wait(2)
+        return seen
+
+    def test_your_taps_reach_her_browser(self):
+        self.assertEqual(self.tap(42, "b:a1b2c3:c4"), [("browser", "b:a1b2c3:c4", 42)])
+
+    def test_anyone_elses_do_nothing(self):
+        self.assertEqual(self.tap(99, "b:a1b2c3:c4"), [])
