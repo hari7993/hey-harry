@@ -85,22 +85,174 @@ def _from_icon(hicon, size):
     return np.concatenate([np.minimum(rgb, alpha), alpha], axis=2).astype(np.float32)
 
 
-@lru_cache(maxsize=64)
+_weights = {}
+
+
+def _area(src, n):
+    """(indexes, weights), (n, taps) each: what averages each output pixel over the part of the input it covers (an
+    area filter, as INTER_AREA is), or spreads it linearly when it grows; each pixel's weights add up to 1."""
+    key = (src, n)
+    hit = _weights.get(key)
+    if hit is not None:
+        return hit
+    w = np.zeros((n, src), np.float32)
+    if n <= src:
+        f = src / n
+        for i in range(n):
+            a, b = i * f, (i + 1) * f
+            for j in range(int(a), min(src, int(np.ceil(b)))):
+                w[i, j] = min(b, j + 1) - max(a, j)
+    else:
+        pos = (np.arange(n) + 0.5) * src / n - 0.5
+        lo = np.clip(np.floor(pos).astype(int), 0, src - 1)
+        hi = np.clip(lo + 1, 0, src - 1)
+        t = np.clip(pos - lo, 0.0, 1.0)
+        w[np.arange(n), lo] += 1 - t
+        w[np.arange(n), hi] += t
+    w /= w.sum(axis=1, keepdims=True)
+    # as taps: each output pixel's few input pixels and their weights, (n, taps) each, so it's a handful of slices
+    # added up, not a matrix product (numpy's first one starts OpenBLAS, 32 MB, measured 30 October 2026)
+    taps = max(1, int((w > 0).sum(axis=1).max()))
+    idx = np.zeros((n, taps), np.intp)
+    wts = np.zeros((n, taps), np.float32)
+    for i in range(n):
+        js = np.nonzero(w[i])[0]
+        idx[i, :len(js)], wts[i, :len(js)] = js, w[i, js]
+    hit = (idx, wts)
+    if len(_weights) > 64:
+        _weights.clear()
+    _weights[key] = hit
+    return hit
+
+
+def _along(pic, axis, n):
+    """pic averaged to n px along axis (0 down, 1 across) by its taps."""
+    idx, wts = _area(pic.shape[axis], n)
+    out = None
+    for t in range(idx.shape[1]):
+        part = np.take(pic, idx[:, t], axis=axis)
+        weight = wts[:, t].reshape((n, 1, 1) if axis == 0 else (1, n, 1))
+        out = part * weight if out is None else out + part * weight
+    return out
+
+
+def resample(rgba, n, m=None):
+    """A picture made n px tall and m wide (n if not said), each output pixel the average of what it covers: sharp
+    and even, where taking the nearest pixel shimmers and aliases (30 October 2026, the owner: the icons weren't
+    sharp). numpy only, so the dock needn't load OpenCV, 40 MB or so, for it. Premultiplied pictures stay so."""
+    pic = np.asarray(rgba, np.float32)
+    h, w = pic.shape[:2]
+    m = n if m is None else m
+    if (h, w) == (n, m):
+        return pic.copy()
+    out = _along(pic, 0, n) if h != n else pic
+    out = _along(out, 1, m) if w != m else out
+    return np.ascontiguousarray(out, dtype=np.float32)
+
+
+# the sizes icons are made at: one of them is drawn as it is in the program file, never scaled by Windows, and the
+# picture's then averaged down to the size wanted
+FRAMES = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
+
+
+@lru_cache(maxsize=48)
 def exe_icon(path, size):
-    """The icon of a program file (or an .ico) at size px, or None."""
+    """The icon of a program file (or an .ico) at size px, or None: taken at the next size up that icon files keep
+    (FRAMES, 256 for anything over 48), then averaged down, so it's as sharp as the file has it (30 October 2026:
+    asked at 106 px, Windows scaled a 256 or a 48 itself, and the dock's icons came out soft)."""
     if not path or not os.path.exists(path):
         return None
+    src = 256 if size > 48 else next(f for f in FRAMES if f >= size)
     icon, got = wt.HICON(), wt.UINT()
     try:
-        n = _user32.PrivateExtractIconsW(path, 0, size, size, ctypes.byref(icon), ctypes.byref(got), 1, 0)
+        n = _user32.PrivateExtractIconsW(path, 0, src, src, ctypes.byref(icon), ctypes.byref(got), 1, 0)
     except OSError:
         return None
     if not n or not icon.value or n == 0xFFFFFFFF:
         return None
     try:
-        return _from_icon(icon, size)
+        pic = _from_icon(icon, src)
     finally:
         _user32.DestroyIcon(icon)
+    if pic is None or src == size:
+        return pic
+    return resample(_trim(pic), size)
+
+
+def _trim(pic):
+    """An icon with the empty margin round it cut off, kept square and centred: some files pad a small picture out
+    to 256 px, which came out tiny beside the others."""
+    a = pic[..., 3]
+    rows, cols = np.where(a.max(axis=1) > 0.04)[0], np.where(a.max(axis=0) > 0.04)[0]
+    if not len(rows) or not len(cols):
+        return pic
+    n = pic.shape[0]
+    side = max(rows[-1] - rows[0], cols[-1] - cols[0]) + 1
+    if side >= n * 0.8:  # most draw out to near their edge: left as they are
+        return pic
+    side = max(side, int(n * 0.8))
+    cy, cx = (rows[0] + rows[-1] + 1) // 2, (cols[0] + cols[-1] + 1) // 2
+    y0 = max(0, min(n - side, cy - side // 2))
+    x0 = max(0, min(n - side, cx - side // 2))
+    return pic[y0:y0 + side, x0:x0 + side]
+
+
+# the app a window belongs to, as Windows knows it (its AppUserModelID), for a Store app's own logo
+class _PropKey(ctypes.Structure):
+    _fields_ = [("fmtid", ctypes.c_ubyte * 16), ("pid", wt.DWORD)]
+
+
+class _PropVariant(ctypes.Structure):
+    _fields_ = [("vt", ctypes.c_ushort), ("r1", ctypes.c_ushort), ("r2", ctypes.c_ushort), ("r3", ctypes.c_ushort),
+                ("ptr", ctypes.c_void_p), ("pad", ctypes.c_void_p)]
+
+
+_APP_ID = _PropKey((ctypes.c_ubyte * 16).from_buffer_copy(
+    __import__("uuid").UUID("9f4c2855-9f79-4b39-a8d0-e1d42de1d5f3").bytes_le), 5)  # PKEY_AppUserModel_ID
+_IID_PROPSTORE = (ctypes.c_byte * 16).from_buffer_copy(
+    __import__("uuid").UUID("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99").bytes_le)
+
+
+def window_app_id(hwnd):
+    """The AppUserModelID Windows has for a window (a Store app's, as "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"),
+    or None."""
+    try:
+        import winplatform as win
+        win._com()
+        shell = ctypes.WinDLL("shell32")
+        store = ctypes.c_void_p()
+        if shell.SHGetPropertyStoreForWindow(wt.HWND(hwnd), ctypes.byref(_IID_PROPSTORE), ctypes.byref(store)) != 0 \
+                or not store.value:
+            return None
+        try:
+            table = ctypes.cast(ctypes.c_void_p.from_address(store.value).value, ctypes.POINTER(ctypes.c_void_p))
+            get = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(_PropKey),
+                                     ctypes.POINTER(_PropVariant))(table[5])
+            value = _PropVariant()
+            if get(store.value, ctypes.byref(_APP_ID), ctypes.byref(value)) != 0:
+                return None
+            try:
+                return ctypes.wstring_at(value.ptr) if value.vt == 31 and value.ptr else None  # VT_LPWSTR
+            finally:
+                ctypes.WinDLL("ole32").PropVariantClear(ctypes.byref(value))
+        finally:
+            _release(store.value)
+    except Exception:
+        return None
+
+
+def window_app_icon(hwnd, size):
+    """A window's app's own logo, as Start shows it, for a Store app whose window and program file give only a small
+    icon: None if it has none to give."""
+    app_id = window_app_id(hwnd)
+    if not app_id:
+        return None
+    pic = file_icon("shell:AppsFolder\\" + app_id, max(size, 64))
+    if pic is None:
+        return None
+    h, w = pic.shape[:2]
+    f = size / max(h, w)
+    return resample(pic, max(1, round(h * f)), max(1, round(w * f)))
 
 
 def window_icon(hwnd, size):
@@ -145,6 +297,110 @@ def badge(name, size, text_maker):
         _badges.clear()
     _badges[key] = out
     return out
+
+
+def tint(rgba):
+    """The colour a picture is known by, for a glow round it (30 October 2026, after bloom's ambient glow round a
+    song's cover): its most common vivid hue, made bright enough to glow, as (r, g, b) 0 to 1; None for a picture
+    that's grey all over."""
+    if rgba is None:
+        return None
+    px = np.asarray(rgba, np.float32)
+    a = px[..., 3]
+    rgb = px[..., :3] / np.maximum(a, 1e-3)[..., None]  # straight colours, from premultiplied
+    hi, lo = rgb.max(axis=2), rgb.min(axis=2)
+    sat = np.where(hi > 0, (hi - lo) / np.maximum(hi, 1e-6), 0.0)
+    weight = sat * hi * (a > 0.5)
+    if float(weight.sum()) < 0.02 * weight.size:
+        return None
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    hue = np.arctan2(np.sqrt(3.0) * (g - b), 2 * r - g - b)  # -pi to pi round the colour wheel
+    bins = ((hue + np.pi) / (2 * np.pi) * 12).astype(int) % 12
+    best = int(np.argmax(np.bincount(bins.ravel(), weights=weight.ravel(), minlength=12)))
+    pick = (bins == best) & (weight > 0)
+    w = weight[pick][:, None]
+    colour = (rgb[pick] * w).sum(axis=0) / max(float(w.sum()), 1e-6)
+    import colorsys
+    h, s, v = colorsys.rgb_to_hsv(*(float(c) for c in np.clip(colour, 0.0, 1.0)))
+    return colorsys.hsv_to_rgb(h, max(0.55, s), max(0.85, v))
+
+
+class _BITMAP(ctypes.Structure):
+    _fields_ = [("bmType", ctypes.c_long), ("bmWidth", ctypes.c_long), ("bmHeight", ctypes.c_long),
+                ("bmWidthBytes", ctypes.c_long), ("bmPlanes", wt.WORD), ("bmBitsPixel", wt.WORD),
+                ("bmBits", ctypes.c_void_p)]
+
+
+_shell32 = ctypes.WinDLL("shell32")
+_gdi32 = ctypes.WinDLL("gdi32")
+_shell32.SHCreateItemFromParsingName.argtypes = [wt.LPCWSTR, ctypes.c_void_p, ctypes.c_void_p,
+                                                 ctypes.POINTER(ctypes.c_void_p)]
+_shell32.SHCreateItemFromParsingName.restype = ctypes.c_long
+_gdi32.GetObjectW.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p]
+_gdi32.GetBitmapBits.argtypes = [wt.HANDLE, ctypes.c_long, ctypes.c_void_p]
+_gdi32.DeleteObject.argtypes = [wt.HANDLE]
+_IMAGE_FACTORY = (ctypes.c_byte * 16).from_buffer_copy(
+    __import__("uuid").UUID("bcc18b79-ba16-442f-80c4-8a59c30c463b").bytes_le)  # IID_IShellItemImageFactory
+_files = {}
+
+
+def file_icon(path, size):
+    """A file's or a folder's own picture at size px, as File Explorer shows it: a picture's or a video's thumbnail,
+    else its icon (IShellItemImageFactory), premultiplied (h, w, 4) floats; None if Windows gives none. Kept for next
+    time (30 October 2026: the island's shelf)."""
+    key = (str(path), int(size))
+    if key in _files:
+        return _files[key]
+    pic = None
+    try:
+        import winplatform as win
+        win._com()
+        factory = ctypes.c_void_p()
+        if _shell32.SHCreateItemFromParsingName(str(path), None, ctypes.byref(_IMAGE_FACTORY),
+                                                ctypes.byref(factory)) == 0 and factory.value:
+            try:
+                vtbl = ctypes.cast(ctypes.c_void_p.from_address(factory.value).value,
+                                   ctypes.POINTER(ctypes.c_void_p))
+                get_image = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, wt.SIZE, ctypes.c_int,
+                                               ctypes.POINTER(wt.HBITMAP))(vtbl[3])
+                bmp = wt.HBITMAP()
+                if get_image(factory.value, wt.SIZE(int(size), int(size)), 0, ctypes.byref(bmp)) == 0 and bmp.value:
+                    try:
+                        pic = _from_bitmap(bmp.value, int(size))
+                    finally:
+                        _gdi32.DeleteObject(bmp)
+            finally:
+                _release(factory.value)
+    except Exception as exc:
+        print(f"  island: no picture for a file ({exc!r})")
+    if len(_files) > 64:
+        _files.clear()
+    _files[key] = pic
+    return pic
+
+
+def _from_bitmap(hbmp, size):
+    """A 32-bit bitmap from the shell as a premultiplied picture, size px at most each way."""
+    bm = _BITMAP()
+    if not _gdi32.GetObjectW(hbmp, ctypes.sizeof(bm), ctypes.byref(bm)) or bm.bmBitsPixel != 32:
+        return None
+    w, h = bm.bmWidth, abs(bm.bmHeight)
+    raw = (ctypes.c_ubyte * (w * h * 4))()
+    if not _gdi32.GetBitmapBits(hbmp, len(raw), raw):
+        return None
+    px = np.frombuffer(raw, np.uint8).reshape(h, w, 4).astype(np.float32) / 255
+    rgb, alpha = px[..., 2::-1], px[..., 3:4]
+    if float(alpha.max()) <= 0.0:  # a bitmap with no alpha at all: all of it's solid
+        alpha = np.ones_like(alpha)
+    elif float((rgb - alpha).max()) > 0.02:  # brighter than its cover: straight colours, so premultiplied here
+        rgb = rgb * alpha
+    out = np.concatenate([np.minimum(rgb, alpha), alpha], axis=2)
+    if max(w, h) > size:
+        f = max(w, h) / size
+        ys = np.minimum((np.arange(int(h / f)) * f).astype(int), h - 1)
+        xs = np.minimum((np.arange(int(w / f)) * f).astype(int), w - 1)
+        out = out[ys][:, xs]
+    return np.ascontiguousarray(out, dtype=np.float32)
 
 
 def rounded(rgba, radius):

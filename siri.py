@@ -8,7 +8,7 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # Windows without
 import subprocess
 import numpy as np, psutil, requests, sounddevice as sd, soundfile as sf
 from dotenv import load_dotenv
-import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, installer, messaging, opencode, outcomes, pocket, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win
+import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, installer, kokoro, messaging, opencode, outcomes, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win
 import toolbox
 import screen_watch
 import phrasebook  # more ways to say her scripted lines, so she doesn't sound the same every time
@@ -32,6 +32,8 @@ import cues
 import selfwork
 # your hand as the mouse through the laptop's camera (29 October 2026): handmouse.py, its step registered here too
 import handmouse
+# her focus timer, a Pomodoro (30 October 2026): focus.py, its step registered as it's imported
+import focus
 from hermes_memory import curator, daemon_pool, hermes_bits, skills, voice_bits
 from hermes_memory.threat_patterns import INVISIBLE_CHARS, first_threat_message
 from secrets_store import get_secret, missing_secrets
@@ -40,6 +42,7 @@ from dictation import Dictation, START as DICTATE_START, USER_VOCAB, fix_vocab, 
 agent.bind(sys.modules[__name__])  # her tasks in apps (agent.py) do their steps and talk through this module
 extras.bind(sys.modules[__name__])  # and the newer skills (extras.py) theirs
 dream.bind(sys.modules[__name__])  # dream mode asks what's said plainly and what's playing through here
+focus.bind(sys.modules[__name__])  # and the focus timer how long you said, and says when a round ends
 selfwork.register()
 handmouse.register()
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -59,19 +62,22 @@ CATCH_UP = 20.0  # what was said while she thought and acted is caught up on, bu
 TAP_TWICE = 0.6  # right Alt tapped twice inside this, each too short to be words: the typing box (askbox) opens
 
 
+POCKET_WAS = {"p248": "af_heart", "p251": "am_michael"}  # Pocket's voices, as Kokoro's
 FISH_ENDS = (2026, 12, 1)  # Fish's free voice model is free "through November 30, 2026" (fish.audio, 7 Oct 2026)
 
 
 def voice_id(voice=None):
-    """The voice to speak with: her voice on this PC (pocket:p248), a Windows OneCore / SAPI voice, a provider's
+    """The voice to speak with: her voice on this PC (kokoro:af_heart), a Windows OneCore / SAPI voice, a provider's
     (voices.py: "elevenlabs:<model>/<voice>"), or a Fish Audio ID from Settings, else the default. Once Fish's free
     model has ended, a Fish voice becomes her one on this PC."""
     val = str(voice or settings.get("voice") or "").strip()
-    if val.startswith(("onecore:", "sapi:", "pocket:")) or voices.parse(val):
+    if val.startswith("pocket:"):  # Pocket's, saved before Kokoro took its place (31 October 2026)
+        val = "kokoro:" + POCKET_WAS.get(val.split(":", 1)[1], kokoro.DEFAULT)
+    if val.startswith(("onecore:", "sapi:", "kokoro:")) or voices.parse(val):
         return val
     m = re.search(r"[0-9a-f]{32}", val.lower())
     if time.localtime()[:3] >= FISH_ENDS:
-        return "pocket:" + pocket.DEFAULT if pocket.available() else "onecore:MSTTS_V110_enIN_HeeraM"
+        return "kokoro:" + kokoro.DEFAULT if kokoro.available() else "onecore:MSTTS_V110_enIN_HeeraM"
     return m[0] if m else DEFAULT_VOICE
 MIC_LEVELS = collections.deque(maxlen=40)  # mic loudness, 10 a second, for the popup's bars
 SPEAK_LEVELS = collections.deque(maxlen=40)  # her voice's loudness while she talks, for the popup
@@ -831,7 +837,7 @@ def _todo_said():
     if not left:
         return ""
     more = f", and {len(left) - BRIEF_MOST} more" if len(left) > BRIEF_MOST else ""
-    return f"On your to-do list: {joined(_midsentence(i['text']) for i in left[:BRIEF_MOST])}{more}."
+    return f"On your to-do list: {joined(_midsentence(todo.shown(i)) for i in left[:BRIEF_MOST])}{more}."
 
 
 def _waiting_said():
@@ -3833,6 +3839,10 @@ def _quick(words, gate=False):
     if hand:
         print("  hand control")
         return hand
+    focusing = focus.quick(words, plain, gate)  # "start a pomodoro", "focus for 50 minutes", "skip the break"
+    if focusing:
+        print("  focus timer")
+        return focusing
     # "dream mode", "dream mode on the beach", "next scene", "exit dream mode": its scenes, opened and changed with no
     # model, and only with her name said
     dreaming = dream.quick(words, gate)
@@ -6790,6 +6800,7 @@ def _think(text, gate, notify=None, sure=1.0):
                              + cues.prompt_block(text)  # and her camera's, for words of seeing you
                              + selfwork.prompt_block(text)  # and building into herself, for words about her
                              + handmouse.prompt_block(text)  # and your hand as the mouse, for words of it
+                             + focus.prompt_block(text)  # and the focus timer's, for words of focusing
                              + ("\n\n" + known if known else "")
                              + memory_block() + context() + job_news(gate)
                              + (cold if gate == "cold" else GATE_NOTE if gate else "")
@@ -9282,8 +9293,8 @@ def fetch_tts(text, voice=None):
         win.native_to_wav(text, path, voice=v)
         return path, int((time.time() - t) * 1000), False
     try:
-        if str(v).startswith("pocket:"):  # made on this PC
-            pocket.to_wav(text, path + ".part.wav", v.split(":", 1)[1])
+        if str(v).startswith("kokoro:"):  # made on this PC
+            kokoro.to_wav(text, path + ".part.wav", v.split(":", 1)[1])
             os.replace(path + ".part.wav", path)
             return path, int((time.time() - t) * 1000), False
         if voices.parse(v):  # a provider's voice (voices.py)
@@ -9309,12 +9320,12 @@ VOICE = threading.RLock()  # one line at a time: a "One moment" and the answer a
 def voice_name(v):
     """Who makes voice v, for the log: "fish", "her voice on this PC" or a provider's name."""
     parsed = voices.parse(v)
-    return parsed[0].name if parsed else "her voice on this PC" if str(v).startswith("pocket:") else "fish"
+    return parsed[0].name if parsed else "her voice on this PC" if str(v).startswith("kokoro:") else "fish"
 
 
 class Line:
     """One line of her voice, under way from the moment it's made: Fish's or a provider's stream opened (voices.py),
-    or her voice on this PC being made (pocket.py). play() says it. So while one sentence plays the next is already
+    or her voice on this PC being made (kokoro.py). play() says it. So while one sentence plays the next is already
     being made, and a line streamed from the model as it's written has no gaps between its sentences (LiveSay)."""
 
     def __init__(self, text, voice=None):
@@ -9323,8 +9334,8 @@ class Line:
         self.audio = None  # pieces of her voice as they're made, then None; an exception if it failed
         if str(self.v).startswith(("onecore:", "sapi:")) or os.path.exists(self.path):
             return
-        if str(self.v).startswith("pocket:"):
-            self.audio = pocket.stream(text, self.v.split(":", 1)[1], stop=HER.stopper())
+        if str(self.v).startswith("kokoro:"):
+            self.audio = kokoro.stream(text, self.v.split(":", 1)[1], stop=HER.stopper())
         else:
             self.audio = queue.Queue()
             threading.Thread(target=self._cloud if voices.parse(self.v) else self._fish, daemon=True).start()
@@ -9387,7 +9398,7 @@ class Line:
                 done.set()
                 SPEAK_LEVELS.clear()
             return 0
-        local, started = str(self.v).startswith("pocket:"), [None]
+        local, started = str(self.v).startswith("kokoro:"), [None]
         try:
             if local:
                 self._play_local(started)
@@ -9402,9 +9413,9 @@ class Line:
             if started[0] is not None:  # it broke off partway: what's said is said
                 print(f"  her voice broke off ({exc!r})")
                 return started[0]
-            if not local and pocket.available():
+            if not local and kokoro.available():
                 print(f"  {voice_name(self.v)} speak failed ({exc}), falling back to her voice on this PC")
-                return Line(self.text, "pocket:" + pocket.DEFAULT).play()
+                return Line(self.text, "kokoro:" + kokoro.DEFAULT).play()
             print(f"  {voice_name(self.v)} speak failed ({exc}), falling back to Windows native speech")
             win.speak_native(self.text, wait=True)
             return int((time.time() - self.t) * 1000)
@@ -9451,11 +9462,11 @@ class Line:
                 if piece is None:
                     break
                 if out is None:
-                    out = sd.OutputStream(samplerate=pocket.RATE, channels=1, dtype="float32")
+                    out = sd.OutputStream(samplerate=kokoro.RATE, channels=1, dtype="float32")
                     out.start()
                     started[0] = int((time.time() - self.t) * 1000)
                 SPEAK_LEVELS.append(float(np.sqrt(np.mean(piece * piece))) if len(piece) else 0.0)
-                if not _write(out, piece.reshape(-1, 1), pocket.RATE):
+                if not _write(out, piece.reshape(-1, 1), kokoro.RATE):
                     out.abort()
                     return
             if out is not None:
@@ -11223,6 +11234,9 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     NOTIFY[0] = notify
     identity.moved_on()  # the first start as Harry: her notes say her name where they said Jev
     engine = settings.get("stt_engine")
+    if engine == "nemotron":  # taken out on 31 October 2026, the owner's ask: Parakeet instead
+        engine = "parakeet"
+        settings.put("stt_engine", engine)
     print(f"loading speech models ({engine})...")
     starting = lambda detail: emit(notify, "Starting", detail)
     starting("Loading speech models\u2026")

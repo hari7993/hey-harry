@@ -51,6 +51,9 @@ MODELS = {  # name: (file or folder once downloaded, where it comes from, size f
     # your hand in front of the camera, for a snap seen (hands.py): MediaPipe's palm finder and its 21 points
     "palm": ("palm_detection_mediapipe_2023feb.onnx", "https://github.com/opencv/opencv_zoo/raw/main/models/"
              "palm_detection_mediapipe/palm_detection_mediapipe_2023feb.onnx", "3.9 MB"),
+    # her voice on this PC (kokoro.py): Kokoro-82M v1.0, Apache 2.0
+    "kokoro": ("kokoro-multi-lang-v1_0", "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
+               "kokoro-multi-lang-v1_0.tar.bz2", "333 MB"),
     "hand": ("handpose_estimation_mediapipe_2023feb.onnx", "https://github.com/opencv/opencv_zoo/raw/main/models/"
              "handpose_estimation_mediapipe/handpose_estimation_mediapipe_2023feb.onnx", "4.1 MB"),
 }

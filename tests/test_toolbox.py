@@ -70,15 +70,17 @@ NEW_CUES = {"camera"}
 NEW_SELF = {"improve", "about_me"}
 # your hand as the mouse (handmouse.py, 29 October 2026): it takes the mouse, so asked about after a read
 NEW_HANDS = {"hand_control"}
+# her focus timer, a Pomodoro (focus.py, 30 October 2026): her own timer, as timer is, so read-safe and a routine's
+NEW_FOCUS = {"focus"}
 
 
 class Golden(unittest.TestCase):
     """Each set siri worked out from the registry equals the literal it replaced, plus only the new look-ups."""
 
     def test_the_gate_sets_are_what_they_were(self):
-        for name, old in (("READ_SAFE", OLD_READ_SAFE | NEW_PLACE | NEW_DREAM | {"spotify", "jobview"}),
+        for name, old in (("READ_SAFE", OLD_READ_SAFE | NEW_PLACE | NEW_DREAM | NEW_FOCUS | {"spotify", "jobview"}),
                           ("POWER_STEPS", OLD_POWER_STEPS), ("ASKS_YES", OLD_ASKS_YES),
-                          ("ROUTINE_STEPS", OLD_ROUTINE_STEPS | NEW_PLACE | NEW_DREAM | {"spotify"}),
+                          ("ROUTINE_STEPS", OLD_ROUTINE_STEPS | NEW_PLACE | NEW_DREAM | NEW_FOCUS | {"spotify"}),
                           ("SPEAK_FIRST", set(OLD_SPEAK_FIRST) | {"task", "show"}),
                           ("SAY_AFTER", OLD_SAY_AFTER | NEW_PLACE | {"event", "helper", "meeting"})):
             with self.subTest(name):
@@ -88,7 +90,7 @@ class Golden(unittest.TestCase):
     def test_the_planner_knows_the_same_steps_and_the_new_look_ups(self):
         self.assertEqual(set(siri.KNOWN_STEPS),
                          OLD_KNOWN_STEPS | NEW_LOOKS | NEW_JOB | NEW_PLACE | NEW_EXTRAS | NEW_DREAM | NEW_CUES | NEW_SELF
-                         | NEW_HANDS)
+                         | NEW_HANDS | NEW_FOCUS)
         self.assertEqual(set(siri.INFO), OLD_INFO | NEW_LOOKS | NEW_CUES | {"agenda", "files_inside", "about_me"})
         self.assertNotIn("agent_resume", siri.KNOWN_STEPS)  # only her own question makes one
         self.assertNotIn("watch_start", siri.KNOWN_STEPS)

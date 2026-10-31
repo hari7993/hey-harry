@@ -59,6 +59,11 @@ ISLAND_FACES = {"eyes": "Her eyes", "orb": "The orb", "wave": "The Siri wave"}
 ISLAND_THEMES = {"paper": "Paper, like her window", "amoled": "AMOLED black", "dark": "Dark", "light": "Light",
                  "system": "Like Windows"}
 ISLAND_ALIGN = {"center": "In the middle", "left": "On the left", "right": "On the right"}
+ISLAND_STATUS = {"": "Nothing", "time": "The time", "weather": "The weather", "battery": "The battery",
+                 "time,battery": "The time and battery", "weather,time": "The weather and time",
+                 "weather,battery": "The weather and battery", "weather,time,battery": "The time, weather and battery",
+                 "cpu,ram": "Processor and memory", "time,weather,battery,cpu,ram": "All of them"}
+DOCK_MODES = {"smart": "Out of a window's way", "peek": "Only at the bottom edge", "fixed": "Always there"}
 hermes_memory.set_memory_dir(os.path.join(win.APPDATA_DIR, "memories"))  # the same places siri.py keeps them
 hermes_memory.set_home(win.APPDATA_DIR)
 skills.set_skills_dir(os.path.join(win.APPDATA_DIR, "skills"))
@@ -245,6 +250,7 @@ STAT_ICONS = ("\ue916", "\ue720", "\ue70f", "\ue945", "\ue71d", "\ue897")  # the
 STAT_TINTS = ("orange", "blue", "violet", "green", "teal", "rose")
 # the Island tab's parts and the Keys tab's, a card each: (name, colour, icon)
 ISLAND_PARTS = (("Look", "violet", "\ue790"), ("Place", "blue", "\ue718"), ("Behaviour", "green", "\ue9e9"),
+                ("Panels", "teal", "\ue8a9"), ("Edges", "rose", "\ue767"), ("Dock", "slate", "\ue7c4"),
                 ("Plugins", "orange", "\ue74c"), ("Notifications", "amber", "\uea8f"))
 KEY_PARTS = (("Needed", "amber", "\ue8d7"), ("Answer models", "green", "\ue99a"),
              ("Voice and hearing", "violet", "\ue720"))
@@ -642,8 +648,8 @@ class VoiceSource:
 
     def rows(self, g, model=None):
         if g.id == "pc":
-            return [{"value": v, "cols": (name, "This PC" if v.startswith("pocket:") else "Windows", about)}
-                    for name, v, about in settings.VOICES if v.startswith(("pocket:", "onecore:", "sapi:"))]
+            return [{"value": v, "cols": (name, "This PC" if v.startswith("kokoro:") else "Windows", about)}
+                    for name, v, about in settings.VOICES if v.startswith(("kokoro:", "onecore:", "sapi:"))]
         if g.id == "fish":
             return [{"value": v, "cols": (name, "Fish Audio", about)} for name, v, about in settings.VOICES
                     if re.fullmatch(r"[0-9a-f]{32}", v)]
@@ -665,7 +671,8 @@ class VoiceSource:
 
     def group_of(self, value):
         parsed = voices.parse(value)
-        return parsed[0].id if parsed else "pc" if str(value).startswith(("pocket:", "onecore:", "sapi:")) else "fish"
+        on_pc = str(value).startswith(("kokoro:", "pocket:", "onecore:", "sapi:"))
+        return parsed[0].id if parsed else "pc" if on_pc else "fish"
 
     def status(self, g):
         if g.id != "elevenlabs":
@@ -1020,6 +1027,9 @@ class AssistantWindow:
         self._setup_root()
         self._setup_styles()
         self.bubble = Bubble(root)
+        self.edges = self._start_edges()
+        self.dock = None
+        self._dock_changed()
         self._build_sidebar()
         self._build_main()
         self.pages = {"home": self._build_home(), "todo": self._build_todo(), "tasks": self._build_tasks(),
@@ -2045,7 +2055,7 @@ class AssistantWindow:
             if not iid.isdigit() or self.todo_table.exists(iid):  # one edited by hand, without a number of its own
                 continue
             self.todo_table.insert("", "end", iid=iid, tags=("done",) if item.get("done") else (),
-                                   values=(item["text"], when_text(item.get("added")),
+                                   values=(todo.shown(item), when_text(item.get("added")),
                                            when_text(item.get("done_at")) if item.get("done") else ""))
         for iid in keep:
             if self.todo_table.exists(iid):
@@ -2447,17 +2457,19 @@ class AssistantWindow:
             cards[name] = self._part(page, name, tint, icon)
             cards[name][0].pack(fill="x", pady=(0, self.px(14)))
         self._jumps(page, [(name, tint, cards[name][0]) for name, tint, _ in ISLAND_PARTS])
-        count, form = [0], None
+        count, form, started = [0], None, set()
         self.island_jobs, self.island_apps_loaded = {}, False
 
-        def row(title, sub):
+        def row(title, sub, part=None):
             nonlocal form
             i = count[0]
             count[0] += 1
-            form = cards["Look" if i < 6 else "Place" if i < 11 else "Behaviour"][1]  # its part's card
+            part = part or ("Look" if i < 6 else "Place" if i < 11 else "Behaviour")
+            form = cards[part][1]  # its part's card
             r = i * 2
-            if i not in (0, 6, 11):  # a thin line between rows, but at the top of a card
+            if part in started:  # a thin line between rows, but at the top of a card
                 tk.Frame(form, bg=LINE, height=1).grid(row=r, column=0, columnspan=2, sticky="new")
+            started.add(part)
             self._label(form, title, self.f_h2).grid(row=r, column=0, sticky="w", pady=(self.px(14), 0))
             self._label(form, sub, self.f_small, MUTED, wraplength=self.px(330)).grid(row=r + 1, column=0, sticky="w")
             return r
@@ -2526,6 +2538,41 @@ class AssistantWindow:
                                  "show."), "island_hide_fullscreen", "Hide over full-screen apps")
         slider(row("Popups stay", "How long a notification or the battery stays up. Pointing at one keeps it."),
                "island_auto_hide", 2, 15, " s")
+        check(row("Light", "Something comes and she lights up in its colour, as Glance's notch does: a line round her "
+                           "and light along the top of the screen.", "Look"), "island_light", "Light up")
+
+        # the panels, the edges and the dock (30 October 2026, after bloom)
+        combo(row("Beside her eyes", "A little of what's going on, either side of her eyes while nothing else is.",
+                  "Panels"), "island_status", ISLAND_STATUS)
+        check(row("Do Not Disturb", "No notifications, devices or battery popping up on the island. Your own timers "
+                                    "and her turns still show. The moon in Controls does the same.", "Panels"),
+              "island_dnd", "Hush the island")
+        check(row("Shelf", "Files dropped on her eyes wait on the shelf panel, to drag out where you want them. Off, "
+                           "it's empty each time she starts.", "Panels"), "island_shelf_keep",
+              "Keep the shelf for next time")
+        slider(row("Focus", "A round of the focus timer, when you don't say how long. \u201cStart a pomodoro\u201d.",
+                   "Panels"), "focus_minutes", 5, 90, " min")
+        slider(row("Break", "The break after each round. Every fourth one is 15 minutes.", "Panels"),
+               "break_minutes", 1, 30, " min")
+        check(row("Volume", "Rest the pointer against the left edge of the screen: the volume slides out, with the "
+                            "apps playing sound beside it.", "Edges"), "edge_volume", "At the left edge")
+        check(row("Brightness", "The same at the right edge, for the screen's brightness. Only on a screen Windows "
+                                "can dim.", "Edges"), "edge_brightness", "At the right edge")
+        check(row("When they change", "The slider shows for a moment when the volume or brightness changes, from the "
+                                      "keys or anywhere. Windows' own still shows too.", "Edges"), "level_hud",
+              "Show the change")
+        check(row("In the notch", "A change shows in her island instead, with her light along her bottom as far as "
+                                  "it's set, as Glance's notch does. Off, the slider shows it.", "Edges"), "level_notch",
+              "Show it in the notch")
+        check(row("Round corners", "The top corners of the screen rounded off, like a MacBook's.", "Edges"),
+              "island_corners", "Round the top corners")
+        check(row("Dock", "Your pinned and open apps along the bottom of the screen, growing as you point at them. "
+                          "Click to open or switch, right-click to pin.", "Dock"), "dock", "Show the dock")
+        combo(row("Hiding", "Out of a window's way, or only when the pointer's at the bottom of the screen.", "Dock"),
+              "dock_mode", DOCK_MODES)
+        check(row("Taskbar", "Hides Windows' taskbar while the dock is on, and brings it back when the dock's off or "
+                             "she quits. The tray icons are under the taskbar.", "Dock"), "dock_replace_taskbar",
+              "Hide Windows' taskbar")
 
         found = cards["Plugins"][1]
         self._label(found, "What the island shows while she isn't busy. Each one reads only what Windows already "
@@ -2569,6 +2616,40 @@ class AssistantWindow:
             return
         settings.put(key, value)
         getattr(self.bubble, "reload", lambda: None)()
+        if self.edges is not None:
+            self.edges.reload()
+        if key.startswith("dock") or key == "island_theme":
+            self._dock_changed()
+
+    def _dock_changed(self):
+        """Her dock (dock.py) started, stopped or set again as Settings has it now. Off, and her last run ended with
+        Windows' taskbar hidden, it's put back."""
+        want = bool(settings.get("dock"))
+        if self.dock is not None and not want:
+            self.dock.close()
+            self.dock = None
+        elif self.dock is not None:
+            self.dock.reload()
+        elif want:
+            try:
+                import dock
+                self.dock = dock.Dock(self.root)
+            except Exception as exc:
+                print(f"  the dock didn't start: {exc!r}")
+                self.dock = None
+        elif os.path.exists(os.path.join(win.APPDATA_DIR, "taskbar-hidden")):
+            import dock
+            dock.show_taskbar()
+
+    def _start_edges(self):
+        """Her edges of the screen (edges.py): the volume's slider at the left, the brightness's at the right and
+        the round corners. None if they wouldn't start here: the rest of her goes on without them."""
+        try:
+            import edges
+            return edges.Edges(self.root)
+        except Exception as exc:
+            print(f"  the edges didn't start: {exc!r}")
+            return None
 
     def style_changed(self, style):
         if settings.get("popup_style") == style:
@@ -3543,11 +3624,37 @@ class AssistantWindow:
         self.on_top_var.set(self.on_top)
 
     def quit(self):
+        for part in (self.edges, self.dock):  # the dock first puts Windows' taskbar back, if it hid it
+            if part is not None:
+                part.close()
         self.bubble.close()
         self.root.destroy()
 
 
+def _native_faults():
+    """A crash in native code (an abort, an access violation) leaves each thread's Python stack in native-faults.log,
+    as pythonw has no console for it: on 30 October 2026 she stopped twice with 0xC0000409 in ucrtbase, abort's code,
+    and nothing in her log said where."""
+    import ctypes
+    import faulthandler
+    try:
+        path = win.log_path("native-faults.log")
+        out = open(path, "a", buffering=1, encoding="utf-8")
+        out.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} started, pid {os.getpid()}\n")
+        faulthandler.enable(out, all_threads=True)
+        # Python's own last words on a fatal error ("Fatal Python error: ...", then each thread's stack) go to the C
+        # runtime's stderr, which pythonw has none of: it's this file too
+        crt = ctypes.CDLL("ucrtbase")
+        crt.__acrt_iob_func.restype, crt.__acrt_iob_func.argtypes = ctypes.c_void_p, [ctypes.c_uint]
+        crt._wfreopen.restype = ctypes.c_void_p
+        crt._wfreopen.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_void_p]
+        crt._wfreopen(path, "a", crt.__acrt_iob_func(2))
+    except Exception as exc:
+        print(f"  no native fault log: {exc!r}")
+
+
 def run_app():
+    _native_faults()
     win.prepare_gui()  # before Tk starts, so text is sharp on scaled screens
     if not win.single_instance():
         win.show_existing(identity.hey(), TITLE, win.OLD_NAME)  # already running with the window closed: back

@@ -13,7 +13,7 @@ DEFAULTS = {
     # free, the same model as siri.FAST_MODEL. It was space-bunny-free on OpenCode Zen, gone (410) since 11 October,
     # so a fresh install failed every request until Settings refreshed the model list
     "llm_model": "kilo/nvidia/nemotron-3-ultra-550b-a55b:free",
-    # speech to text on this PC: parakeet, nemotron (writes as you talk, but lost "Hey Harry" in Hari's voice), or whisper
+    # speech to text on this PC: parakeet or whisper (nemotron, which wrote as you talked, taken out 31 October 2026)
     "stt_engine": "parakeet",
     # a provider's ears for what's plainly said to her, as "sarvam:saaras:v4" (hearing.py), or "" for this PC's alone;
     # and what they're for: "all" (commands and dictation) or "dictation"
@@ -91,6 +91,40 @@ DEFAULTS = {
     "island_always": True,  # her eyes stay at the top of the screen when she isn't doing anything
     "island_hide_fullscreen": True,  # not over a full-screen game, video or presentation, but for her own turns
     "island_auto_hide": 5,  # seconds a popup (a notification, the battery) stays up
+    # the island's panels (30 October 2026, after bloom's notch): the one open last, Do Not Disturb (no popups from
+    # outside while it's on), what sits beside her eyes while nothing's on ("" for nothing, as the owner had it from
+    # 27 October, else some of weather, battery, cpu and ram, as "weather,battery"), and the shelf: kept for next
+    # time or not, and what's on it
+    "island_panel": "controls",
+    "island_dnd": False,
+    "island_status": "",
+    "island_shelf_keep": False,
+    "island_shelf": [],
+    # her focus timer, a Pomodoro (focus.py, 30 October 2026): minutes of a round's focus, and of its break
+    "focus_minutes": 25,
+    "break_minutes": 5,
+    # her edges of the screen (edges.py, 30 October 2026, after bloom): the volume's slider at the left edge and the
+    # brightness's at the right, out when the pointer rests against it; out for a moment by itself when either
+    # changes (level_hud); and round corners at the top of the screen, as a MacBook's, off to start with
+    "edge_volume": True,
+    "edge_brightness": True,
+    "level_hud": True,
+    # a change shown in the island instead, with her light along her bottom, as Glance's notch shows it (30 October
+    # 2026): the edge's slider shows a change only with this off
+    "level_notch": True,
+    "island_corners": False,
+    # the island's, the dock's and the edges' type (bubble.glance_face, 30 October 2026): "glance", Glance's Plus
+    # Jakarta Sans and Poppins, as the owner asked, or "segoe", Windows' own
+    "island_font": "glance",
+    # her light (island_light, 30 October 2026, after Glance's notch): lighting up in its colour as something comes
+    "island_light": True,
+    # her dock (dock.py, 30 October 2026, after bloom): off to start with; how it hides (smart: out of the way of the
+    # window in front, peek: till the pointer's at the bottom of the screen, fixed: never); whether it hides Windows'
+    # taskbar while it's on; and its pins, None till they're first read from the taskbar's
+    "dock": False,
+    "dock_mode": "smart",
+    "dock_replace_taskbar": False,
+    "dock_pins": None,
     "island_plugins": {},  # plugin ID: on or off (island_plugins.PLUGINS), missing ones as the plugin says
     "island_plugin_options": {},  # plugin ID: {option: value}
     "island_apps": {},  # app name: whether its notifications show, missing ones on for apps people message you in
@@ -103,9 +137,14 @@ VOICES = (  # the first is the default when none is picked, so Hannah stays firs
     ("Miku", "75cea27272464f8e8a529c9105d40297", "Indian accent"),
     ("Assistant", "fa97330bb80549fbb3cf84a1c421d70c", "crisp, American"),
     ("Ethan", "536d3a5e000945adb7038665781a4aca", "calm, a man"),
-    # Her voice made on this PC (pocket.py): free for good, used for Fish voices too once Fish's free model ends
-    ("Harry on this PC", "pocket:p248", "Indian English, offline, free for good"),
-    ("Harry on this PC, a man", "pocket:p251", "Indian English, offline, free for good"),
+    # Her voice made on this PC (kokoro.py): free for good, used for Fish voices too once Fish's free model ends
+    ("Harry on this PC", "kokoro:af_heart", "warm, American, offline, free for good"),
+    ("Harry on this PC, Bella", "kokoro:af_bella", "American, offline, free for good"),
+    ("Harry on this PC, Emma", "kokoro:bf_emma", "British, offline, free for good"),
+    ("Harry on this PC, Alpha", "kokoro:hf_alpha", "an Indian voice, offline, free for good"),
+    ("Harry on this PC, Beta", "kokoro:hf_beta", "an Indian voice, offline, free for good"),
+    ("Harry on this PC, a man", "kokoro:am_michael", "American, offline, free for good"),
+    ("Harry on this PC, a British man", "kokoro:bm_george", "British, offline, free for good"),
     # Windows' own voices: offline, instant, no Fish account needed
     ("Windows Heera", "onecore:MSTTS_V110_enIN_HeeraM", "offline, Indian English"),
     ("Windows Ravi", "onecore:MSTTS_V110_enIN_RaviM", "offline, Indian English, a man"),

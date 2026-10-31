@@ -65,8 +65,9 @@ MODELS = {
     "deepgram": (("nova-3", "Nova-3", "English"),
                  ("nova-3/multi", "Nova-3, languages mixed", "English with Hindi and others")),
 }
+# Nemotron, which wrote as you talked, was taken out on 31 October 2026 (the owner): Parakeet hears English better
+# for less CPU; a saved "nemotron" is heard as Parakeet (siri.run_voice_assistant)
 LOCAL = (("parakeet", "Parakeet", "on this PC, English, about 0.2 s (the default)"),
-         ("nemotron", "Nemotron", "on this PC, your words as you talk, more CPU"),
          ("whisper", "Whisper small.en", "on this PC, English"))
 
 Got = namedtuple("Got", "text sure ms")  # a provider's words: sure is None when it doesn't say how sure

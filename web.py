@@ -308,8 +308,17 @@ def weather(where=None):
         j = S.get("https://api.open-meteo.com/v1/forecast", headers=UA, timeout=8, params={
             "latitude": loc["lat"], "longitude": loc["lon"], "timezone": "auto", "forecast_days": 3,
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m",
-            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset"}).json()
+            "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset",
+            "hourly": "temperature_2m,weather_code,precipitation_probability"}).json()
         c, d = j["current"], j["daily"]
+        # the next six hours, for the island's Today panel (30 October 2026, after Glance's): from this hour on
+        h, hourly = j.get("hourly") or {}, []
+        times = h.get("time") or []
+        start = next((i for i, t in enumerate(times) if t[:13] >= str(c.get("time", ""))[:13]), len(times))
+        for i in range(start, min(start + 6, len(times))):
+            hourly.append({"hour": int(times[i][11:13]), "temp_c": round(h["temperature_2m"][i]),
+                           "sky": WEATHER.get(h["weather_code"][i], "mixed"),
+                           "rain_chance": (h.get("precipitation_probability") or [None] * len(times))[i]})
         days = [{"day": ("today", "tomorrow", "day after")[i], "sky": WEATHER.get(d["weather_code"][i], "mixed"),
                  "high_c": round(d["temperature_2m_max"][i]), "low_c": round(d["temperature_2m_min"][i]),
                  "rain_chance": d["precipitation_probability_max"][i],
@@ -318,7 +327,7 @@ def weather(where=None):
                                                "feels_like_c": round(c["apparent_temperature"]),
                                                "sky": WEATHER.get(c["weather_code"], "mixed"),
                                                "humidity": c["relative_humidity_2m"], "wind_kmh": round(c["wind_speed_10m"])},
-                "days": days}
+                "days": days, "hourly": hourly}
     return _cached("weather", (round(loc["lat"], 2), round(loc["lon"], 2)), 900, make)
 
 

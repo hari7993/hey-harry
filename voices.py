@@ -1,6 +1,6 @@
 """Her voice from a provider (29 October 2026, the owner's ask): ElevenLabs, Sarvam or Deepgram, picked in Settings >
 Voice the way the answer model is (providers.py): a provider, its key, then any of its voices, the list read live
-where it has one. Fish Audio, her voice on this PC (pocket.py) and Windows' own voices are siri.py's, as before.
+where it has one. Fish Audio, her voice on this PC (kokoro.py) and Windows' own voices are siri.py's, as before.
 
 A voice from one of these is saved as "<provider>:<model>/<voice>": "elevenlabs:eleven_flash_v2_5/JBFqnCBsd6RMkjVDRZzb"
 or "sarvam:bulbul:v3/shubh". Deepgram's model is the voice: "deepgram:aura-2-thalia-en". So a line kept in her cache

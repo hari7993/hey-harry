@@ -5,7 +5,9 @@ frame costs well under a millisecond; between blinks nothing is drawn at all.
 
 The glass capsule (27 October 2026) has the same eyes, glowing in the colour of what she's doing (halo).
 
-The shapes and glyphs the island's plugins use (a battery, play and pause, a progress ring, a tick) are here too.
+The shapes and glyphs the island's plugins use (a battery, play and pause, a progress ring, a tick) are here too, and
+since 30 October 2026 (the owner's pictures of an iPhone's island) those of its live activities: a moon for dream
+mode, a recording dot, a hand, a pointer, a pause, and a voice's waveform. She sleeps in dream mode, z's and all.
 """
 import math
 import random
@@ -173,8 +175,11 @@ MOODS = {
     "sad": "drooping when something went wrong or the battery's low",
     "side": "a side look when it wasn't for her",
     "x": "crossed out for an error",
+    "dream": "asleep and dreaming while dream mode is on",
 }
+STILL = ("love", "happy", "x", "sad", "dream")  # looks that keep her eyes in the middle, never glancing about
 REACT_FOR = {"love": 2.6, "happy": 1.8, "surprised": 1.0, "sad": 2.2}  # seconds a reaction lasts
+BLINKING = ("open", "surprised", "focus", "think", "glasses", "headphones", "sleepy", "side")  # the looks that blink
 
 
 class Eyes:
@@ -189,6 +194,7 @@ class Eyes:
         self.target, self.next_look, self.hold_until = [0.0, 0.0], now + 4.0, 0.0
         self.mood, self.mood_until = None, 0.0
         self.last_active = now
+        self.shown = "open"  # the look last drawn (update), for wait
 
     def react(self, mood, now):
         if mood in MOODS:
@@ -209,7 +215,8 @@ class Eyes:
             expr = "sleepy"  # five quiet minutes
         # blinks: closed for about a sixth of a second, sometimes twice
         open_ = 1.0
-        blinking = expr in ("open", "surprised", "focus", "think", "glasses", "headphones", "sleepy", "side")
+        self.shown = expr
+        blinking = expr in BLINKING
         if self.blink_at is None and now >= self.next_blink and blinking:
             self.blink_at = now
         if self.blink_at is not None:
@@ -225,7 +232,7 @@ class Eyes:
             else:
                 open_ = 1 - 0.9 * math.sin(math.pi * u)
         # where it looks
-        if look_at is not None and expr not in ("love", "happy", "x"):
+        if look_at is not None and expr not in ("love", "happy", "x", "dream"):
             self.target = [float(look_at[0]), float(look_at[1])]
             self.last_active = now
         elif expr == "think":
@@ -234,7 +241,7 @@ class Eyes:
             self.target = [0.45 * math.sin(now * 1.7), 0.35]
         elif expr == "side":
             self.target = [0.95, 0.1]
-        elif not wander or expr in ("love", "happy", "x", "sad"):
+        elif not wander or expr in STILL:
             self.target = [0.0, 0.0]
         elif now >= self.next_look:
             if self.target != [0.0, 0.0] or random.random() < 0.35:
@@ -255,7 +262,11 @@ class Eyes:
         return expr, open_, self.look[0], self.look[1], moving
 
     def wait(self, now):
-        """Seconds till the next blink or glance, when nothing else moves."""
+        """Seconds till the next blink or glance, when nothing else moves; an hour for a look that never blinks
+        (asleep in dream mode, a smile), whose next blink would be long past and ask for every frame (30 October
+        2026: dream mode drew 60 frames a second for as long as it was on)."""
+        if self.shown not in BLINKING:
+            return 3600.0
         return max(0.016, min(self.next_blink, self.next_look) - now)
 
 
@@ -292,6 +303,11 @@ def draw_eyes(cv, cx, cy, size, expr, open_=1.0, look=(0.0, 0.0), level=0.0, t=0
             cv.shape(lambda xs, ys: np.minimum(segment(xs, ys, ex - r, ey - r, ex + r, ey + r, w),
                                                segment(xs, ys, ex - r, ey + r, ex + r, ey - r, w)),
                      eye_box(ex, ey, r, r), RED, a, gx, spread)
+        elif expr == "dream":  # shut, curving down like a smile, rising and falling slowly as she breathes
+            r, w = size * 0.4, size * 0.19
+            dy = math.sin(t * 1.3) * size * 0.06 - size * 0.16
+            cv.shape(lambda xs, ys, ex=ex, ey=ey + dy: arc(xs, ys, ex, ey, r, w, up=False),
+                     eye_box(ex, ey + dy + r * 0.5, r, r), colour, a, gx, spread, halo)
         else:
             w = ew * (1.12 if expr == "surprised" else 0.86 if expr == "glasses" else 1.0)
             h = size * (1.18 if expr == "surprised" else 0.84 if expr == "glasses" else 1.0) * bounce
@@ -391,6 +407,27 @@ def sparkles(cv, cx, cy, size, t, a=1.0):
         cv.shape(lambda xs, ys, sx=sx, sy=sy, r=r, w=w: np.minimum(segment(xs, ys, sx - r, sy, sx + r, sy, w),
                                                                    segment(xs, ys, sx, sy - r, sx, sy + r, w)),
                  (sx - r - g, sy - r - g, sx + r + g, sy + r + g), GOLD, a * k, 0.5, size * 0.12)
+
+
+def zzz(cv, x, y, size, t, colour=WHITE, a=1.0, halo=None):
+    """Three little z's, one after another, rising up and to the right from x, y as she sleeps, growing and fading as
+    they go. size: her eyes'."""
+    for i in range(3):
+        u = (t / 2.7 + i / 3) % 1.0
+        k = math.sin(math.pi * u)
+        if k < 0.06:
+            continue
+        h = size * (0.13 + 0.09 * u)  # half of each z's height
+        zx, zy = x + u * size * 0.5, y - u * size * 0.95
+        w = max(0.9, h * 0.42)
+        corners = ((zx - h, zy - h), (zx + h, zy - h), (zx - h, zy + h), (zx + h, zy + h))
+
+        def sd(xs, ys, c=corners, w=w):  # the top, the slant down to the left, the bottom
+            return np.minimum(np.minimum(segment(xs, ys, *c[0], *c[1], w), segment(xs, ys, *c[1], *c[2], w)),
+                              segment(xs, ys, *c[2], *c[3], w))
+        g = h + w + 3 + 3.5 * size * 0.12  # and room for the glow to fade out
+        cv.shape(sd, (zx - g, zy - g, zx + g, zy + g), colour, a * k * 0.9, 0.3 if halo is not None else 0.0,
+                 size * 0.12, halo)
 
 
 # --------------------------------------------------------------------------- the plugins' glyphs
@@ -510,3 +547,463 @@ def equalizer(cv, x, cy, h, colour, level, t, a=1.0, bars=4):
         bx = x + i * w * 2.0
         cv.shape(lambda xs, ys, bx=bx, bh=bh: rbox(xs, ys, bx, cy + (h - bh) / 2, w / 2, bh / 2, w / 2),
                  (bx - w, cy - h / 2 - 1, bx + w, cy + h / 2 + 1), colour, a)
+
+
+# --------------------------------------------------------------------------- live activities' glyphs (30 October 2026)
+# Each is glyph(cv, cx, cy, s, colour, a, t), about s px across and centred on cx, cy, as a phone's island draws its
+# small symbols. t: seconds, while it moves (a twinkle, a pulse, a wave); None keeps it still, costing no frames.
+
+
+def moon_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A crescent moon and a small star by it that twinkles while t goes on: dream mode."""
+    r = s * 0.4
+    ox, oy = cx - s * 0.06, cy + s * 0.04
+    bx, by, br = ox + r * 0.55, oy - r * 0.36, r * 0.84  # the dark bite out of it
+    g = r + 2 + 3.5 * r * 0.5  # room for its glow to fade out, so no square shows round it
+    cv.shape(lambda xs, ys: np.maximum(circle(xs, ys, ox, oy, r), -circle(xs, ys, bx, by, br)),
+             (ox - g, oy - g, ox + g, oy + g), colour, a, 0.18, r * 0.5)
+    k = 0.5 + 0.5 * math.sin(t * 2.6) if t is not None else 0.6
+    sx, sy, sr = cx + s * 0.34, cy - s * 0.3, s * (0.09 + 0.07 * k)
+    w = max(0.8, s * 0.06)
+    cv.shape(lambda xs, ys: np.minimum(segment(xs, ys, sx - sr, sy, sx + sr, sy, w),
+                                       segment(xs, ys, sx, sy - sr, sx, sy + sr, w)),
+             (sx - sr - 2, sy - sr - 2, sx + sr + 2, sy + sr + 2), colour, a * (0.5 + 0.5 * k))
+
+
+def record_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A recording dot, as a phone's red one, with a ring swelling out of it and fading while t goes on."""
+    r = s * 0.27
+    if t is not None:
+        u = (t / 1.7) % 1.0
+        rr, lw = r * (1.15 + 0.85 * u), max(1.0, s * 0.07)
+        cv.shape(lambda xs, ys: np.abs(circle(xs, ys, cx, cy, rr)) - lw / 2,
+                 (cx - rr - lw - 1, cy - rr - lw - 1, cx + rr + lw + 1, cy + rr + lw + 1), colour,
+                 a * 0.6 * (1 - u) ** 1.6)
+    g = r + 2 + 3.5 * r * 0.5
+    cv.shape(lambda xs, ys: circle(xs, ys, cx, cy, r), (cx - g, cy - g, cx + g, cy + g), colour, a, 0.3, r * 0.5)
+
+
+def hand_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """An open hand, fingers up, that waves a little from the wrist while t goes on: hand control."""
+    tilt = 0.16 * math.sin(t * 4.2) if t is not None else 0.0
+    c, sn = math.cos(tilt), math.sin(tilt)
+    wx, wy = cx, cy + s * 0.5  # it turns about the wrist
+
+    def at(x, y):
+        dx, dy = x * s, y * s + (cy - wy)
+        return wx + dx * c - dy * sn, wy + dx * sn + dy * c
+    w = s * 0.15
+    bones = (((-0.25, -0.02), (-0.29, -0.3)), ((-0.09, -0.06), (-0.1, -0.44)), ((0.08, -0.06), (0.09, -0.42)),
+             ((0.24, -0.02), (0.27, -0.26)), ((-0.17, 0.2), (-0.42, 0.0)))  # four fingers and the thumb
+    palm = (at(-0.1, 0.12), at(0.1, 0.12), at(0.0, 0.28))
+
+    def sd(xs, ys):
+        d = np.minimum(segment(xs, ys, *palm[0], *palm[1], s * 0.44), segment(xs, ys, *palm[1], *palm[2], s * 0.3))
+        for p, q in bones:
+            d = np.minimum(d, segment(xs, ys, *at(*p), *at(*q), w))
+        return d
+    cv.shape(sd, (cx - s * 0.65, cy - s * 0.65, cx + s * 0.65, cy + s * 0.65), colour, a)
+
+
+def pointer_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A mouse pointer, its tip up and to the left, with a ring tapping out from its tip while t goes on: where to
+    click, shown on your screen."""
+    x0, y0 = cx - s * 0.26, cy - s * 0.42  # its tip
+    head = [(x0, y0), (x0, y0 + s * 0.7), (x0 + s * 0.5, y0 + s * 0.5)]
+    tail = (x0 + s * 0.2, y0 + s * 0.48, x0 + s * 0.36, y0 + s * 0.82)
+    cv.shape(lambda xs, ys: np.minimum(polygon(xs, ys, head) - s * 0.035, segment(xs, ys, *tail, s * 0.16)),
+             (x0 - 2, y0 - 2, x0 + s * 0.62, y0 + s * 0.92), colour, a)
+    if t is not None:
+        u = (t / 1.4) % 1.0
+        rr, lw = s * (0.08 + 0.26 * u), max(1.0, s * 0.06)
+        cv.shape(lambda xs, ys: np.abs(circle(xs, ys, x0, y0, rr)) - lw / 2,
+                 (x0 - rr - 2, y0 - rr - 2, x0 + rr + 2, y0 + rr + 2), colour, a * 0.7 * (1 - u))
+
+
+def pause_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Two rounded bars: paused, as her break is."""
+    for side in (-1, 1):
+        bx = cx + side * s * 0.17
+        cv.shape(lambda xs, ys, bx=bx: rbox(xs, ys, bx, cy, s * 0.09, s * 0.32, s * 0.07),
+                 (bx - s * 0.15, cy - s * 0.4, bx + s * 0.15, cy + s * 0.4), colour, a)
+
+
+GLYPHS = {"moon": moon_glyph, "record": record_glyph, "hand": hand_glyph, "pointer": pointer_glyph,
+          "pause": pause_glyph}
+
+
+def wave_bars(cv, x, cy, w, h, colour, level, t, a=1.0):
+    """A voice's waveform as a phone's recorder draws it: rounded bars across w px from x, up and down from cy and at
+    most h px tall, tallest in the middle, moving with t and swelling with level (0 to 1)."""
+    bw = max(1.6, h * 0.12)
+    n = max(4, int(w / (bw * 2.2)))
+    step = w / n
+    level = min(1.0, max(0.0, level))
+    for i in range(n):
+        ph = i * 0.83
+        wob = 0.5 + 0.5 * math.sin(t * 6.1 + ph) * math.cos(t * 2.3 + ph * 1.9)
+        env = math.sin(math.pi * (i + 0.5) / n) ** 0.7
+        bh = max(bw, h * env * (0.22 + 0.78 * wob * (0.45 + 0.55 * level)))
+        bx = x + (i + 0.5) * step
+        cv.shape(lambda xs, ys, bx=bx, bh=bh: rbox(xs, ys, bx, cy, bw / 2, bh / 2, bw / 2),
+                 (bx - bw, cy - h / 2 - 1, bx + bw, cy + h / 2 + 1), colour, a)
+
+
+# --------------------------------------------------------------------------- the hub's glyphs (30 October 2026)
+# For the island's panels, after bloom's notch (github.com/SehajveerSingh2005/bloom): its controls, its calendar, its
+# devices and its shelf, and the drawings a connected device's popup has. glyph(cv, cx, cy, s, colour, a), about s px
+# across, centred on cx, cy, like the live activities' above.
+def _arc_up(xs, ys, cx, cy, r, w):
+    """A quarter of a ring round cx, cy, r px out and w wide, its middle straight up, with round ends."""
+    dx, dy = xs - cx, ys - cy
+    ring = np.abs(np.hypot(dx, dy) - r) - w / 2
+    wedge = (np.abs(dx) + dy) * 0.7071  # outside the quarter that points up: more than 0
+    ends = np.minimum(np.hypot(dx - r * 0.7071, dy + r * 0.7071), np.hypot(dx + r * 0.7071, dy + r * 0.7071)) - w / 2
+    return np.minimum(np.maximum(ring, wedge), ends)
+
+
+def _arc_right(xs, ys, cx, cy, r, w):
+    """_arc_up turned to face right."""
+    dx, dy = xs - cx, ys - cy
+    ring = np.abs(np.hypot(dx, dy) - r) - w / 2
+    wedge = (np.abs(dy) - dx) * 0.7071
+    ends = np.minimum(np.hypot(dx - r * 0.7071, dy - r * 0.7071), np.hypot(dx - r * 0.7071, dy + r * 0.7071)) - w / 2
+    return np.minimum(np.maximum(ring, wedge), ends)
+
+
+def _segments(xs, ys, points, w):
+    """Lines through each pair of points, w wide, as one shape."""
+    d = None
+    for (ax, ay), (bx, by) in points:
+        part = segment(xs, ys, ax, ay, bx, by, w)
+        d = part if d is None else np.minimum(d, part)
+    return d
+
+
+def wifi_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Wi-Fi as a phone's status bar has it: a dot and two arcs over it."""
+    base, w = cy + s * 0.3, max(1.2, s * 0.12)
+    cv.shape(lambda xs, ys: np.minimum(np.minimum(circle(xs, ys, cx, base, s * 0.09), _arc_up(xs, ys, cx, base,
+                                                                                              s * 0.34, w)),
+                                       _arc_up(xs, ys, cx, base, s * 0.6, w)),
+             (cx - s * 0.55, cy - s * 0.45, cx + s * 0.55, cy + s * 0.45), colour, a)
+
+
+def bluetooth_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Bluetooth's rune: a line down, and two arrowheads off it to the right, crossing in the middle."""
+    h, wd, w = s * 0.42, s * 0.2, max(1.1, s * 0.1)
+    top, bot = (cx - wd * 0.15, cy - h), (cx - wd * 0.15, cy + h)
+    ru, rl, ul, ll = (cx + wd, cy - h / 2), (cx + wd, cy + h / 2), (cx - wd, cy - h / 2.2), (cx - wd, cy + h / 2.2)
+    pts = ((top, bot), (top, ru), (ru, ll), (bot, rl), (rl, ul))
+    cv.shape(lambda xs, ys: _segments(xs, ys, pts, w), (cx - s * 0.4, cy - s * 0.55, cx + s * 0.4, cy + s * 0.55),
+             colour, a)
+
+
+def dnd_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Do Not Disturb: a crescent moon, as a phone's."""
+    r = s * 0.36
+    ox, oy, bx, by = cx - s * 0.04, cy + s * 0.02, cx + s * 0.16, cy - s * 0.14
+    cv.shape(lambda xs, ys: np.maximum(circle(xs, ys, ox, oy, r), -circle(xs, ys, bx, by, r * 0.86)),
+             (ox - r - 2, oy - r - 2, ox + r + 2, oy + r + 2), colour, a)
+
+
+def speaker_glyph(cv, cx, cy, s, colour, a=1.0, level=1.0, muted=False):
+    """A speaker, with a wave for each third of level going out of it, or a cross while it's muted."""
+    bx, w = cx - s * 0.16, max(1.1, s * 0.1)
+    # the box and the cone apart: together they aren't convex, and polygon() takes only convex shapes
+    cone = [(bx - s * 0.07, cy - s * 0.11), (bx + s * 0.12, cy - s * 0.3), (bx + s * 0.12, cy + s * 0.3),
+            (bx - s * 0.07, cy + s * 0.11)]
+
+    def body(xs, ys):
+        return np.minimum(rbox(xs, ys, bx - s * 0.12, cy, s * 0.09, s * 0.11, s * 0.03), polygon(xs, ys, cone) -
+                          s * 0.02)
+    cv.shape(body, (bx - s * 0.3, cy - s * 0.4, bx + s * 0.2, cy + s * 0.4), colour, a)
+    x0 = bx + s * 0.16
+    if muted:
+        r = s * 0.12
+        mx = x0 + s * 0.2
+        cv.shape(lambda xs, ys: _segments(xs, ys, (((mx - r, cy - r), (mx + r, cy + r)),
+                                                   ((mx - r, cy + r), (mx + r, cy - r))), w),
+                 (mx - r - w, cy - r - w, mx + r + w, cy + r + w), colour, a)
+        return
+    for i, r in enumerate((s * 0.14, s * 0.3)):
+        if level > (0.01 if i == 0 else 0.5):
+            cv.shape(lambda xs, ys, r=r: _arc_right(xs, ys, x0 - s * 0.06, cy, r, w),
+                     (x0 - s * 0.1, cy - r - w, x0 + r + w, cy + r + w), colour, a)
+
+
+def sun_glyph(cv, cx, cy, s, colour, a=1.0, level=1.0):
+    """The sun for brightness, its rays longer the brighter it is."""
+    r, w = s * 0.16, max(1.0, s * 0.09)
+    rays = []
+    for i in range(8):
+        th = i * math.pi / 4
+        c, sn = math.cos(th), math.sin(th)
+        r0, r1 = r + s * 0.08, r + s * (0.12 + 0.12 * max(0.0, min(1.0, level)))
+        rays.append(((cx + c * r0, cy + sn * r0), (cx + c * r1, cy + sn * r1)))
+    cv.shape(lambda xs, ys: np.minimum(circle(xs, ys, cx, cy, r), _segments(xs, ys, rays, w)),
+             (cx - s * 0.5, cy - s * 0.5, cx + s * 0.5, cy + s * 0.5), colour, a)
+
+
+def calendar_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A page of a calendar: its outline, the band along its top, and its two rings."""
+    hw, hh, w = s * 0.36, s * 0.32, max(1.0, s * 0.09)
+    cy2 = cy + s * 0.04
+
+    def sd(xs, ys):
+        frame = np.abs(rbox(xs, ys, cx, cy2, hw, hh, s * 0.08)) - w / 2
+        band = rbox(xs, ys, cx, cy2 - hh + s * 0.09, hw, s * 0.09, s * 0.04)
+        rings = _segments(xs, ys, (((cx - hw * 0.45, cy2 - hh - s * 0.1), (cx - hw * 0.45, cy2 - hh + s * 0.04)),
+                                   ((cx + hw * 0.45, cy2 - hh - s * 0.1), (cx + hw * 0.45, cy2 - hh + s * 0.04))), w)
+        return np.minimum(np.minimum(frame, band), rings)
+    cv.shape(sd, (cx - s * 0.45, cy - s * 0.5, cx + s * 0.45, cy + s * 0.48), colour, a)
+
+
+def timer_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A stopwatch for a focus session: its face, a hand, and the button on top."""
+    r, w = s * 0.32, max(1.1, s * 0.1)
+    cy2 = cy + s * 0.06
+    turn = (t * 0.9) % math.tau if t is not None else math.pi * 0.3
+    hx, hy = cx + math.sin(turn) * r * 0.62, cy2 - math.cos(turn) * r * 0.62
+    cv.shape(lambda xs, ys: np.minimum(np.abs(circle(xs, ys, cx, cy2, r)) - w / 2,
+                                       _segments(xs, ys, (((cx, cy2), (hx, hy)), ((cx, cy2 - r - s * 0.04),
+                                                                                  (cx, cy2 - r - s * 0.14)),
+                                                          ((cx - s * 0.08, cy2 - r - s * 0.15),
+                                                           (cx + s * 0.08, cy2 - r - s * 0.15))), w)),
+             (cx - s * 0.45, cy - s * 0.5, cx + s * 0.45, cy + s * 0.5), colour, a)
+
+
+def tray_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """The shelf: a tray with an arrow going down into it."""
+    hw, w = s * 0.36, max(1.1, s * 0.1)
+    top, bot = cy + s * 0.02, cy + s * 0.34
+    pts = (((cx - hw, top), (cx - hw, bot)), ((cx - hw, bot), (cx + hw, bot)), ((cx + hw, bot), (cx + hw, top)),
+           ((cx - hw, top), (cx - hw * 0.45, top)), ((cx - hw * 0.45, top), (cx - hw * 0.3, top + s * 0.12)),
+           ((cx - hw * 0.3, top + s * 0.12), (cx + hw * 0.3, top + s * 0.12)),
+           ((cx + hw * 0.3, top + s * 0.12), (cx + hw * 0.45, top)), ((cx + hw * 0.45, top), (cx + hw, top)),
+           ((cx, cy - s * 0.4), (cx, cy - s * 0.02)), ((cx - s * 0.14, cy - s * 0.15), (cx, cy - s * 0.02)),
+           ((cx + s * 0.14, cy - s * 0.15), (cx, cy - s * 0.02)))
+    cv.shape(lambda xs, ys: _segments(xs, ys, pts, w), (cx - s * 0.48, cy - s * 0.5, cx + s * 0.48, cy + s * 0.46),
+             colour, a)
+
+
+def controls_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Controls: two sliders, each with its knob, as a phone's control centre has them."""
+    w = max(1.1, s * 0.1)
+    pts = (((cx - s * 0.36, cy - s * 0.16), (cx + s * 0.36, cy - s * 0.16)),
+           ((cx - s * 0.36, cy + s * 0.18), (cx + s * 0.36, cy + s * 0.18)))
+    cv.shape(lambda xs, ys: np.minimum(np.minimum(_segments(xs, ys, pts, w), circle(xs, ys, cx + s * 0.14,
+                                                                                   cy - s * 0.16, s * 0.12)),
+                                       circle(xs, ys, cx - s * 0.16, cy + s * 0.18, s * 0.12)),
+             (cx - s * 0.46, cy - s * 0.36, cx + s * 0.46, cy + s * 0.38), colour, a)
+
+
+def headphones_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Over-ear headphones: the band, and a cup each side."""
+    r, w = s * 0.34, max(1.2, s * 0.1)
+    by = cy + s * 0.06
+
+    def sd(xs, ys):
+        band = arc(xs, ys, cx, by, r, w)
+        cups = np.minimum(rbox(xs, ys, cx - r, by + s * 0.12, s * 0.09, s * 0.17, s * 0.06),
+                          rbox(xs, ys, cx + r, by + s * 0.12, s * 0.09, s * 0.17, s * 0.06))
+        return np.minimum(band, cups)
+    cv.shape(sd, (cx - s * 0.5, cy - s * 0.42, cx + s * 0.5, cy + s * 0.46), colour, a)
+
+
+def buds_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A pair of earbuds with stems, as AirPods are drawn: a round head and a stem down each."""
+    w = max(1.2, s * 0.11)
+
+    def sd(xs, ys):
+        d = None
+        for side in (-1, 1):
+            hx = cx + side * s * 0.2
+            head = circle(xs, ys, hx, cy - s * 0.14, s * 0.13)
+            stem = segment(xs, ys, hx + side * s * 0.06, cy - s * 0.06, hx + side * s * 0.07, cy + s * 0.34, w)
+            part = np.minimum(head, stem)
+            d = part if d is None else np.minimum(d, part)
+        return d
+    cv.shape(sd, (cx - s * 0.5, cy - s * 0.4, cx + s * 0.5, cy + s * 0.46), colour, a)
+
+
+def speaker_box_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A speaker of its own (a Bluetooth one): a tall box with its two drivers in it."""
+    w = max(1.0, s * 0.09)
+    cv.shape(lambda xs, ys: np.minimum(np.minimum(np.abs(rbox(xs, ys, cx, cy, s * 0.26, s * 0.38, s * 0.09)) - w / 2,
+                                                  np.abs(circle(xs, ys, cx, cy + s * 0.1, s * 0.14)) - w / 2),
+                                       circle(xs, ys, cx, cy - s * 0.2, s * 0.06)),
+             (cx - s * 0.36, cy - s * 0.48, cx + s * 0.36, cy + s * 0.48), colour, a)
+
+
+def drive_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A USB drive: its body, and the plug at its top."""
+    w = max(1.0, s * 0.09)
+    cv.shape(lambda xs, ys: np.minimum(rbox(xs, ys, cx, cy + s * 0.1, s * 0.2, s * 0.3, s * 0.07),
+                                       np.abs(rbox(xs, ys, cx, cy - s * 0.3, s * 0.12, s * 0.1, s * 0.02)) - w / 2),
+             (cx - s * 0.3, cy - s * 0.48, cx + s * 0.3, cy + s * 0.48), colour, a)
+
+
+def jack_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Wired earphones' plug: a slim pin over its grip, and the cable going down."""
+    w = max(1.0, s * 0.1)
+
+    def sd(xs, ys):
+        pin = np.maximum(segment(xs, ys, cx, cy - s * 0.42, cx, cy - s * 0.12, s * 0.13),
+                         -rbox(xs, ys, cx, cy - s * 0.24, s * 0.2, s * 0.02, 0.0))  # a ring cut round it
+        grip = rbox(xs, ys, cx, cy + s * 0.06, s * 0.15, s * 0.17, s * 0.05)
+        return np.minimum(np.minimum(pin, grip), segment(xs, ys, cx, cy + s * 0.2, cx, cy + s * 0.46, w))
+    cv.shape(sd, (cx - s * 0.25, cy - s * 0.5, cx + s * 0.25, cy + s * 0.5), colour, a)
+
+
+def chevron_glyph(cv, cx, cy, s, colour, a=1.0, right=True):
+    """A chevron, < or >, for going back or on a month."""
+    d, w = (1 if right else -1) * s * 0.14, max(1.1, s * 0.11)
+    pts = (((cx - d, cy - s * 0.26), (cx + d, cy)), ((cx + d, cy), (cx - d, cy + s * 0.26)))
+    cv.shape(lambda xs, ys: _segments(xs, ys, pts, w), (cx - s * 0.3, cy - s * 0.4, cx + s * 0.3, cy + s * 0.4),
+             colour, a)
+
+
+def cloud_glyph(cv, cx, cy, s, colour, a=1.0, sky="cloudy"):
+    """The weather as one small drawing: the sun when it's clear, the sun behind a cloud when it's partly so, a cloud
+    with drops for rain, with a bolt for a storm, else a cloud."""
+    sky = str(sky or "")
+
+    def cloud(xs, ys, ox, oy, k):
+        return np.minimum(np.minimum(circle(xs, ys, ox - s * 0.16 * k, oy + s * 0.04 * k, s * 0.16 * k),
+                                     circle(xs, ys, ox + s * 0.06 * k, oy - s * 0.06 * k, s * 0.22 * k)),
+                          rbox(xs, ys, ox, oy + s * 0.1 * k, s * 0.3 * k, s * 0.1 * k, s * 0.1 * k))
+    box = (cx - s * 0.5, cy - s * 0.5, cx + s * 0.5, cy + s * 0.5)
+    if "clear" in sky or "sun" in sky:
+        sun_glyph(cv, cx, cy, s, GOLD, a)
+        return
+    if "partly" in sky or "few" in sky:
+        sun_glyph(cv, cx + s * 0.14, cy - s * 0.14, s * 0.7, GOLD, a)
+    cv.shape(lambda xs, ys: cloud(xs, ys, cx - s * 0.02, cy - s * 0.02, 1.0), box, colour, a)
+    w = max(1.0, s * 0.08)
+    if "storm" in sky or "thunder" in sky:
+        pts = [(cx + s * 0.02, cy + s * 0.16), (cx - s * 0.12, cy + s * 0.36), (cx + s * 0.06, cy + s * 0.3)]
+        cv.shape(lambda xs, ys: polygon(xs, ys, pts), box, GOLD, a)
+    elif "rain" in sky or "drizzle" in sky or "shower" in sky or "snow" in sky:
+        drops = tuple(((cx + o, cy + s * 0.2), (cx + o - s * 0.05, cy + s * 0.36)) for o in (-s * 0.14, 0.0, s * 0.14))
+        cv.shape(lambda xs, ys: _segments(xs, ys, drops, w), box, (0.39, 0.82, 1.0), a)
+
+
+# --------------------------------------------------------------------------- Glance's (30 October 2026)
+# For the rest of Glance's notch: the Recent panel's bell, Keep awake's cup, and each shortcut's answer
+def bell_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Notifications: a bell, its rim and its clapper."""
+    w = max(1.1, s * 0.1)
+
+    def sd(xs, ys):
+        dome = np.minimum(circle(xs, ys, cx, cy - s * 0.08, s * 0.22), rbox(xs, ys, cx, cy + s * 0.06, s * 0.22,
+                                                                            s * 0.12, s * 0.02))
+        rim = segment(xs, ys, cx - s * 0.33, cy + s * 0.19, cx + s * 0.33, cy + s * 0.19, w * 1.3)
+        return np.minimum(np.minimum(dome, rim), circle(xs, ys, cx, cy + s * 0.32, s * 0.08))
+    cv.shape(sd, (cx - s * 0.42, cy - s * 0.42, cx + s * 0.42, cy + s * 0.46), colour, a)
+
+
+def cup_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Keep awake: a cup, with its handle and steam over it."""
+    w = max(1.1, s * 0.1)
+    bx, by = cx - s * 0.07, cy + s * 0.1
+
+    def sd(xs, ys):
+        cup = np.abs(rbox(xs, ys, bx, by, s * 0.22, s * 0.2, s * 0.07)) - w / 2
+        handle = np.maximum(np.abs(circle(xs, ys, bx + s * 0.22, by - s * 0.01, s * 0.11)) - w / 2,
+                            bx + s * 0.22 - xs)
+        steam = _segments(xs, ys, (((bx - s * 0.08, by - s * 0.3), (bx - s * 0.04, by - s * 0.42)),
+                                   ((bx + s * 0.08, by - s * 0.3), (bx + s * 0.12, by - s * 0.42))), w)
+        return np.minimum(np.minimum(cup, handle), steam)
+    cv.shape(sd, (cx - s * 0.42, cy - s * 0.42, cx + s * 0.42, cy + s * 0.42), colour, a)
+
+
+def undo_glyph(cv, cx, cy, s, colour, a=1.0, t=None, redo=False):
+    """Undo: an arrow going back round over the top to the left, as an editor's button has it; redo the other way."""
+    w = max(1.2, s * 0.11)
+    f = -1.0 if redo else 1.0  # redo is undo turned round
+    ox, oy, r = cx + f * s * 0.06, cy + s * 0.04, s * 0.26
+    tip = (ox - f * r, oy + s * 0.06)
+    pts = (((tip[0] - f * s * 0.14, tip[1] - s * 0.11), tip), ((tip[0] + f * s * 0.13, tip[1] - s * 0.12), tip),
+           ((ox + f * r, oy), (ox + f * r, oy + s * 0.2)))
+
+    def sd(xs, ys):
+        return np.minimum(arc(xs, ys, ox, oy, r, w), _segments(xs, ys, pts, w))
+    cv.shape(sd, (cx - s * 0.48, cy - s * 0.4, cx + s * 0.48, cy + s * 0.4), colour, a)
+
+
+def scissors_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Cut: scissors, their two rings at the bottom and their blades crossing over them."""
+    w = max(1.1, s * 0.1)
+    r = s * 0.11
+
+    def sd(xs, ys):
+        rings = np.minimum(np.abs(circle(xs, ys, cx - s * 0.18, cy + s * 0.24, r)) - w / 2,
+                           np.abs(circle(xs, ys, cx + s * 0.18, cy + s * 0.24, r)) - w / 2)
+        blades = _segments(xs, ys, (((cx - s * 0.12, cy + s * 0.14), (cx + s * 0.16, cy - s * 0.38)),
+                                    ((cx + s * 0.12, cy + s * 0.14), (cx - s * 0.16, cy - s * 0.38))), w)
+        return np.minimum(rings, blades)
+    cv.shape(sd, (cx - s * 0.36, cy - s * 0.46, cx + s * 0.36, cy + s * 0.42), colour, a)
+
+
+def paste_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Paste: a clipboard, its board and the clip at its top."""
+    w = max(1.1, s * 0.1)
+
+    def sd(xs, ys):
+        board = np.abs(rbox(xs, ys, cx, cy + s * 0.06, s * 0.27, s * 0.34, s * 0.07)) - w / 2
+        clip = rbox(xs, ys, cx, cy - s * 0.27, s * 0.13, s * 0.07, s * 0.04)
+        lines = _segments(xs, ys, (((cx - s * 0.12, cy + s * 0.04), (cx + s * 0.12, cy + s * 0.04)),
+                                   ((cx - s * 0.12, cy + s * 0.18), (cx + s * 0.05, cy + s * 0.18))), w * 0.9)
+        return np.minimum(np.minimum(board, clip), lines)
+    cv.shape(sd, (cx - s * 0.4, cy - s * 0.42, cx + s * 0.4, cy + s * 0.46), colour, a)
+
+
+def saved_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Saved: a tick in a ring."""
+    w = max(1.1, s * 0.1)
+    r = s * 0.36
+    cv.shape(lambda xs, ys: np.abs(circle(xs, ys, cx, cy, r)) - w / 2, (cx - r - w, cy - r - w, cx + r + w, cy + r + w),
+             colour, a)
+    tick_glyph(cv, cx, cy + s * 0.02, s * 0.5, colour, a)
+
+
+def shot_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A screenshot: the four corners of a frame, as a camera's viewfinder has them, and a dot in it."""
+    w = max(1.1, s * 0.1)
+    hw, hh, c = s * 0.36, s * 0.3, s * 0.14
+    pts = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            x, y = cx + sx * hw, cy + sy * hh
+            pts += [((x, y), (x - sx * c, y)), ((x, y), (x, y - sy * c))]
+    cv.shape(lambda xs, ys: np.minimum(_segments(xs, ys, pts, w), circle(xs, ys, cx, cy, s * 0.1)),
+             (cx - s * 0.46, cy - s * 0.4, cx + s * 0.46, cy + s * 0.4), colour, a)
+
+
+def link_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A link: two rounded links of a chain, slanted, through each other."""
+    w = max(1.1, s * 0.1)
+    c, sn = 0.7071, 0.7071
+
+    def sd(xs, ys):
+        u, v = (xs - cx) * c + (ys - cy) * sn, -(xs - cx) * sn + (ys - cy) * c  # along the slant and across it
+        one = np.abs(rbox(u, v, -s * 0.15, 0.0, s * 0.2, s * 0.11, s * 0.11)) - w / 2
+        two = np.abs(rbox(u, v, s * 0.15, 0.0, s * 0.2, s * 0.11, s * 0.11)) - w / 2
+        return np.minimum(one, two)
+    cv.shape(sd, (cx - s * 0.46, cy - s * 0.46, cx + s * 0.46, cy + s * 0.46), colour, a)
+
+
+SHORTCUT_GLYPHS = {"cut": scissors_glyph, "paste": paste_glyph, "undo": undo_glyph,
+                   "redo": lambda cv, cx, cy, s, colour, a=1.0, t=None: undo_glyph(cv, cx, cy, s, colour, a, redo=True),
+                   "save": saved_glyph, "screenshot": shot_glyph}
+
+
+DEVICE_GLYPHS = {"headphones": headphones_glyph, "headset": headphones_glyph, "buds": buds_glyph,
+                 "speaker": speaker_box_glyph, "drive": drive_glyph, "jack": jack_glyph}
+GLYPHS.update({"wifi": wifi_glyph, "bluetooth": bluetooth_glyph, "dnd": dnd_glyph, "calendar": calendar_glyph,
+               "timer": timer_glyph, "tray": tray_glyph, "controls": controls_glyph, "bell": bell_glyph,
+               "awake": cup_glyph, "link": link_glyph,
+               "weather": lambda cv, cx, cy, s, colour, a=1.0, t=None: cloud_glyph(cv, cx, cy, s, colour, a,
+                                                                                   "partly cloudy"),
+               **DEVICE_GLYPHS})

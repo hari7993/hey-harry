@@ -20,6 +20,7 @@ bottom of the screen, which is also used if Windows won't draw the island.
 """
 import ctypes
 import math
+import os
 import re
 import sys
 import time
@@ -425,6 +426,7 @@ _text_out = _api(_gdi32.TextOutW, [wt.HDC, ctypes.c_int, ctypes.c_int, wt.LPCWST
 _extent = _api(_gdi32.GetTextExtentPoint32W, [wt.HDC, wt.LPCWSTR, ctypes.c_int, ctypes.POINTER(wt.SIZE)], wt.BOOL)
 _face = _api(_gdi32.GetTextFaceW, [wt.HDC, ctypes.c_int, wt.LPWSTR], ctypes.c_int)
 _flush = _api(_gdi32.GdiFlush, [], wt.BOOL)
+_justify = _api(_gdi32.SetTextJustification, [wt.HDC, ctypes.c_int, ctypes.c_int], wt.BOOL)
 
 # iOS's own colours, for the parts that mean the same as on an iPhone
 WHITE = np.array([1.0, 1.0, 1.0], np.float32) * 0.97
@@ -459,6 +461,36 @@ def _dib(dc, w, h):
     return bitmap, pixels
 
 
+# Glance's type (joinglance.app, 30 October 2026, the owner's ask): Plus Jakarta Sans for its headings, Poppins for
+# the rest, both Google's, under the SIL Open Font License (assets\fonts, with their licences). Loaded for her own
+# process only (FR_PRIVATE): nothing's installed in Windows. Each weight its own file, as GDI names them: by weight,
+# the face that has it and the weight to ask it for
+FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "fonts")
+GLANCE = ((350, "Poppins Light", 300), (450, "Poppins", 400), (550, "Poppins Medium", 500),
+          (650, "Plus Jakarta Sans SemiBold", 600), (750, "Plus Jakarta Sans", 700),
+          (1000, "Plus Jakarta Sans ExtraBold", 800))
+_glance = {"loaded": None}
+
+
+def glance_face(weight):
+    """(face, weight) of Glance's type for a weight, loaded the first time; None if Settings has Windows' own
+    (island_font "segoe") or the files won't load."""
+    import settings
+    if settings.get("island_font") == "segoe":
+        return None
+    if _glance["loaded"] is None:
+        add = ctypes.windll.gdi32.AddFontResourceExW
+        add.argtypes = [wt.LPCWSTR, wt.DWORD, ctypes.c_void_p]
+        try:
+            names = [n for n in os.listdir(FONT_DIR) if n.lower().endswith(".ttf")]
+        except OSError:
+            names = []
+        _glance["loaded"] = bool(names) and all(add(os.path.join(FONT_DIR, n), 0x10, None) for n in names)
+    if not _glance["loaded"]:
+        return None
+    return next((face, w) for most, face, w in GLANCE if weight <= most)
+
+
 class Text:
     """Words drawn by Windows itself (GDI, grey antialiasing) into an array of how much each pixel is covered, so
     they can go on the island in any colour. One font, size and weight each; what it draws is kept for next time."""
@@ -466,9 +498,14 @@ class Text:
 
     def __init__(self, px, weight=600):
         self.dc = _new_dc(None)
-        self.font, self.cache = None, {}
-        for face in self.FACES:
-            font = _new_font(-px, 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 4, 0, face)  # 4: ANTIALIASED_QUALITY
+        self.font, self.cache, self.gap = None, {}, 0
+        faces = [(face, weight) for face in self.FACES]
+        own = glance_face(weight)
+        if own is not None:  # Glance's type first (island_font), Windows' own if it won't load
+            faces.insert(0, own)
+        got = None
+        for face, w in faces:
+            font = _new_font(-px, 0, 0, 0, w, 0, 0, 0, 1, 0, 0, 4, 0, face)  # 4: ANTIALIASED_QUALITY
             _select(self.dc, font)
             got = ctypes.create_unicode_buffer(64)
             _face(self.dc, 64, got)
@@ -480,13 +517,19 @@ class Text:
         size = wt.SIZE()
         _extent(self.dc, "Ag", 2, ctypes.byref(size))
         self.line = size.cy
+        if own is not None and got.value.lower().startswith(own[0].lower()):
+            # Plus Jakarta Sans' spaces are a sixth of its size (30 October 2026): at the island's 12 px that's 2 px,
+            # and "Do Not Disturb" read as one word. Each space is widened to about a quarter, Segoe's own
+            self.gap = max(0, round(px * 0.27) - (self.measure("a b") - self.measure("ab")))
 
     def measure(self, text):
+        # SetTextJustification only widens TextOut, not GetTextExtentPoint32W (30 October 2026), so add
+        # the gap ourselves: gap extra pixels per space
         if not text:
             return 0
         size = wt.SIZE()
         _extent(self.dc, text, _units(text), ctypes.byref(size))
-        return size.cx
+        return size.cx + text.count(" ") * self.gap
 
     def fit(self, text, width):
         """text, cut short with an ellipsis if it's wider than width px."""
@@ -558,7 +601,12 @@ class Text:
         try:
             _bk_mode(self.dc, 1)  # TRANSPARENT
             _text_colour(self.dc, 0xFFFFFF)
+            if self.gap:  # SetTextJustification spreads extra px across spaces at draw time (30 October 2026)
+                n = text.count(" ")
+                _justify(self.dc, self.gap * n, n)
             _text_out(self.dc, 2, 1, text, _units(text))
+            if self.gap:
+                _justify(self.dc, 0, 0)  # reset so the DC is clean for the next call
             _flush()
             cover = pixels[..., 1].astype(np.float32) * (1 / 255)
         finally:

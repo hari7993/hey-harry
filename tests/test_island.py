@@ -21,6 +21,7 @@ from tests.test_watchers import until
 import activity
 import agent
 import askbox
+import bubble
 import dictation
 import island
 import island_face as face
@@ -1162,3 +1163,920 @@ class TypingBox(unittest.TestCase):
         self.box.close(keep=False)
         self.box.open()
         self.assertEqual(self.box.typed(), "")
+
+
+import dream  # noqa: E402  (siri, through tests.support, has them loaded already)
+import handmouse  # noqa: E402
+import meeting  # noqa: E402
+import showme  # noqa: E402
+
+
+class LivePlugins(unittest.TestCase):
+    """30 October 2026, the owner's pictures of an iPhone's island and their ask, "dream mode, time, working time, the
+    others ... add animation and emotion to all": a live activity for each, from what its module keeps in memory,
+    sent as it comes, as it changes and once as it goes."""
+
+    def poll(self, cls, now=None):
+        host = mock.Mock()
+        plugin = cls(host)
+        plugin.start()
+        plugin.poll(now or time.time())
+        return plugin, host
+
+    @staticmethod
+    def posted(host):
+        return [c.args[0] for c in host.post.call_args_list]
+
+    def test_dream_mode_its_scene_the_song_and_her_asleep(self):
+        track = {"title": "Snowman", "artist": "lofi beats", "playing": True}
+        with mock.patch.dict(dream.NOW, {"open": True, "scene": "night-drive", "track": track}):
+            plugin, host = self.poll(plugins.Dream)
+            (kind, pid, act), = self.posted(host)
+            self.assertEqual((kind, pid, act.kind, act.live), ("live", "dream", "live", True))
+            d = act.data
+            self.assertEqual((d["glyph"], d["accent"], d["title"], d["mood"], d["aura"]),
+                             ("moon", "indigo", "Night drive", "dream", "breathe"))
+            self.assertEqual(d["sub"], "Snowman \u00b7 lofi beats")
+            self.assertEqual([b["name"] for b in d["buttons"]], ["next", "exit"])
+            plugin.poll(time.time())
+            self.assertEqual(len(self.posted(host)), 1)  # nothing changed, nothing sent
+            with mock.patch.object(dream, "next_scene") as nxt, mock.patch.object(dream, "close") as close:
+                plugin.command("next")
+                plugin.command("exit")
+            nxt.assert_called_once_with()
+            close.assert_called_once_with()
+        plugin.poll(time.time())  # it's closed: it goes, once
+        plugin.poll(time.time())
+        self.assertEqual(self.posted(host)[1:], [("live", "dream", None)])
+
+    def test_meeting_notes_a_red_dot_and_how_long(self):
+        started = time.time() - 366
+        with mock.patch.object(meeting, "NOW", [SimpleNamespace(started=started)]):
+            plugin, host = self.poll(plugins.Meeting)
+            d = self.posted(host)[0][2].data
+            self.assertEqual((d["glyph"], d["accent"], d["since"], d["wave"]), ("record", "red", started, True))
+            self.assertEqual(island._live_clock(d, started + 366), "6:06")
+            plugin.poll(started + 1800)
+            self.assertEqual(len(self.posted(host)), 1)  # its clock moves on the island, not by being sent
+            plugin.poll(started + 3601)  # an hour on: sent again, so its clock has room for 1:00:01
+        self.assertEqual([p[2].data["hours"] for p in self.posted(host)], [0, 1])
+
+    def test_hand_control_with_stop(self):
+        mouse = mock.Mock(running=True)
+        with mock.patch.dict(handmouse.NOW, {"mouse": mouse}):
+            plugin, host = self.poll(plugins.Hands)
+            d = self.posted(host)[0][2].data
+            self.assertEqual((d["glyph"], d["accent"], [b["name"] for b in d["buttons"]]), ("hand", "teal", ["stop"]))
+            self.assertIsNotNone(d["since"])
+            plugin.command("stop")
+            mouse.stop.assert_called_once()
+            mouse.running = False
+            plugin.poll(time.time())
+        self.assertEqual(self.posted(host)[-1], ("live", "hands", None))
+
+    def test_showing_you_where_to_click_with_stop(self):
+        guide = SimpleNamespace(goal="Turn on Bluetooth", stopped=threading.Event(), stop=mock.Mock())
+        with mock.patch.object(showme, "GUIDE", [guide]):
+            plugin, host = self.poll(plugins.Guide)
+            d = self.posted(host)[0][2].data
+            self.assertEqual((d["glyph"], d["title"], d["mood"]), ("pointer", "Turn on Bluetooth", "glasses"))
+            plugin.command("stop")
+            guide.stop.assert_called_once_with()
+            guide.stopped.set()  # Esc did it, or the stop
+            plugin.poll(time.time())
+        self.assertEqual(self.posted(host)[-1], ("live", "guide", None))
+
+    def test_her_break_and_how_long_it_has_to_go(self):
+        now = time.time()
+        with mock.patch.dict(siri.PAUSE, {"until": now + 1200}):
+            plugin, host = self.poll(plugins.Break, now)
+            d = self.posted(host)[0][2].data
+            self.assertEqual((d["glyph"], d["until"], d["mood"]), ("pause", now + 1200, "sleepy"))
+            self.assertEqual(island._live_clock(d, now + 0.5), "20:00")
+        with mock.patch.dict(siri.PAUSE, {"until": 0.0}):
+            plugin.poll(now)
+        self.assertEqual(self.posted(host)[-1], ("live", "break", None))
+
+    def test_none_of_them_starts_anything_or_shows_while_its_off(self):
+        for cls in (plugins.Dream, plugins.Meeting, plugins.Hands, plugins.Guide, plugins.Break):
+            with mock.patch.dict(dream.NOW, {"open": False}), mock.patch.object(meeting, "NOW", [None]), \
+                    mock.patch.dict(handmouse.NOW, {"mouse": None}), mock.patch.object(showme, "GUIDE", [None]), \
+                    mock.patch.dict(siri.PAUSE, {"until": 0.0}):
+                _, host = self.poll(cls)
+            self.assertEqual(self.posted(host), [], cls.id)
+
+    def test_which_comes_first_when_several_are_on(self):
+        order = ["tasks", "agents", "guide", "meeting", "hands", "timers", "focus", "dream", "media", "break",
+                 "battery"]
+        self.assertEqual(sorted(order, key=plugins.priority, reverse=True), order)
+        # popups and the panels, never kept on the island as what's live
+        self.assertEqual({cls.id for cls in plugins.PLUGINS} - set(order),
+                         {"notifications", "clipboard", "levels", "devices", "hub"})
+
+    def test_a_timer_says_its_last_seconds_and_rings_when_it_goes_off(self):
+        now = time.time()
+        host = mock.Mock()
+        timers = plugins.Timers(host)
+        timers.start()
+        with mock.patch.object(siri, "TIMERS", [{"end": now + 30, "secs": 60, "label": "tea", "line": None}]):
+            timers.poll(now)
+            timers.poll(now + 5)  # nothing new
+            timers.poll(now + 21)  # its last ten seconds
+        posted = self.posted(host)
+        self.assertEqual([p[2].data["urgent"] for p in posted], [False, True])
+        with mock.patch.object(siri, "TIMERS", []):  # siri took it out as it went off
+            timers.poll(now + 30.2)
+        self.assertEqual(self.posted(host)[-2:], [("live", "timers", None), ("fx", "ring")])
+        host.reset_mock()
+        timers.start()
+        with mock.patch.object(siri, "TIMERS", [{"end": now + 300, "secs": 300, "label": None, "line": None}]):
+            timers.poll(now)
+        with mock.patch.object(siri, "TIMERS", []):  # cancelled long before its end: no ring
+            timers.poll(now + 5)
+        self.assertEqual(self.posted(host)[-1], ("live", "timers", None))
+
+
+def live_act(plugin, **data):
+    return plugins.Activity(plugin, "live", data, live=True)
+
+
+DREAMING = {"glyph": "moon", "accent": "indigo", "label": "Dream mode", "title": "Night drive", "short": "Night drive",
+            "sub": "Snowman \u00b7 lofi beats", "mood": "dream", "aura": "breathe",
+            "buttons": [{"name": "next", "label": "Next scene"}, {"name": "exit", "label": "Exit"}]}
+
+
+@needs_windows
+class LiveActivities(unittest.TestCase):
+    """How the island draws a live activity, small and opened, as a phone's island does: its glyph in its colour, her
+    eyes in the middle as it says, its clock or its words; opened, its words big, its clock, a waveform and its round
+    buttons, which press its plugin's commands."""
+
+    def capsule(self, **kw):
+        return fonted(self, **dict({"style": "capsule", "runner": SimpleNamespace(plugin=lambda pid: None)}, **kw))
+
+    def test_small_its_glyph_her_eyes_and_its_words(self):
+        now = time.time()
+        isl = self.capsule()
+        act = live_act("dream", **DREAMING)
+        lay = isl._make(("live", act), now)
+        self.assertEqual((lay.kind, lay.face, lay.eyes, lay.h), ("card", True, "dream", isl.COMPACT_H * isl.k))
+        self.assertEqual(lay.aura, (island.INDIGO, "breathe"))
+        self.assertEqual(lay.press["pin"], ("dream", "pin", None, False))  # a click keeps it open, as a card's
+        col = drawn(lay)
+        indigo = (np.abs(col - np.asarray(island.INDIGO, np.float32)).max(axis=2) < 0.08).sum()
+        self.assertGreater(indigo, 20)  # the moon and the scene's name in its colour
+        timed = isl._make(("live", live_act("meeting", glyph="record", accent="red", since=now - 61)), now)
+        self.assertEqual(timed.rate, 1)  # its clock moves once a second
+        pill = fonted(self, runner=SimpleNamespace(plugin=lambda pid: None))
+        self.assertFalse(pill._make(("live", act), now).face)  # the black pill's own row
+
+    def test_opened_its_words_its_clock_and_its_buttons(self):
+        now = time.time()
+        isl = self.capsule(hover=True)
+        act = live_act("dream", **DREAMING)
+        lay = isl._make(("live", act), now)
+        self.assertGreater(lay.h, 2 * isl.COMPACT_H * isl.k)
+        self.assertLessEqual(lay.h, isl.island_max_h)
+        self.assertEqual([h[0] for h in lay.hot], ["b0", "b1", "pin"])
+        self.assertEqual((lay.press["b0"], lay.press["b1"]), (("dream", "next", None, False),
+                                                              ("dream", "exit", None, False)))
+        isl.face_at = None
+        drawn(lay)
+        self.assertAlmostEqual(isl.face_at[0], 2 + lay.w / 2, delta=10)  # her eyes in the middle, the z's by them
+        meeting_ = isl._make(("live", live_act("meeting", glyph="record", accent="red", title="Taking notes",
+                                               since=now - 61, wave=True)), now)
+        self.assertTrue(meeting_.animated)  # its waveform moves while you watch it
+        drawn(meeting_)
+
+    def test_it_moves_a_while_then_rests(self):
+        """Never a frame for nothing: a moving glyph, her z's and a breathing glow for LIVELY_FOR seconds after it
+        comes, changes or is pointed at, then only its clock's tick."""
+        now = time.time()
+        isl = self.capsule()
+        act = live_act("dream", **DREAMING)
+        act.at = now
+        lay = isl._make(("live", act), now)
+        self.assertEqual((lay.rate, lay.lively), (0, (now + island.LIVELY_FOR, 12)))
+        self.assertEqual(isl._rate(lay, now + 5), 12)
+        self.assertEqual(isl._rate(lay, now + island.LIVELY_FOR + 1), 0)
+        isl.layout, isl.content, isl.t0 = lay, 1.0, now
+        breathing = {round(isl._aura(now + t)[1], 3) for t in (0.0, 0.6, 1.3)}
+        self.assertGreater(len(breathing), 1)  # it breathes while it's lively
+        self.assertEqual(isl._aura(now + 30), (island.INDIGO, 1.0))  # then glows steady
+        still = isl._make(("live", live_act("break", glyph="pause", accent="indigo", until=now + 60)), now)
+        self.assertIsNone(still.lively)  # nothing of it moves: only its clock, once a second
+
+    def test_asleep_in_dream_mode_she_costs_no_frames(self):
+        """30 October 2026: her eyes asleep never blink, and the blink she'd had due, long past, asked for a frame
+        every 16 ms for as long as dream mode was on. At rest it waits for the next thing that moves."""
+        now = time.time()
+        isl = self.capsule()
+        act = live_act("dream", **DREAMING)
+        act.at = now - 2 * island.LIVELY_FOR  # come to rest
+        lay = isl._make(("live", act), now)
+        isl.eyes.next_blink = isl.eyes.next_look = now - 30  # long past
+        isl.eye = isl.eyes.update(now, 0.016, "dream")
+        isl.look_at = None
+        self.assertEqual(isl.eye[0], "dream")
+        self.assertGreater(isl._capsule_wait(now, lay, False), 60)
+        self.assertGreater(isl.eyes.wait(now), 60)  # the pill's own wait, the same
+        isl.eye = isl.eyes.update(now, 0.016, "open")  # awake: her blink, due, comes at once
+        self.assertLess(isl._capsule_wait(now, lay, False), 0.02)
+
+    def test_words_in_a_dim_colour_are_lighter_on_dark_glass(self):
+        dark, light = self.capsule(), self.capsule(theme_name="light")
+        lifted = dark._ink(island.INDIGO)
+        self.assertGreater(island._luma(lifted), 0.28)  # 5.8 to 1 on dark glass, for words
+        self.assertEqual(dark._ink(island.ORANGE), island.ORANGE)  # the bright ones as they were
+        self.assertEqual(dark._ink(island.BLUE), island.BLUE)
+        self.assertLess(island._luma(light._ink(island.INDIGO)), island._luma(island.INDIGO))  # darker on light
+
+    def test_a_question_waiting_on_you_glows_while_her_eyes_wait(self):
+        now = time.time()
+        isl = self.capsule()
+        waiting = tasks_card([{"title": "Install VLC", "state": "waiting_yes", "status": "Needs you",
+                               "buttons": [{"name": "approve", "label": "Approve"}]}])
+        waiting.at = now
+        lay = isl._make(("live", waiting), now)
+        self.assertEqual((lay.aura, lay.rate), ((island.BLUE, "breathe"), 0))
+        self.assertEqual(lay.lively, (now + island.LIVELY_FOR, 12))
+        running = isl._make(("live", tasks_card([{"title": "Job", "state": "running"}])), now)
+        self.assertIsNone(running.aura)
+
+    def test_her_turn_glows_in_her_dots_colour(self):
+        self.assertEqual(island.DynamicIsland._turn_aura("listening", island.BLUE), (island.BLUE, "steady"))
+        self.assertEqual(island.DynamicIsland._turn_aura("thinking", island.VIOLET), (island.VIOLET, "breathe"))
+        self.assertIsNone(island.DynamicIsland._turn_aura("speaking", island.BLUE))
+        isl = self.capsule(_front_icon=lambda size: None, harry={"state": "thinking", "text": ""}, you="",
+                           since=time.time(), level=0.0)
+        self.assertEqual(isl._make(("harry",), time.time()).aura, (island.VIOLET, "breathe"))
+
+    def test_the_parts_come_out_from_behind_her_eyes(self):
+        """As a phone's island brings its parts out from behind its camera: drawn as it comes in (a small), they're
+        by her eyes; at rest, in their places."""
+        isl = self.capsule()
+        at = {}
+
+        def part(name):
+            return 30.0, lambda cv, x, cy, a, now: at.__setitem__(name, x)
+        lay = isl._capsule(("t",), "card", [part("left"), isl._face("open"), part("right")])
+        col = np.zeros((int(lay.h) + 4, int(lay.w) + 4, 3), np.float32)
+        lay.draw(face.Canvas(col), 0, 0, lay.w, lay.h, 1.0, time.time())
+        rest = dict(at)
+        lay.draw(face.Canvas(col), 0, 0, lay.w, lay.h, 0.05, time.time())
+        middle = lay.w / 2
+        self.assertLess(rest["left"], at["left"])  # it starts nearer her eyes
+        self.assertGreater(rest["right"], at["right"])
+        self.assertLess(abs(at["left"] + 15 - middle), abs(rest["left"] + 15 - middle))
+
+    def test_a_glow_lights_her_shadow_never_her_island(self):
+        isl = self.capsule(theme_name="light")
+        lay = isl._make(("live", live_act("dream", **DREAMING)), time.time())
+        lay.aura = None
+        plain, (x0, y0, x1, y1) = painted(isl, lay)
+        plain = plain.copy()
+        lay.aura = (island.INDIGO, "steady")
+        isl.layout = lay
+        lit, _ = painted(isl, lay)
+        mid_x = int((x0 + x1) / 2)
+        inside = (int((y0 + y1) / 2), int(x0 + (x1 - x0) * 0.42))
+        self.assertTrue(np.array_equal(plain[inside], lit[inside]))  # the island itself as it was
+        below = (int(y1 + 3 * isl.k), mid_x)
+        colour, a = straight(lit[below])
+        self.assertGreater(lit[below][3], plain[below][3])  # more of it under her
+        self.assertGreater(colour[2], colour[0])  # and indigo, blue over red
+        self.assertEqual(lit[below][3], max(lit[below][:3].max(), lit[below][3]))  # still premultiplied
+
+
+class Feelings(unittest.TestCase):
+    """30 October 2026: she moves with what she feels, while she's up: a hop for a smile, a bump for news, two beats
+    for hearts, a shake of the head at something gone wrong, and a glow in its colour for a moment."""
+
+    def island_up(self, **kw):
+        isl = bare(**dict({"visible_window": True}, **kw))
+        isl.W, isl.H = bubble_spring(84 * isl.k), bubble_spring(34 * isl.k)
+        return isl
+
+    def test_a_smile_hops_and_glows_green(self):
+        isl = self.island_up()
+        now = time.time()
+        isl._feel("happy", now)
+        self.assertGreater(isl.H.v, 0)
+        self.assertEqual(isl.flash, (island.GREEN, now))
+        isl.layout, isl.content, isl.t0 = None, 0.0, now
+        colour, strength = isl._aura(now + 0.1)
+        self.assertEqual(colour, island.GREEN)
+        self.assertGreater(strength, isl._aura(now + 0.5)[1])  # fading
+        self.assertIsNone(isl._aura(now + island.FLASH_FOR + 0.1))
+        self.assertIsNone(isl.flash)
+
+    def test_hearts_beat_twice(self):
+        isl = self.island_up()
+        now = time.time()
+        isl._feel("love", now)
+        first = isl.H.v
+        self.assertIsNotNone(isl.beat_at)
+        self.assertTrue(isl._moving(now + 0.1))
+        isl._moving(now + island.BEAT_GAP + 0.01)  # the second beat, due now
+        self.assertGreater(isl.H.v, first)
+        self.assertIsNone(isl.beat_at)
+
+    def test_something_wrong_shakes_her_head_then_stills(self):
+        isl = self.island_up()
+        now = time.time()
+        isl._feel("x", now)
+        self.assertEqual(isl.flash[0], island.RED)
+        moves = [isl._jolt(now + t) for t in (0.03, 0.07, 0.11)]
+        self.assertTrue(any(abs(m) > 1 for m in moves))
+        self.assertEqual(isl._jolt(now + island.SHAKE_FOR + 0.01), 0.0)
+        self.assertIsNone(isl.shake_at)
+
+    def test_nothing_moves_while_shes_not_up(self):
+        isl = self.island_up(visible_window=False)
+        isl._feel("happy", time.time())
+        self.assertEqual((isl.H.v, isl.flash), (0.0, None))
+
+    def test_an_error_turn_shakes_and_a_timer_going_off_rings(self):
+        isl = self.island_up(hide_job=None, since=0.0, steps=None, asked_at=None, answered_at=None)
+        with mock.patch.object(isl, "_wake"), mock.patch.object(isl, "_place"), \
+                mock.patch.object(island.win, "work_area", return_value=(0, 0, 1920, 1040)):
+            isl.show("error", "I couldn't reach the model")
+        self.assertIsNotNone(isl.shake_at)
+        isl.shake_at = isl.flash = None
+        now = time.time()
+        isl._fx("ring", now)
+        self.assertEqual((isl.shake_at, isl.flash, isl.eyes.mood), (now, (island.ORANGE, now), "surprised"))
+
+    def test_she_sleeps_in_dream_mode_with_zs(self):
+        self.assertIn("dream", face.MOODS)
+        eyes = face.Eyes(time.time())
+        expr, open_, lx, ly, _ = eyes.update(time.time(), 0.016, "dream", look_at=(1.0, 1.0))
+        self.assertEqual((expr, open_), ("dream", 1.0))  # shut already: no blinks
+        for _ in range(60):
+            expr, open_, lx, ly, _ = eyes.update(time.time(), 0.016, "dream", look_at=(1.0, 1.0))
+        self.assertLess(max(abs(lx), abs(ly)), 0.01)  # and she doesn't look at the mouse in her sleep
+        asleep = np.zeros((40, 80, 3), np.float32)
+        face.draw_eyes(face.Canvas(asleep), 40, 20, 13, "dream", glow=False)
+        awake = np.zeros((40, 80, 3), np.float32)
+        face.draw_eyes(face.Canvas(awake), 40, 20, 13, "open", glow=False)
+        self.assertGreater(asleep.sum(), 10)
+        self.assertLess(asleep.sum(), awake.sum())  # a line each, not the open eyes
+        zs = np.zeros((40, 80, 3), np.float32)
+        face.zzz(face.Canvas(zs), 40, 25, 13, 1.0)
+        self.assertGreater(zs.sum(), 1)
+
+    def test_each_glyph_draws_still_and_moving(self):
+        for name, glyph in face.GLYPHS.items():
+            still = np.zeros((40, 40, 3), np.float32)
+            glyph(face.Canvas(still), 20, 20, 18, (1.0, 1.0, 1.0))
+            self.assertGreater(still.sum(), 5, name)
+            moving = np.zeros((40, 40, 3), np.float32)
+            glyph(face.Canvas(moving), 20, 20, 18, (1.0, 1.0, 1.0), 1.0, 0.7)
+            self.assertGreater(moving.sum(), 5, name)
+        bars = np.zeros((40, 120, 3), np.float32)
+        face.wave_bars(face.Canvas(bars), 4, 20, 110, 24, (1.0, 0.27, 0.23), 0.6, 1.3)
+        self.assertGreater((bars[..., 0] > 0.5).sum(), 40)
+
+
+def bubble_spring(x):
+    return island.Spring(x, 0.46, 0.74)
+
+
+class HubPanels(unittest.TestCase):
+    """The panels' plugin (island_plugins.Hub, 30 October 2026): read only while a panel's open, and a press on one
+    of its controls set on the PC through winplatform, the Settings pages only those it knows."""
+
+    def hub(self, page=None):
+        host = mock.Mock()
+        host.wanted = {"hub": {"page": page}} if page else {}
+        hub = plugins.Hub(host)
+        hub.start()
+        return hub, host
+
+    def test_nothing_is_read_while_no_panel_is_open(self):
+        hub, host = self.hub()
+        with mock.patch.object(plugins.win, "volume", side_effect=AssertionError("read")):
+            hub.poll(time.time())
+        host.post.assert_not_called()
+
+    def test_controls_read_the_volume_and_send_it(self):
+        hub, host = self.hub("controls")
+        ep = mock.Mock()
+        ep.GetMute.return_value = 0
+        with mock.patch.object(plugins.win, "volume", return_value=35), \
+                mock.patch.object(plugins.win, "_endpoint", return_value=ep), \
+                mock.patch.object(hub, "_slow"), mock.patch.object(hub, "option", return_value=False):
+            hub.poll(time.time())
+        kind, data = host.post.call_args[0][0]
+        self.assertEqual((kind, data["volume"], data["muted"]), ("hub", 35, False))
+
+    def test_a_press_sets_it_and_only_known_pages_open(self):
+        hub, host = self.hub("controls")
+        with mock.patch.object(plugins.win, "set_volume") as set_volume:
+            hub.command("volume", 30)
+        set_volume.assert_called_once_with(30)
+        self.assertEqual(hub.data["volume"], 30)
+        with mock.patch.object(plugins.win, "open_windows_page") as page:
+            hub._do("page", "ms-settings:sound")
+            hub._do("page", "ms-settings:privacy")  # not one Controls opens
+        page.assert_called_once_with("ms-settings:sound")
+
+    def test_do_not_disturb_hushes_whats_from_outside_only(self):
+        self.assertEqual(set(plugins.HUSHED), {"notifications", "devices", "battery"})
+        for own in ("tasks", "timers", "focus", "media"):
+            self.assertNotIn(own, plugins.HUSHED)
+
+
+class Dropped(unittest.TestCase):
+    """A file dropped on her eyes (shelf.Drops): Windows' call to the window only hands it on, and it's put on the
+    shelf from the island's own loop, as touching Tk inside that call crashed her (30 October 2026)."""
+
+    def test_the_drop_is_only_handed_on(self):
+        import shelf
+        got = []
+        drops = object.__new__(shelf.Drops)
+        drops.hwnd, drops.old, drops.on_files = 1, 2, got.append
+        names = ["C:\\a.txt"]
+
+        def query(drop, i, buf, size):
+            if i == 0xFFFFFFFF:
+                return len(names)
+            if buf is not None:
+                buf.value = names[i]
+            return len(names[i])
+        with mock.patch.object(shelf._shell32, "DragQueryFileW", side_effect=query), \
+                mock.patch.object(shelf._shell32, "DragFinish") as finish, \
+                mock.patch.object(shelf._user32, "CallWindowProcW") as passed_on:
+            self.assertEqual(drops._proc(1, shelf.WM_DROPFILES, 99, 0), 0)
+        self.assertEqual(got, [["C:\\a.txt"]])
+        finish.assert_called_once()
+        passed_on.assert_not_called()
+
+    def test_the_island_puts_it_on_the_shelf_from_its_own_loop(self):
+        runner = mock.Mock()
+        runner.take.return_value = [("dropped", ["C:\\a.txt"])]
+        isl = bare(runner=runner, closed=False, root=mock.Mock())
+        isl._wake = lambda: None
+        with mock.patch.object(isl, "_dropped", create=True) as dropped:
+            isl._events()
+        dropped.assert_called_once_with(["C:\\a.txt"])
+
+
+class ControlsAndTime(unittest.TestCase):
+    """Controls says what Wi-Fi and Bluetooth are on, and the time can sit beside her eyes (30 October 2026)."""
+
+    def test_the_line_under_wifi_and_bluetooth(self):
+        self.assertEqual(island._on_line(True, "Peram Srinu"), "Peram Srinu")
+        self.assertEqual(island._on_line(True, None), "Not connected")
+        self.assertEqual(island._on_line(False, "Peram Srinu"), "Off")
+        self.assertEqual(island._on_line(None, None), "")  # not known yet: nothing said
+
+    def test_the_time_is_a_choice_beside_her_eyes(self):
+        self.assertIn("time", island.STATUS_WIDGETS)
+        isl = bare(style="capsule")
+        old = settings.get("island_status")
+        try:
+            settings.put("island_status", "weather,time,battery,cpu,ram")
+            self.assertEqual(isl._status_widgets(), ["weather", "time", "battery", "cpu", "ram"])
+            settings.put("island_status", "time,nonsense")
+            self.assertEqual(isl._status_widgets(), ["time"])
+        finally:
+            settings.put("island_status", old)
+
+    def test_the_hub_reads_the_names_with_the_radios(self):
+        host = mock.Mock()
+        host.wanted = {"hub": {"page": "controls"}}
+        hub = plugins.Hub(host)
+        hub.start()
+        with mock.patch.object(plugins.win, "radio_on", return_value=True), \
+                mock.patch.object(plugins.win, "brightness", return_value=40), \
+                mock.patch("devices.wifi_name", return_value="Peram Srinu"), \
+                mock.patch("devices.bluetooth_connected", return_value=["AirPods Pro"]), \
+                mock.patch("devices.outputs", return_value=[]):
+            hub._slow(time.time())
+            hub.slow.join(5)
+        self.assertEqual(hub.data["wifi_name"], "Peram Srinu")
+        self.assertEqual(hub.data["bt_name"], "AirPods Pro")
+
+    def test_settings_offers_the_time(self):
+        import assistant_ui
+        self.assertIn("time", assistant_ui.ISLAND_STATUS)
+        for value in assistant_ui.ISLAND_STATUS:
+            for part in filter(None, value.split(",")):
+                self.assertIn(part, island.STATUS_WIDGETS)
+
+
+class GlassBySize(unittest.TestCase):
+    """Her small capsule is see-through glass; a panel or a card, with words on it, all but solid (30 October 2026)."""
+
+    def test_the_glass_grows_solid_as_it_grows_tall(self):
+        isl = bare(style="capsule", theme_name="light", light=True, k=1.5)
+        small, tall = np.ones((60, 40), np.float32), np.ones((300, 40), np.float32)
+        fill = island.GLASS["light"]["fill"]
+        op_small = isl._glass(np.ones((60, 40, 3), np.float32), small)
+        op_tall = isl._glass(np.ones((300, 40, 3), np.float32), tall)
+        self.assertAlmostEqual(float(op_small.max()), fill, places=5)
+        self.assertAlmostEqual(float(op_tall.max()), island.PANEL_FILL, places=5)
+        # a part painted again is as opaque as the whole it's part of
+        part = isl._glass(np.ones((20, 40, 3), np.float32), tall[:20], tall=300)
+        self.assertAlmostEqual(float(part.max()), island.PANEL_FILL, places=5)
+
+    def test_the_edges_and_dock_use_the_panels_glass(self):
+        import edges
+        self.assertGreaterEqual(edges.glass()["fill"], island.PANEL_FILL)
+
+
+class GlanceFonts(unittest.TestCase):
+    """bubble.Text with the Glance fonts (Plus Jakarta Sans / Poppins) has readable spaces at all island sizes
+    (30 October 2026): measure("a b") - measure("ab") must be at least round(px * 0.25) for weight 600."""
+
+    def _check(self, px, weight=600):
+        t = bubble.Text(px, weight)
+        sp = t.measure("a b") - t.measure("ab")
+        t.close()
+        return sp
+
+    def test_spaces_are_wide_enough_at_small_sizes(self):
+        """At 10 px and 12 px the spaces must be at least 2 px wide."""
+        for px in (10, 12):
+            with self.subTest(px=px):
+                self.assertGreaterEqual(self._check(px), 2)
+
+    def test_spaces_scale_with_size(self):
+        """Bigger font = wider space; the 24 px space must beat the 12 px one."""
+        self.assertGreater(self._check(24), self._check(12))
+
+    def test_measure_and_render_agree_on_width(self):
+        """render() uses the same width as measure(), so text doesn't overflow its tile."""
+        t = bubble.Text(13, 600)
+        for phrase in ("Do Not Disturb", "5 min break after", "Next · Lunch with Sam"):
+            cover = t.render(phrase)
+            self.assertEqual(cover.shape[1], t.measure(phrase) + 4,
+                             f"render width mismatch for {phrase!r}")
+        t.close()
+
+    def test_segoe_path_has_zero_gap(self):
+        """When island_font is 'segoe', glance_face returns None and gap stays 0."""
+        with mock.patch.object(settings, "get", return_value="segoe"):
+            bubble._glance["loaded"] = None  # force a fresh probe
+            t = bubble.Text(12, 600)
+            self.assertEqual(t.gap, 0)
+            t.close()
+            bubble._glance["loaded"] = None
+
+    def test_glance_face_returns_correct_faces(self):
+        """glance_face weight mapping: 400→Poppins, 600→Plus Jakarta Sans SemiBold."""
+        with mock.patch.object(settings, "get", return_value="glance"):
+            bubble._glance["loaded"] = None
+            face400, w400 = bubble.glance_face(400)
+            face600, w600 = bubble.glance_face(600)
+            self.assertEqual(face400, "Poppins")
+            self.assertEqual(face600, "Plus Jakarta Sans SemiBold")
+            bubble._glance["loaded"] = None
+
+
+@needs_windows
+class Lights(unittest.TestCase):
+    """30 October 2026, after Glance's notch: what comes lights her up in its colour (island_light), round her and
+    along the top of the screen, never on her; and what you copy is said for a moment with its start."""
+
+    def capsule(self, **kw):
+        isl = fonted(self, **dict({"style": "capsule", "drop": True, "visible_window": True}, **kw))
+        isl.W, isl.H = bubble_spring(84 * isl.k), bubble_spring(34 * isl.k)
+        return isl
+
+    def test_a_popup_lights_her_in_its_own_colour(self):
+        now = time.time()
+        isl = self.capsule()
+        isl.popups = [plugins.Activity("notifications", "notification", {"app": "WhatsApp", "app_id": "",
+                                                                          "title": "Mum", "text": "Home by eight",
+                                                                          "phone": False}, mood="surprised")]
+        isl._scene(now)
+        self.assertEqual((isl.lit.kind, isl.lit.colour), ("halo", island.art.brand("WhatsApp")))  # over the feeling
+        # charging: green all round her, its percentage beside her eyes (part of the way round read as gone wrong)
+        isl._light_for(plugins.Activity("battery", "battery", {"percent": 72, "charging": True, "event": "plugged"}))
+        self.assertEqual((isl.lit.kind, isl.lit.level, isl.lit.colour), ("halo", None, island.GREEN))
+        isl._light_for(plugins.Activity("battery", "battery", {"percent": 9, "charging": False, "event": "low"}))
+        self.assertEqual((isl.lit.kind, isl.lit.colour), ("alarm", island.RED))
+
+    def test_a_feeling_lights_her_and_frames_come_till_it_fades(self):
+        now = time.time()
+        isl = self.capsule()
+        isl._feel("happy", now)
+        self.assertEqual((isl.lit.kind, isl.lit.colour), ("halo", island.GREEN))
+        self.assertTrue(isl._moving(now + 1.0))
+        isl.flash = None
+        self.assertFalse(isl._moving(now + 10))
+        isl._feel("sad", now)
+        self.assertEqual(isl.lit.kind, "alarm")
+        isl.lit, isl.lights = None, False  # Settings > Island > Light off
+        isl._feel("happy", now)
+        self.assertIsNone(isl.lit)
+
+    def test_drawn_round_her_never_on_her(self):
+        isl = self.capsule()
+        lay = isl._idle()
+        plain, (x0, y0, x1, y1) = painted(isl, lay)
+        plain = plain.copy()
+        isl.lit = island.lights.Light(island.BLUE, time.time() - 0.6)
+        glowing, _ = painted(isl, lay)
+        self.assertTrue((glowing[..., :3].max(-1) <= glowing[..., 3]).all())  # premultiplied, as Windows needs
+        y, x = int(y0) + 1, int(x0 - 30 * isl.k)
+        self.assertGreater(int(glowing[y, x, 3]), int(plain[y, x, 3]) + 100)  # an arm along the top
+        mid = (slice(int(y0 + 4 * isl.k), int(y1 - 4 * isl.k)), slice(int(x0 + 12 * isl.k), int(x1 - 12 * isl.k)))
+        self.assertTrue(np.array_equal(glowing[mid], plain[mid]))  # her own pixels as they were
+
+    def test_a_copy_said_with_its_start(self):
+        isl = self.capsule()
+        act = plugins.Activity("clipboard", "copied", {"what": "text", "text": "Shall we meet at 2"})
+        lay = isl._make(("popup", act), time.time())
+        self.assertEqual((lay.kind, lay.key[1], lay.key[2]), ("copied", "Copied", "Shall we meet at 2"))
+        self.assertGreater(drawn(lay).max(), 0.5)
+        pic = plugins.Activity("clipboard", "copied", {"what": "picture", "text": ""})
+        self.assertEqual(isl._make(("popup", pic), time.time()).key[1:], ("Picture copied", ""))
+        old = plugins.Activity("clipboard", "copied", {"what": "text", "text": "stale"})
+        old.at -= 5
+        isl.popups = [old]
+        self.assertNotEqual(isl._scene(time.time())[0], "popup")  # a copy is said at once or never
+
+
+class GlanceNotch(unittest.TestCase):
+    """The rest of Glance's notch (30 October 2026, the owner: "add all the features Glance offers"): files dragged
+    over her open a place to drop them with the Shelf, each shortcut answered and one said again counting up, the
+    volume as it changes with her light along her bottom, Recent notifications, Keep awake, and a notification that
+    peeks before it opens, a light sweeping over her as she does."""
+
+    def capsule(self, **kw):
+        isl = fonted(self, **dict({"style": "capsule", "drop": True, "visible_window": True}, **kw))
+        isl.W, isl.H = bubble_spring(84 * isl.k), bubble_spring(34 * isl.k)
+        isl.runner = mock.Mock()
+        return isl
+
+    def test_each_shortcut_is_answered_in_its_own_words(self):
+        isl = self.capsule()
+        now = time.time()
+        for how, text, word in (("paste", "Shall we", "Pasted"), ("cut", "", "Cut"), ("undo", "Word", "Undo"),
+                                ("save", "Notepad", "Saved"), ("screenshot", "", "Screenshot")):
+            act = plugins.Activity("clipboard", "copied", {"how": how, "what": "text", "text": text})
+            lay = isl._make(("popup", act), now)
+            self.assertEqual((lay.kind, lay.key[1]), ("copied", word), how)
+            self.assertGreater(drawn(lay).max(), 0.5, how)
+        shot = isl._make(("popup", plugins.Activity("clipboard", "copied", {"how": "screenshot", "text": ""})), now)
+        self.assertEqual(shot.key[2], "On the clipboard")
+        isl._light_for(plugins.Activity("clipboard", "copied", {"how": "undo"}))
+        self.assertEqual(isl.lit.colour, island.ORANGE)
+        isl._light_for(plugins.Activity("clipboard", "copied", {"how": "paste"}))
+        self.assertEqual(isl.lit.colour, island.COPY_LIGHT)
+
+    def test_the_same_one_again_counts_up_in_place(self):
+        isl = self.capsule()
+        now = time.time()
+        first = plugins.Activity("clipboard", "copied", {"how": "undo", "text": "Word"}, seconds=1.6)
+        first.until = now + 1.0
+        isl.popup = first
+        again = plugins.Activity("clipboard", "copied", {"how": "undo", "text": "Word"}, seconds=1.6)
+        self.assertTrue(isl._again(again))
+        self.assertEqual(first.data["times"], 2)
+        self.assertEqual(isl._make(("popup", first), now).key[1], "Undo \u00d72")
+        self.assertFalse(isl._again(plugins.Activity("clipboard", "copied", {"how": "copy", "text": "x"})))
+        self.assertFalse(isl._again(plugins.Activity("clipboard", "copied", {"how": "redo", "text": "x"})))
+
+    def test_the_volume_shows_as_it_moves_lit_along_her_bottom(self):
+        isl = self.capsule()
+        now = time.time()
+        head = plugins.Activity("levels", "level", {"what": "volume", "level": 30, "muted": False}, seconds=1.6)
+        head.until = now + 1.0
+        isl.popup = head
+        isl._light_for(head, now)
+        self.assertEqual((isl.lit.kind, isl.lit.level, isl.lit.colour), ("level", 0.3, island.BLUE))
+        lay = isl._make(("popup", head), now)
+        self.assertEqual((lay.kind, lay.key), ("level", ("level", "volume", 30, False)))
+        self.assertGreater(drawn(lay).max(), 0.5)
+        self.assertTrue(isl._again(plugins.Activity("levels", "level", {"what": "volume", "level": 45,
+                                                                          "muted": False})))
+        self.assertEqual(head.data["level"], 45)
+        self.assertAlmostEqual(isl.lit.level, 0.45)
+        self.assertLess(isl.lit.at, time.time() - island.lights.FLARE)  # held on, no new flare
+        muted = isl._make(("popup", plugins.Activity("levels", "level", {"what": "volume", "level": 45,
+                                                                          "muted": True})), now)
+        self.assertEqual(muted.key[3], True)
+
+    def test_a_level_waits_for_nothing_while_controls_is_open(self):
+        runner = mock.Mock()
+        runner.take.return_value = [("show", plugins.Activity("levels", "level", {"what": "volume", "level": 5}))]
+        isl = bare(runner=runner, closed=False, root=mock.Mock(), hub_page="controls")
+        isl._wake = lambda: None
+        isl._events()
+        self.assertEqual(isl.popups, [])
+
+    def test_recent_keeps_them_newest_first_and_picks_an_app(self):
+        runner = mock.Mock()
+        notes = [plugins.Activity("notifications", "notification", {"app": app, "app_id": "", "title": who,
+                                                                   "text": "hi", "phone": False})
+                 for app, who in (("WhatsApp", "Mum"), ("Slack", "Team"), ("WhatsApp", "Ravi"))]
+        runner.take.return_value = [("recent", n) for n in notes]
+        isl = bare(runner=runner, closed=False, root=mock.Mock())
+        isl._wake = lambda: None
+        isl._events()
+        self.assertEqual([n["title"] for n in isl.recent], ["Ravi", "Team", "Mum"])
+        items, apps, rows, more = isl._alerts()
+        self.assertEqual((apps[0], len(rows), more), ("WhatsApp", 3, 0))
+        isl.alerts_app = "Slack"
+        self.assertEqual([n["title"] for n in isl._alerts()[2]], ["Team"])
+
+    def test_the_recent_panel_draws_and_opens_an_app(self):
+        isl = self.capsule()
+        now = time.time()
+        isl.recent = [{"app": "WhatsApp", "app_id": "W!App", "title": "Mum", "text": "Home by eight", "at": now - 300},
+                      {"app": "Mail", "app_id": "", "title": "Invoice", "text": "", "at": now - 7200}]
+        h, draw, hot, key = isl._hub_alerts(isl.HUB_W * isl.k, isl.CARD_PAD * isl.k, 40, {}, now)
+        names = [n[0] for n in hot]
+        self.assertIn("chip:", names)
+        self.assertIn("chip:WhatsApp", names)
+        self.assertIn("alert:0", names)
+        col = np.zeros((int(h) + 80, int(isl.HUB_W * isl.k) + 4, 3), np.float32)
+        draw(face.Canvas(col), 2, 2, isl.HUB_W * isl.k, h + 40, 1.0, now)
+        self.assertGreater(col.max(), 0.5)
+        isl.dirty, isl._wake = False, lambda: None
+        with mock.patch.object(isl, "_agent_busy", return_value=False):
+            isl._hub_press("alert:0", False)
+            isl.runner.do.assert_called_with("notifications", "open", {"app_id": "W!App", "app": "WhatsApp"})
+            isl._hub_press("chip:Mail", False)
+            self.assertEqual(isl.alerts_app, "Mail")
+            isl._hub_press("clear", False)
+        self.assertEqual(list(isl.recent), [])
+        self.assertEqual((island._ago(30), island._ago(300), island._ago(7200), island._ago(200000)),
+                         ("now", "5 min", "2 h", "2 d"))
+
+    def test_keep_awake_is_a_control(self):
+        isl = self.capsule()
+        with mock.patch.object(island.win, "awake", return_value=False):
+            h, draw, hot, key = isl._hub_controls(isl.HUB_W * isl.k, isl.CARD_PAD * isl.k, 40, {}, time.time())
+        self.assertIn("toggle:awake", [n[0] for n in hot])
+        with mock.patch.object(island.win, "awake", return_value=False), \
+                mock.patch.object(island.win, "keep_awake") as keep:
+            isl._hub_toggle("awake", False)
+        keep.assert_called_once_with(True)
+        isl._hub_toggle("awake", True)  # a right-click: Windows' own page for it
+        isl.runner.do.assert_called_with("hub", "page", "ms-settings:powersleep")
+        self.assertIn("ms-settings:powersleep", plugins.SETTINGS_PAGES)
+
+    def test_files_dragged_over_her_open_the_shelf_to_drop_on(self):
+        isl = self.capsule(origin=SimpleNamespace(x=0, y=0))
+        isl.shelf = []
+        with mock.patch.object(isl, "_hub_on", return_value=True):
+            isl._dragging("enter", 10, 10, ["C:\\Work\\brief.pdf"])
+            self.assertEqual(isl._scene(time.time()), ("drop",))
+            lay = isl._make(("drop",), time.time())
+        self.assertEqual((lay.kind, lay.key[1], lay.key[2]), ("drop", False, "Drop brief.pdf here"))
+        self.assertIn("drop", island.CLICKABLE)  # never see-through to the drag while it's up
+        self.assertGreater(drawn(lay).max(), 0.5)
+        k = isl.k
+        isl.island_rect = (0, 0, lay.w, lay.h)
+        isl._dragging("over", isl.CARD_PAD * k + 40 * k, isl.CARD_PAD * k + 26 * k + 10 * k + 80 * k, [])
+        self.assertTrue(isl._drop_zone(time.time()).key[1])  # over the Shelf: lit
+        isl._dragging("leave", 0, 0, [])
+        self.assertIsNotNone(isl.drag_over["left"])
+        isl._dragging("drop", 5, 5, ["C:\\Work\\brief.pdf"])
+        self.assertIsNone(isl.drag_over)
+        isl.runner.post.assert_called_with(("dropped", ["C:\\Work\\brief.pdf"]))
+        with mock.patch.object(isl, "_hub_on", return_value=False):  # the panels off: no shelf to drop on
+            isl._dragging("enter", 1, 1, ["C:\\a.txt"])
+            self.assertNotEqual(isl._scene(time.time()), ("drop",))
+
+    def test_the_shelf_says_each_ones_size_and_takes_one_off(self):
+        isl = self.capsule()
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = os.path.join(folder, "notes.txt")
+        with open(path, "w") as f:
+            f.write("x" * 3000)
+        self.assertEqual(island._file_size(path), "3 KB")
+        self.assertEqual(island._file_size(folder), "Folder")
+        self.assertEqual(island._file_size(os.path.join(folder, "gone.txt")), "")
+        isl.shelf = [path]
+        with mock.patch.object(isl, "_file_icon", return_value=None):
+            h, draw, hot, key = isl._hub_shelf(isl.HUB_W * isl.k, isl.CARD_PAD * isl.k, 40, {}, time.time())
+        names = [n[0] for n in hot]
+        self.assertLess(names.index("unshelf:0"), names.index("shelf:0"))  # its x before the file under it
+        isl._wake = lambda: None
+        with mock.patch.object(isl, "_agent_busy", return_value=False), \
+                mock.patch("shelf.save"):
+            isl._hub_press("unshelf:0", False)
+        self.assertEqual(isl.shelf, [])
+
+    def test_a_notification_peeks_then_opens_with_a_sweep(self):
+        isl = self.capsule()
+        now = time.time()
+        note = plugins.Activity("notifications", "notification", {"app": "WhatsApp", "app_id": "", "title": "Mum",
+                                                                  "text": "Home by eight", "phone": False})
+        isl.popups = [note]
+        scene = isl._scene(now)
+        self.assertEqual(isl.peek[0], id(note))
+        self.assertEqual(isl._make(scene, now).kind, "peek")
+        opened = isl._make(scene, now + isl.PEEK_FOR + 0.01)
+        self.assertEqual(opened.kind, "notification")
+        isl.layout, isl.changed = opened, now
+        self.assertTrue(isl._sweeping(now + 0.2))
+        self.assertIsNotNone(isl._sweep(now + 0.3, 0, 0, opened.w, opened.h, 12))
+        self.assertFalse(isl._sweeping(now + isl.SWEEP_FOR + 0.1))
+        isl.peek, isl.hover = None, True
+        isl.popups = [plugins.Activity("notifications", "notification", dict(note.data))]
+        isl._scene(now)
+        self.assertIsNone(isl.peek)  # pointed at: straight open
+
+
+class GlanceMore(unittest.TestCase):
+    """The second round of Glance's notch (31 October 2026, the owner: "add all", no lyrics): what you copied, to
+    copy again; the shelf by kind; Today, the forecast and the to-do list; the next song peeking; where the music
+    plays; and Reply on a message, through her typing box, so she still asks before sending."""
+
+    def capsule(self, **kw):
+        isl = fonted(self, **dict({"style": "capsule", "drop": True, "visible_window": True}, **kw))
+        isl.W, isl.H = bubble_spring(84 * isl.k), bubble_spring(34 * isl.k)
+        isl.runner = mock.Mock()
+        isl._wake = lambda: None
+        return isl
+
+    def test_the_shelf_by_kind_and_what_you_copied(self):
+        isl = self.capsule()
+        isl.shelf = ["C:\\a\\photo.jpg", "C:\\a\\brief.pdf"]
+        isl.clips = [{"full": "https://example.com/x", "text": "https://example.com/x", "at": time.time(), "link": True},
+                     {"full": "milk and eggs", "text": "milk and eggs", "at": time.time() - 90, "link": False}]
+        W, pad = isl.HUB_W * isl.k, isl.CARD_PAD * isl.k
+        with mock.patch.object(isl, "_file_icon", return_value=None):
+            h, draw, hot, key = isl._hub_shelf(W, pad, 40, {}, time.time())
+            names = [n[0] for n in hot]
+            self.assertEqual(names[:4], ["view:all", "view:pictures", "view:documents", "view:copied"])
+            isl.shelf_view = "documents"
+            h, draw, hot, key = isl._hub_shelf(W, pad, 40, {}, time.time())
+            self.assertIn("shelf:1", [n[0] for n in hot])  # the pdf, by its place on the shelf
+            self.assertNotIn("shelf:0", [n[0] for n in hot])
+            isl.shelf_view = "copied"
+            h, draw, hot, key = isl._hub_shelf(W, pad, 40, {}, time.time())
+        col = np.zeros((int(h) + 80, int(W) + 4, 3), np.float32)
+        draw(face.Canvas(col), 2, 2, W, h + 40, 1.0, time.time())
+        self.assertGreater(col.max(), 0.5)
+        self.assertIn("clip:1", [n[0] for n in hot])
+        with mock.patch.object(isl, "_agent_busy", return_value=False), \
+                mock.patch.object(island.win, "set_clipboard") as put:
+            isl._hub_press("clip:1", False)
+            isl._hub_press("view:all", False)
+        put.assert_called_once_with("milk and eggs")
+        self.assertEqual((isl.popups[-1].kind, isl.shelf_view), ("copied", None))
+
+    def test_today_the_forecast_and_the_list(self):
+        isl = self.capsule()
+        d = {"weather": {"temp": 23, "sky": "partly cloudy", "place": "Nantes", "feels": 23, "humidity": 74, "wind": 14,
+                         "hourly": [{"hour": 15 + i, "temp_c": 23 - i, "sky": "cloudy"} for i in range(6)],
+                         "days": [{"day": "today", "high_c": 24, "low_c": 16}, {"day": "tomorrow", "high_c": 22,
+                                                                                "low_c": 15}]},
+             "todo": [{"id": 4, "text": "Buy milk"}]}
+        W, pad = isl.HUB_W * isl.k, isl.CARD_PAD * isl.k
+        h, draw, hot, key = isl._hub_today(W, pad, 40, d, time.time())
+        col = np.zeros((int(h) + 80, int(W) + 4, 3), np.float32)
+        draw(face.Canvas(col), 2, 2, W, h + 40, 1.0, time.time())
+        self.assertGreater(col.max(), 0.5)
+        self.assertEqual([n[0] for n in hot], ["todo_add", "tick:4"])
+        isl.hub_data = dict(d)
+        with mock.patch.object(isl, "_agent_busy", return_value=False), mock.patch.object(isl, "ask") as ask:
+            isl._hub_press("tick:4", False)
+            isl._hub_press("todo_add", False)
+        isl.runner.do.assert_called_with("hub", "tick", "4")
+        self.assertEqual(isl.hub_data["todo"], [])
+        ask.assert_called_once_with("Add to my to-do list: ", under=False)
+        self.assertIn("today", island.HUB_PAGES)
+        h, draw, hot, key = isl._hub_today(W, pad, 40, {}, time.time())  # nothing read yet: still drawn
+        self.assertEqual(island._day_name("day after", 2)[:2].isalpha(), True)
+
+    def test_the_next_song_peeks(self):
+        isl = self.capsule()
+        act = plugins.Activity("media", "track", {"title": "Blue Hour", "artist": "Glance", "app": "Spotify",
+                                                  "art": None, "tint": None, "way": "next"})
+        lay = isl._make(("popup", act), time.time())
+        self.assertEqual((lay.kind, lay.key[3]), ("track", "Next"))
+        self.assertGreater(drawn(lay).max(), 0.5)
+
+    def test_reply_on_a_message_opens_her_typing_box(self):
+        isl = self.capsule(origin=SimpleNamespace(x=0, y=0))
+        msg = plugins.Activity("notifications", "notification", {"app": "WhatsApp", "app_id": "", "title": "Mum",
+                                                                 "text": "Home?", "phone": False, "messaging": True})
+        lay = isl._glass_note(msg)
+        self.assertIn("reply", [n[0] for n in lay.hot])
+        plain = dict(msg.data, messaging=False)
+        self.assertNotIn("reply", [n[0] for n in isl._glass_note(plugins.Activity("notifications", "notification",
+                                                                                   plain)).hot])
+        isl.layout, isl.popup, isl.island_rect = lay, msg, (0, 0, lay.w, lay.h)
+        box = next(n for n in lay.hot if n[0] == "reply")
+        with mock.patch.object(island.win, "cursor_pos", return_value=((box[1] + box[3]) / 2, (box[2] + box[4]) / 2)), \
+                mock.patch.object(isl, "ask") as ask:
+            isl._click(False)
+        ask.assert_called_once_with("Reply to Mum on WhatsApp: ", under=False)
+
+    def test_where_the_music_plays_moves_on(self):
+        p = plugins.Media(mock.Mock())
+        p.session = mock.Mock()
+        outs = [{"id": "a", "name": "Speakers", "default": True}, {"id": "b", "name": "Buds", "default": False}]
+        with mock.patch("devices.outputs", return_value=outs), mock.patch.object(plugins.win, "set_output") as put:
+            p.command("output")
+        put.assert_called_once_with("b")
