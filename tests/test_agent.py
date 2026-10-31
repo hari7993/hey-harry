@@ -1310,7 +1310,8 @@ class Checked(Live):
         with self.planner({"do": "open", "app": "Sound Recorder"}, {"do": "keys", "keys": "ctrl+r"}):
             siri.handle("open recorder and record my voice")
         self.assertEqual(self.said[-1], "Windows is asking if Sound Recorder can use your mic. Click Yes and I'll "
-                                        "start it.")
+                                        "start it.")  # and no stronger model offered after it: your yes is for her
+        self.assertIsNone(siri.OFFER["words"])
 
     def test_a_claim_the_screen_doesnt_show_isnt_said_as_done(self):
         self.recorder()
@@ -1318,7 +1319,9 @@ class Checked(Live):
                     "say": "It's recording now."})  # Ctrl+R in this window does nothing
         with self.planner({"do": "open", "app": "Sound Recorder"}, {"do": "keys", "keys": "ctrl+r"}):
             siri.handle("open recorder and record my voice")
-        self.assertIn("I can't see it on the screen, though, so check it.", self.said[-1])
+        # said, and then (since 28 October) a stronger model is offered, as the one she has got it wrong
+        self.assertIn("I can't see it on the screen, though, so check it.", self.said[-2])
+        self.assertEqual(self.said[-1], "Want me to try that with Claude Sonnet?")
 
 
 class Safety(Live):

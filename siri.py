@@ -5482,6 +5482,11 @@ STRONGER = (("anthropic", r"claude-sonnet-\d[\w.-]*", "claude-sonnet-5-5"), ("op
 SMALL = re.compile(r"haiku|mini|nano|flash|lite|small|tiny|(?<![\d.])\d{1,2}b\b")
 OFFER = {"words": None, "model": None, "plan": None, "until": 0.0}
 OFFER_LINE = "Want me to try that with {name}?"
+# Her own last line asking you something, a question or a thing for you to do ("Click Yes and I'll start it."): no
+# offer after it, as your yes to her would be taken for one to the stronger model, which you pay for (31 October 2026:
+# Windows asked to let Sound Recorder use the mic, she said "Click Yes and I'll start it", then offered Claude Sonnet)
+ASKS_YOU = re.compile(r"\?\s*$|(?:^|[.!]\s+)(?:please\s+)?(?:click|press|tap|sign in|log in|allow|accept|approve|"
+                      r"choose|pick|select|unlock|plug|connect|turn on)\b", re.I)
 TRY_STRONGER = re.compile(r"(?:(?:yes|yeah|sure|okay|ok|please)\W* )*(?:try|use|do) (?:it |that |that one )?(?:again )?"
                           r"(?:with|on|using) (?:it|that|that one|claude|sonnet|gpt|gemini|grok|the (?:stronger|better|"
                           r"smarter|other|paid) (?:one|model))(?: please)?")
@@ -5526,6 +5531,11 @@ def offer_stronger(words, record, gate=False):
         return ""
     OFFER.update(words=str(words), model=model, plan=record, gate=gate, until=time.time() + OFFER_FOR)
     return OFFER_LINE.format(name=model_name(model))
+
+
+def asks_you(lines):
+    """True if the last of lines, what she's said this turn, asks you something or asks you to do something."""
+    return bool(lines) and bool(ASKS_YOU.search(str(lines[-1]).strip()))
 
 
 def took_offer(words):
@@ -10947,7 +10957,7 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
     except Exception as exc:  # learning never gets in the way of the turn
         print(f"  couldn't learn from this turn: {exc!r}")
     if gate != "cold" and not plan.get("confirm") and not (origin() == "voice" and HER.stop.is_set()) and \
-            ((plan.get("llm_failed") and not plan.get("offline")) or (planned and fell)):
+            not asks_you(spoken) and ((plan.get("llm_failed") and not plan.get("offline")) or (planned and fell)):
         offered_line = offer_stronger(words or text, record, gate)  # "Want me to try that with Claude Sonnet?"
         if offered_line:
             voice_error = say(offered_line, notify) or voice_error

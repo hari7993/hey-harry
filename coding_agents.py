@@ -61,12 +61,18 @@ def _write(path, data, tries=10):
         pass
 
 
-def _read(path):
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return None
+def _read(path, tries=1):
+    """What's in the JSON file at path, or None. tries: for a file that's there, read again a moment later when it
+    couldn't be read, as alive.json can't be for an instant while the island replaces it (_write), and a hook took
+    her for not running (31 October 2026, one test run in three)."""
+    for i in range(tries):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            if i + 1 < tries:
+                time.sleep(0.02)
+    return None
 
 
 def touch():
@@ -75,7 +81,7 @@ def touch():
 
 
 def alive(now=None):
-    got = _read(os.path.join(folder(), "alive.json"))
+    got = _read(os.path.join(folder(), "alive.json"), tries=5)
     return bool(got) and (now or time.time()) - float(got.get("at") or 0) < ALIVE_FOR
 
 
