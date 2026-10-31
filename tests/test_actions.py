@@ -793,7 +793,7 @@ class Voice(unittest.TestCase):
             raise requests.ReadTimeout("read timed out")
         with mock.patch.object(siri, "FISH", SimpleNamespace(post=post)), \
                 mock.patch.object(siri, "fish", original("fish")), mock.patch.object(siri, "Line", ORIGINAL["Line"]), \
-                mock.patch.object(siri.pocket, "available", lambda voice=None: False), \
+                mock.patch.object(siri.kokoro, "available", lambda voice=None: False), \
                 mock.patch.object(siri.win, "speak_native", lambda text, **kw: native.append(text)):
             original("speak")("A line nobody has cached, 1729.")
         self.assertEqual(native, ["A line nobody has cached, 1729."])
@@ -812,11 +812,11 @@ class Voice(unittest.TestCase):
             return q
         with mock.patch.object(siri, "FISH", SimpleNamespace(post=post)), \
                 mock.patch.object(siri, "fish", original("fish")), mock.patch.object(siri, "Line", ORIGINAL["Line"]), \
-                mock.patch.object(siri.pocket, "available", lambda voice=None: True), \
-                mock.patch.object(siri.pocket, "stream", stream), \
+                mock.patch.object(siri.kokoro, "available", lambda voice=None: True), \
+                mock.patch.object(siri.kokoro, "stream", stream), \
                 mock.patch.object(siri.win, "speak_native", lambda text, **kw: self.fail("Windows' voice")):
             original("speak")("A line nobody has cached, 1729.", "9a9cf47702da476aa4629e2506d4a857")
-        self.assertEqual(made, [("A line nobody has cached, 1729.", "p248")])
+        self.assertEqual(made, [("A line nobody has cached, 1729.", "af_heart")])
 
 
 if __name__ == "__main__":

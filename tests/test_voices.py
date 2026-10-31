@@ -80,7 +80,7 @@ class Saved(unittest.TestCase):
     def test_her_voice_may_be_a_providers(self):
         self.assertEqual(siri.voice_id("sarvam:bulbul:v3/shubh"), "sarvam:bulbul:v3/shubh")
         self.assertEqual(siri.voice_name("deepgram:aura-2-thalia-en"), "Deepgram")
-        self.assertEqual(siri.voice_name("pocket:p248"), "her voice on this PC")
+        self.assertEqual(siri.voice_name("kokoro:af_heart"), "her voice on this PC")
         a, b = siri.tts_path("Hi.", "elevenlabs:eleven_flash_v2_5/abc"), siri.tts_path("Hi.", "elevenlabs:eleven_v3/abc")
         self.assertNotEqual(a, b)  # a line kept in one model is never played for another
 
@@ -244,7 +244,7 @@ class Speaking(unittest.TestCase):
             raise RuntimeError("Deepgram: 402 Insufficient credits")
             yield  # noqa: unreachable, a generator
         with mock.patch.object(voices, "stream", broken), \
-                mock.patch.object(siri.pocket, "available", lambda: False), \
+                mock.patch.object(siri.kokoro, "available", lambda: False), \
                 mock.patch.object(siri.win, "speak_native", lambda text, **kw: said.append(text)):
             ORIGINAL["Line"]("Sorry about that.", "deepgram:aura-2-thalia-en").play()
         self.assertEqual(said, ["Sorry about that."])
@@ -464,9 +464,9 @@ class Pickers(unittest.TestCase):
         self.assertEqual(voice.group_of("pocket:p248"), "pc")
         ears = assistant_ui.EarsSource(app)
         values = [r["value"] for g in ears.groups for r in ears.rows(g)]
-        self.assertEqual(values[:3], ["pc:parakeet", "pc:nemotron", "pc:whisper"])
-        self.assertTrue(all(hearing.parse(v) for v in values[3:]))
-        self.assertEqual(len(values), 3 + sum(len(m) for m in hearing.MODELS.values()))
+        self.assertEqual(values[:2], ["pc:parakeet", "pc:whisper"])  # Nemotron taken out, 31 October 2026
+        self.assertTrue(all(hearing.parse(v) for v in values[2:]))
+        self.assertEqual(len(values), 2 + sum(len(m) for m in hearing.MODELS.values()))
 
 
 if __name__ == "__main__":

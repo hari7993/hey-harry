@@ -412,7 +412,8 @@ class Walkthrough:
         except Exception:
             mics = False
         return {
-            "voice": (bool(get_secret("FISH_AUDIO_API_KEY")) or voice.startswith(("pocket:", "onecore:")), ""),
+            "voice": (bool(get_secret("FISH_AUDIO_API_KEY")) or
+                      voice.startswith(("kokoro:", "pocket:", "onecore:")), ""),
             "brain": (providers.ready(p), f"Thinks with {model_id} on {p.name}"),
             "mic": (mics, ""),
             "ears": (self.app.worker_started and status not in ("Starting", "Something went wrong"),

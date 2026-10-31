@@ -1499,6 +1499,7 @@ def set_clipboard(text):
             raise RuntimeError("Couldn't write to the clipboard")
     finally:
         user32.CloseClipboard()
+        _mine()
 
 
 _sig(user32.GetClipboardData, [UINT], wintypes.HANDLE)
@@ -1576,11 +1577,47 @@ def clipboard_restore(snapshot):
                 kernel32.GlobalFree(handle)
     finally:
         user32.CloseClipboard()
+        _mine()
 
 
 def clipboard_sequence():
     """A number Windows moves on at every change to the clipboard."""
     return user32.GetClipboardSequenceNumber()
+
+
+OWN_CLIPS = []  # the clipboard's numbers after her own changes to it, the newest last (island_plugins.Clipboard)
+
+
+def _mine():
+    """The clipboard noted as hers just now, so the island never says "Copied" for what she put there."""
+    OWN_CLIPS.append(user32.GetClipboardSequenceNumber())
+    del OWN_CLIPS[:-8]
+
+
+_sig(user32.GetClipboardFormatNameW, [UINT, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int)
+_sig(user32.GetClipboardOwner, [], HWND)
+
+
+def clipboard_formats():
+    """(the formats on the clipboard now, as numbers, a registered one by its name, and the process that put them
+    there, 0 if none said), or None while another app has it open."""
+    if not user32.OpenClipboard(None):
+        return None
+    try:
+        found, fmt = [], user32.EnumClipboardFormats(0)
+        while fmt:
+            if fmt >= 0xC000:  # a registered format, as a password manager's marks are
+                name = ctypes.create_unicode_buffer(128)
+                found.append(name.value if user32.GetClipboardFormatNameW(fmt, name, 128) else fmt)
+            else:
+                found.append(fmt)
+            fmt = user32.EnumClipboardFormats(fmt)
+        owner, pid = user32.GetClipboardOwner(), DWORD()
+        if owner:
+            user32.GetWindowThreadProcessId(owner, ctypes.byref(pid))
+        return found, pid.value
+    finally:
+        user32.CloseClipboard()
 
 
 def set_clipboard_files(paths):
@@ -1605,6 +1642,7 @@ def set_clipboard_files(paths):
             raise RuntimeError("Couldn't put the files on the clipboard")
     finally:
         user32.CloseClipboard()
+        _mine()
 
 
 def selected_files():
@@ -1674,6 +1712,28 @@ def paste(text):
 # --------------------------------------------------------------------------- push to talk on right Alt
 VK_RMENU, LLKHF_INJECTED = 0xA5, 0x10
 WM_KEYDOWN, WM_SYSKEYDOWN = 0x100, 0x104
+# the shortcuts the island answers (island_plugins.Clipboard, 30 October 2026, after Glance's notch, "every shortcut,
+# acknowledged"), seen by the same hook: what's called with each one's name as it's pressed. They run inside the hook,
+# so they must return straight away; her own key presses (injected) never count
+CHORDS = []
+VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN, VK_SNAPSHOT = 0x10, 0x11, 0x12, 0x5B, 0x5C, 0x2C
+CHORD_KEYS = {0x56: "paste", 0x58: "cut", 0x5A: "undo", 0x59: "redo", 0x53: "save"}  # V, X, Z, Y, S with Ctrl
+_sig(user32.GetAsyncKeyState, [ctypes.c_int], ctypes.c_short)
+
+
+def chord(vk, held=None):
+    """The shortcut a key going down makes with the keys held with it: "paste", "cut", "undo", "redo", "save" with
+    Ctrl, "screenshot" for Print Screen or Win+Shift+S; None for anything else, Ctrl+Alt (AltGr, on some keyboards)
+    too. Ctrl+C isn't one: the clipboard changing says that. held(vk) is True while that key's down."""
+    held = held or (lambda key: bool(user32.GetAsyncKeyState(key) & 0x8000))
+    windows = held(VK_LWIN) or held(VK_RWIN)
+    if vk == VK_SNAPSHOT or (vk == 0x53 and windows and held(VK_SHIFT)):
+        return "screenshot"
+    if vk not in CHORD_KEYS or windows or not held(VK_CONTROL) or held(VK_MENU):
+        return None
+    if vk == 0x5A and held(VK_SHIFT):  # Ctrl+Shift+Z: redo, as most apps have it
+        return "redo"
+    return CHORD_KEYS[vk]
 
 
 def start_ptt_listener(on_press, on_release):
@@ -1684,6 +1744,14 @@ def start_ptt_listener(on_press, on_release):
 
     def event_filter(msg, data):
         if data.vkCode != VK_RMENU or data.flags & LLKHF_INJECTED:
+            if CHORDS and not data.flags & LLKHF_INJECTED and msg in (WM_KEYDOWN, WM_SYSKEYDOWN) and \
+                    (data.vkCode in CHORD_KEYS or data.vkCode == VK_SNAPSHOT):
+                name = chord(data.vkCode)
+                for told in list(CHORDS) if name else ():
+                    try:
+                        told(name)
+                    except Exception:
+                        pass
             return True
         down = msg in (WM_KEYDOWN, WM_SYSKEYDOWN)
         if down != held[0]:  # holding a key repeats key-down, only act on the change
@@ -1695,6 +1763,36 @@ def start_ptt_listener(on_press, on_release):
     listener.daemon = True
     listener.start()
     return listener
+
+
+# --------------------------------------------------------------------------- keep awake
+ES_CONTINUOUS, ES_SYSTEM_REQUIRED, ES_DISPLAY_REQUIRED = 0x80000000, 0x1, 0x2
+_sig(kernel32.SetThreadExecutionState, [DWORD], DWORD)
+_awake = {"stop": None}
+
+
+def keep_awake(on):
+    """The PC kept from sleeping, and its screen from going off, while on, as Glance's Keep Awake has it (30 October
+    2026, the island's Controls): Windows holds it for as long as the thread that asked lives, so a thread of its own
+    asks and waits, and it ends with her. True if it's on now."""
+    if on and _awake["stop"] is None:
+        stop = threading.Event()
+
+        def hold():
+            kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED)
+            stop.wait()
+            kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+        _awake["stop"] = stop
+        threading.Thread(target=hold, name="keep-awake", daemon=True).start()
+    elif not on and _awake["stop"] is not None:
+        _awake["stop"].set()
+        _awake["stop"] = None
+    return awake()
+
+
+def awake():
+    """True while keep_awake has the PC kept awake."""
+    return _awake["stop"] is not None
 
 
 # --------------------------------------------------------------------------- microphones

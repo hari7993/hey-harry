@@ -3,10 +3,16 @@ to-do list?", "cross off milk". An idea from Nixi (heynixi.com), which keeps one
 
 Things you tick off stay in the file a week, marked done, so "what did I get done?" has an answer and a tick by
 mistake can be put back from the To-do tab; then they go.
+
+A day said with one ("meet Sam tomorrow", "call Ravi on Friday") is kept as the date it means, from the day it was
+added, and said against today's (shown): "Meet with Sam today", then "which was yesterday". Kept as the words, it
+was "tomorrow" every day after (31 October 2026, the owner); lists from before then are read the same way, from the
+day each was added (_dated).
 """
 from __future__ import annotations
 
 import contextlib
+import datetime as dt
 import json
 import os
 import re
@@ -24,6 +30,79 @@ FILLER = {"the", "a", "an", "my", "to", "of", "for", "and", "on", "in", "at", "w
           "item", "task"}
 
 
+WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+# a day said with a thing to do, and the word before it if there is one ("by", "on"), which goes with it
+WHEN = re.compile(r"(?:,\s*)?\b(?:(?:by|on|for|before|until)\s+)?(?:(day after tomorrow)|(tomorrow)|"
+                  r"(today|tonight|this (?:morning|afternoon|evening))|(?:(this|next)\s+)?(" + "|".join(WEEKDAYS) +
+                  r"))\b", re.I)
+
+
+def due_of(text, at=None):
+    """(the date text is for, as 2026-10-31, and text without the words that said it) from "tomorrow", "today",
+    "tonight", "day after tomorrow" or a weekday, said on the day of at (a time, now with None); (None, text) for
+    none."""
+    m = WHEN.search(text or "")
+    if not m:
+        return None, text
+    day = dt.date.fromtimestamp(time.time() if at is None else float(at))
+    if m.group(1):
+        due = day + dt.timedelta(days=2)
+    elif m.group(2):
+        due = day + dt.timedelta(days=1)
+    elif m.group(3):
+        due = day
+    else:
+        ahead = (WEEKDAYS.index(m.group(5).lower()) - day.weekday()) % 7
+        if ahead == 0 and (m.group(4) or "").lower() == "next":
+            ahead = 7
+        due = day + dt.timedelta(days=ahead)
+    rest = " ".join((text[:m.start()] + " " + text[m.end():]).split()).strip(" ,.;")
+    return due.isoformat(), (rest[:1].upper() + rest[1:]) if re.search(r"\w", rest) else text
+
+
+def when_said(due, today=None):
+    """A to-do's date as she says it on today: today, tomorrow, yesterday, on Saturday, on 12 Nov."""
+    try:
+        day = dt.date.fromisoformat(str(due))
+    except ValueError:
+        return ""
+    today = today or dt.date.today()
+    gap = (day - today).days
+    if gap == 0:
+        return "today"
+    if gap == 1:
+        return "tomorrow"
+    if gap == -1:
+        return "yesterday"
+    if 1 < gap < 7:
+        return f"on {day.strftime('%A')}"
+    return f"on {day.day} {day.strftime('%b')}"
+
+
+def shown(item, today=None):
+    """A to-do as she says and shows it, its day against today's: "Meet with Sam today", "Call Ravi on Friday",
+    "Meet with Sam, which was yesterday"."""
+    text = str(item.get("text") or "")
+    if not item.get("due"):
+        return text
+    when = when_said(item["due"], today)
+    if not when:
+        return text
+    past = dt.date.fromisoformat(item["due"]) < (today or dt.date.today())
+    return f"{text}, which was {when}" if past and not item.get("done") else f"{text} {when}"
+
+
+def _dated(found):
+    """A list from before its days were kept as dates: each thing's day worked out from the day it was added."""
+    for i in found:
+        if "due" not in i:
+            due, rest = due_of(i["text"], i.get("added"))
+            i["due"] = due
+            if due:
+                i["text"] = rest
+    return found
+
+
 def _path():
     return win.own_data(PATH)
 
@@ -32,7 +111,7 @@ def _read():
     try:
         with open(_path(), encoding="utf-8") as f:
             data = json.load(f)
-        return [i for i in data if isinstance(i, dict) and i.get("text")] if isinstance(data, list) else []
+        return _dated([i for i in data if isinstance(i, dict) and i.get("text")]) if isinstance(data, list) else []
     except (OSError, ValueError):
         return []
 
@@ -109,14 +188,17 @@ def find(words, loose=True):
 
 def add(text):
     """Put it on the list, unless it's there already. Returns (the thing, True if it was new)."""
-    text = clean(text)
+    due, text = due_of(clean(text))
     with LOCK:
         found = _read()
         same = next((i for i in found if not i.get("done") and _words(i["text"]) == _words(text)), None)
         if same:
+            if due and same.get("due") != due:  # the same thing, for another day: that day now
+                same["due"] = due
+                _write(found)
             return same, False
         item = {"id": max((int(i.get("id") or 0) for i in found), default=0) + 1, "text": text,
-                "added": time.time(), "done": False}
+                "added": time.time(), "done": False, "due": due}
         found.append(item)
         _write(found)
     return item, True
@@ -179,10 +261,12 @@ def drop(item_id):
 
 def edit(item_id, text):
     """Fix what it says, from the To-do tab, when she misheard it."""
-    text = clean(text)
+    due, text = due_of(clean(text))
 
     def change(found, item):
         item["text"] = text
+        if due:
+            item["due"] = due
     return _by_id(item_id, change)
 
 
@@ -216,7 +300,7 @@ def said(limit=8):
     left = items()
     if not left:
         return "Your to-do list is empty."
-    names = [i["text"][:1].lower() + i["text"][1:] for i in left[:limit]]
+    names = [shown(i)[:1].lower() + shown(i)[1:] for i in left[:limit]]
     joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
     more = f", and {len(left) - limit} more" if len(left) > limit else ""
     count = "one thing" if len(left) == 1 else f"{len(left)} things"
@@ -228,4 +312,6 @@ def for_model(limit=15):
     left = items()
     if not left:
         return ""
-    return "Their to-do list: " + "; ".join(f"{n}. {i['text']}" for n, i in enumerate(left[:limit], 1)) + "."
+    today = dt.date.today()
+    return (f"Their to-do list (today is {today.strftime('%A')} {today.day} {today.strftime('%B')}): " +
+            "; ".join(f"{n}. {shown(i, today)}" for n, i in enumerate(left[:limit], 1)) + ".")

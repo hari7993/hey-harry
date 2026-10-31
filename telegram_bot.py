@@ -235,15 +235,17 @@ class Pairing:
 
 
 class Bot:
-    def __init__(self, on_message, on_tap, transcribe=None, on_pair=None, on_stop=None):
+    def __init__(self, on_message, on_tap, transcribe=None, on_pair=None, on_stop=None, on_browser=None):
         """on_message(text, chat): a message from you, to run as a turn (on Harry's side, not this thread).
         on_message(text, chat, pictures, files) when it came with pictures or files: pictures [(bytes, type)] to
         look at, files [paths] kept on the PC to send on, an album's together.
         on_tap(yes, ask, chat, message): you tapped Yes or No on her question ask. transcribe(16 kHz audio) ->
         (text, ms), for voice notes. on_pair(name): someone sent /start while pairing was open and got a code, or
         None: they didn't, 3 others had asked first. on_stop(why): it gave up, by the error's class name
-        ("InvalidToken"), never its message, which can hold the token."""
+        ("InvalidToken"), never its message, which can hold the token. on_browser(data, chat): a tap on her
+        browser's picture (herbrowser.phone_tap), only yours, as on_tap is."""
         self.on_message, self.on_tap, self.transcribe, self.on_pair = on_message, on_tap, transcribe, on_pair
+        self.on_browser = on_browser
         self.on_stop = on_stop
         self.pairing, self.strangers, self.told, self.name = Pairing(), set(), set(), ""
         self.answered = {}  # her questions already answered with a tap: (chat, message) -> when
@@ -618,7 +620,9 @@ class Bot:
         if user is not None and user.id == owner() and q.message is not None:  # a tap from anyone else does nothing
             answer, _, ask = str(q.data or "").partition(":")
             key = (q.message.chat_id, q.message.message_id)
-            if answer in ("yes", "no") and key not in self.answered:  # a second tap, before the buttons came off: no
+            if answer == "b" and self.on_browser is not None:  # her browser's picture, tapped: every tap counts
+                threading.Thread(target=self.on_browser, args=(str(q.data), q.message.chat_id), daemon=True).start()
+            elif answer in ("yes", "no") and key not in self.answered:  # a second tap, before the buttons came off: no
                 self.answered[key] = time.time()
                 while len(self.answered) > 200:
                     self.answered.pop(next(iter(self.answered)))
@@ -699,6 +703,30 @@ class Bot:
         async def go():
             await self.app.bot.send_photo(chat, photo=io.BytesIO(picture), caption=caption[:1024] or None)
         return self._call(go)
+
+    def send_control(self, chat, picture, caption, rows, message=None):
+        """Her browser's page on your phone (herbrowser.remote_view): a JPEG with a button for each of rows' (label,
+        data), changing the picture in message in place if given, so the chat holds one live picture. Its message's
+        id, or None if it couldn't be sent."""
+        got = {}
+
+        async def go():
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+            markup = InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=data) for label, data in row]
+                                           for row in rows])
+            if message is not None:
+                try:
+                    await self.app.bot.edit_message_media(media=InputMediaPhoto(io.BytesIO(picture),
+                                                                                caption=caption[:1024]),
+                                                          chat_id=chat, message_id=message, reply_markup=markup)
+                    got["id"] = message
+                    return
+                except Exception as exc:  # gone, or too old to change: a new picture instead
+                    print(f"  telegram: a new picture of her browser ({type(exc).__name__})")
+            sent = await self.app.bot.send_photo(chat, photo=io.BytesIO(picture), caption=caption[:1024] or None,
+                                                 reply_markup=markup)
+            got["id"] = sent.message_id
+        return got.get("id") if self._call(go) else None
 
     def settle(self, chat, message, note):
         """Her question's buttons taken off once answered, with what happened: "Yes.", "Expired, not run."."""

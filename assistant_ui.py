@@ -59,6 +59,12 @@ ISLAND_FACES = {"eyes": "Her eyes", "orb": "The orb", "wave": "The Siri wave"}
 ISLAND_THEMES = {"paper": "Paper, like her window", "amoled": "AMOLED black", "dark": "Dark", "light": "Light",
                  "system": "Like Windows"}
 ISLAND_ALIGN = {"center": "In the middle", "left": "On the left", "right": "On the right"}
+ISLAND_FONTS = {"figtree": "Figtree", "glance": "Plus Jakarta Sans and Poppins", "segoe": "Windows' own (Segoe)"}
+ISLAND_STATUS = {"": "Nothing", "time": "The time", "weather": "The weather", "battery": "The battery",
+                 "time,battery": "The time and battery", "weather,time": "The weather and time",
+                 "weather,battery": "The weather and battery", "weather,time,battery": "The time, weather and battery",
+                 "cpu,ram": "Processor and memory", "time,weather,battery,cpu,ram": "All of them"}
+DOCK_MODES = {"smart": "Out of a window's way", "peek": "Only at the bottom edge", "fixed": "Always there"}
 hermes_memory.set_memory_dir(os.path.join(win.APPDATA_DIR, "memories"))  # the same places siri.py keeps them
 hermes_memory.set_home(win.APPDATA_DIR)
 skills.set_skills_dir(os.path.join(win.APPDATA_DIR, "skills"))
@@ -180,6 +186,10 @@ PRIVACY = (
      "laptop is worked out on this PC, a frame every few seconds while you're idle, and none are kept. Only for a "
      "look rule (\u201cwhen I wear my glasses...\u201d) does one small picture go to the vision model, as you come back "
      "and every few minutes while you're there. Claps and snaps are heard on this PC."),
+    ("Her own browser  \u00b7  the sites she works on", "Only for a job on a website, with Her own browser on in "
+     "Settings: the sites she opens see her browser, signed in wherever you signed it in, and her page goes to the "
+     "answer model as a task's screen does. Its sign-ins stay in its own profile on this PC, and she never types a "
+     "password. It's driven over a pipe only she holds, never a network port, and opens public sites only."),
     ("Speech to text by a provider  \u00b7  your voice", "Only if you pick Sarvam, ElevenLabs, AssemblyAI or Deepgram "
      "in Settings > Speech to text: the audio of what you say to her, once she's taken it as hers (with her name, right "
      "Alt, just after she answers, or dictating), with her name and yours as words to listen for. This PC hears "
@@ -245,6 +255,7 @@ STAT_ICONS = ("\ue916", "\ue720", "\ue70f", "\ue945", "\ue71d", "\ue897")  # the
 STAT_TINTS = ("orange", "blue", "violet", "green", "teal", "rose")
 # the Island tab's parts and the Keys tab's, a card each: (name, colour, icon)
 ISLAND_PARTS = (("Look", "violet", "\ue790"), ("Place", "blue", "\ue718"), ("Behaviour", "green", "\ue9e9"),
+                ("Panels", "teal", "\ue8a9"), ("Edges", "rose", "\ue767"), ("Dock", "slate", "\ue7c4"),
                 ("Plugins", "orange", "\ue74c"), ("Notifications", "amber", "\uea8f"))
 KEY_PARTS = (("Needed", "amber", "\ue8d7"), ("Answer models", "green", "\ue99a"),
              ("Voice and hearing", "violet", "\ue720"))
@@ -404,6 +415,72 @@ class HintEntry(ttk.Entry):
         if self.showing:
             self.delete(0, "end")
             self.insert(0, hint)
+
+
+def change_memory(text, target, old=None, old_target=None):
+    """One thing she remembers added (old None) or changed, by hand from the Memory tab (31 October 2026, after
+    OpenMuse's editable memories): through Hermes' memory tool, so its scanner turns away what it turns away when you
+    say "remember ...", and the size limit holds. target: "user" (about you) or "memory" (her own notes); a change
+    can move it from one to the other. "" once it's kept, else why not."""
+    text = "\n".join(line.rstrip() for line in str(text or "").strip().splitlines()).strip()
+    if not text:
+        return "Write something for her to remember first"
+    store = hermes_memory.store()
+    if old is None:
+        result = hermes_memory.memory_tool(store, "add", target, content=text)
+    elif (old_target or target) == target:
+        result = hermes_memory.memory_tool(store, "replace", target, content=text, old_text=old)
+    else:  # moved: kept in the new place first, so it's never lost between the two
+        result = hermes_memory.memory_tool(store, "add", target, content=text)
+        if result.get("success"):
+            result = hermes_memory.memory_tool(store, "remove", old_target, old_text=old)
+    return "" if result.get("success") else str(result.get("error") or "Couldn't keep that")[:200]
+
+
+class MemoryEditor:
+    """The Memory tab's Add and Edit this: one thing she remembers, about you or a note of hers, written or changed
+    by hand, kept by change_memory. Enter in the box is a new line; Save keeps it, Escape leaves it."""
+
+    def __init__(self, app, target, text, title):
+        self.app, self.old, self.old_target, px = app, text or None, target, app.px
+        top = self.top = tk.Toplevel(app.root, bg=BG)
+        top.title(title)
+        top.transient(app.root)
+        w, h = px(560), px(320)
+        x = app.root.winfo_rootx() + (app.root.winfo_width() - w) // 2
+        y = app.root.winfo_rooty() + (app.root.winfo_height() - h) // 3
+        top.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        top.protocol("WM_DELETE_WINDOW", top.destroy)
+        top.bind("<Escape>", lambda e: top.destroy())
+        body = tk.Frame(top, bg=BG, padx=px(16), pady=px(14))
+        body.pack(fill="both", expand=True)
+        row = tk.Frame(body, bg=BG)
+        row.pack(fill="x")
+        app._label(row, "About", app.f_bold).pack(side="left")
+        self.about = ttk.Combobox(row, state="readonly", width=14, values=["You", "Her notes"])
+        self.about.current(0 if target == "user" else 1)
+        self.about.pack(side="left", padx=(px(8), 0))
+        self.box = tk.Text(body, height=6, wrap="word", font=app.f_body, relief="solid", bd=1, padx=px(6),
+                           pady=px(6))
+        self.box.insert("1.0", text or "")
+        self.box.pack(fill="both", expand=True, pady=(px(10), px(6)))
+        self.note = app._label(body, "Like: “My work account is the second one in Chrome”. Never a "
+                                     "password or a code.", app.f_small, MUTED, wraplength=px(520))
+        self.note.pack(fill="x")
+        bar = tk.Frame(body, bg=BG)
+        bar.pack(fill="x", pady=(px(10), 0))
+        ttk.Button(bar, text="Cancel", command=top.destroy).pack(side="right")
+        ttk.Button(bar, text="Save", command=self.save).pack(side="right", padx=(0, px(8)))
+        self.box.focus_set()
+
+    def save(self):
+        target = "user" if self.about.current() == 0 else "memory"
+        why = change_memory(self.box.get("1.0", "end"), target, self.old, self.old_target)
+        if why:
+            self.note.configure(text=why, fg=ERROR)
+            return
+        self.top.destroy()
+        self.app._load_memory("Changed" if self.old else "Kept")
 
 
 class ModelPicker:
@@ -642,8 +719,8 @@ class VoiceSource:
 
     def rows(self, g, model=None):
         if g.id == "pc":
-            return [{"value": v, "cols": (name, "This PC" if v.startswith("pocket:") else "Windows", about)}
-                    for name, v, about in settings.VOICES if v.startswith(("pocket:", "onecore:", "sapi:"))]
+            return [{"value": v, "cols": (name, "This PC" if v.startswith("kokoro:") else "Windows", about)}
+                    for name, v, about in settings.VOICES if v.startswith(("kokoro:", "onecore:", "sapi:"))]
         if g.id == "fish":
             return [{"value": v, "cols": (name, "Fish Audio", about)} for name, v, about in settings.VOICES
                     if re.fullmatch(r"[0-9a-f]{32}", v)]
@@ -665,7 +742,8 @@ class VoiceSource:
 
     def group_of(self, value):
         parsed = voices.parse(value)
-        return parsed[0].id if parsed else "pc" if str(value).startswith(("pocket:", "onecore:", "sapi:")) else "fish"
+        on_pc = str(value).startswith(("kokoro:", "pocket:", "onecore:", "sapi:"))
+        return parsed[0].id if parsed else "pc" if on_pc else "fish"
 
     def status(self, g):
         if g.id != "elevenlabs":
@@ -1020,6 +1098,9 @@ class AssistantWindow:
         self._setup_root()
         self._setup_styles()
         self.bubble = Bubble(root)
+        self.edges = self._start_edges()
+        self.dock = None
+        self._dock_changed()
         self._build_sidebar()
         self._build_main()
         self.pages = {"home": self._build_home(), "todo": self._build_todo(), "tasks": self._build_tasks(),
@@ -2045,7 +2126,7 @@ class AssistantWindow:
             if not iid.isdigit() or self.todo_table.exists(iid):  # one edited by hand, without a number of its own
                 continue
             self.todo_table.insert("", "end", iid=iid, tags=("done",) if item.get("done") else (),
-                                   values=(item["text"], when_text(item.get("added")),
+                                   values=(todo.shown(item), when_text(item.get("added")),
                                            when_text(item.get("done_at")) if item.get("done") else ""))
         for iid in keep:
             if self.todo_table.exists(iid):
@@ -2345,7 +2426,8 @@ class AssistantWindow:
         frame.pack(fill="both", expand=True)
         bar = tk.Frame(page, bg=BG)
         bar.pack(fill="x", pady=(self.px(10), 0))
-        for i, (text, command) in enumerate((("Forget this", self.forget_memory),
+        for i, (text, command) in enumerate((("Add", self.add_memory), ("Edit this", self.edit_memory),
+                                             ("Forget this", self.forget_memory),
                                              ("Edit personality", self.edit_personality),
                                              ("Open notes", self.open_notes), ("Open the folder", self.open_memory_folder),
                                              ("Clear conversations", self.clear_conversations))):
@@ -2379,6 +2461,24 @@ class AssistantWindow:
         kept = f"She keeps what you say to her ({turns:,} so far) and can look back through it." if turns else ""
         empty = "" if self.memories else "Nothing yet. Say \u201cHey Harry, remember that \u2026\u201d. "
         self.mem_message.configure(text=message or (empty + kept), fg=MUTED)
+
+    def add_memory(self):
+        """Something for her to remember, written by hand (MemoryEditor)."""
+        MemoryEditor(self, "user", "", "Add to her memory")
+
+    def edit_memory(self):
+        """What she remembers, picked in the list, changed by hand (MemoryEditor). A skill's changed by teaching her
+        again, in words."""
+        sel = self.mem_table.selection()
+        if not sel:
+            self.mem_message.configure(text="Pick one in the list first", fg=ERROR)
+            return
+        target, entry = self.memories[int(sel[0])]
+        if target == "skill":
+            self.mem_message.configure(text="Skills change when you teach her again: “when I say ..., do ...”",
+                                       fg=ERROR)
+            return
+        MemoryEditor(self, target, entry, "Change what she remembers")
 
     def forget_memory(self):
         sel = self.mem_table.selection()
@@ -2447,17 +2547,19 @@ class AssistantWindow:
             cards[name] = self._part(page, name, tint, icon)
             cards[name][0].pack(fill="x", pady=(0, self.px(14)))
         self._jumps(page, [(name, tint, cards[name][0]) for name, tint, _ in ISLAND_PARTS])
-        count, form = [0], None
+        count, form, started = [0], None, set()
         self.island_jobs, self.island_apps_loaded = {}, False
 
-        def row(title, sub):
+        def row(title, sub, part=None):
             nonlocal form
             i = count[0]
             count[0] += 1
-            form = cards["Look" if i < 6 else "Place" if i < 11 else "Behaviour"][1]  # its part's card
+            part = part or ("Look" if i < 6 else "Place" if i < 11 else "Behaviour")
+            form = cards[part][1]  # its part's card
             r = i * 2
-            if i not in (0, 6, 11):  # a thin line between rows, but at the top of a card
+            if part in started:  # a thin line between rows, but at the top of a card
                 tk.Frame(form, bg=LINE, height=1).grid(row=r, column=0, columnspan=2, sticky="new")
+            started.add(part)
             self._label(form, title, self.f_h2).grid(row=r, column=0, sticky="w", pady=(self.px(14), 0))
             self._label(form, sub, self.f_small, MUTED, wraplength=self.px(330)).grid(row=r + 1, column=0, sticky="w")
             return r
@@ -2511,6 +2613,8 @@ class AssistantWindow:
         combo(row("Theme", "Paper is white with faint dots, like this window. AMOLED is pure black, like a phone's "
                            "notch. Like Windows follows light and dark mode."),
               "island_theme", ISLAND_THEMES)
+        combo(row("Font", "Her words on the island. Figtree is clear at small sizes; Plus Jakarta Sans and "
+                          "Poppins are Glance's; Segoe is Windows' own."), "island_font", ISLAND_FONTS)
         check(row("Border", "A thin line round it, so it shows on a dark wallpaper."), "island_border",
               "Show a border")
         combo(row("Where", "Along the top of the screen you're working on."), "island_align", ISLAND_ALIGN)
@@ -2526,6 +2630,41 @@ class AssistantWindow:
                                  "show."), "island_hide_fullscreen", "Hide over full-screen apps")
         slider(row("Popups stay", "How long a notification or the battery stays up. Pointing at one keeps it."),
                "island_auto_hide", 2, 15, " s")
+        check(row("Light", "Something comes and she lights up in its colour, as Glance's notch does: a line round her "
+                           "and light along the top of the screen.", "Look"), "island_light", "Light up")
+
+        # the panels, the edges and the dock (30 October 2026, after bloom)
+        combo(row("Beside her eyes", "A little of what's going on, either side of her eyes while nothing else is.",
+                  "Panels"), "island_status", ISLAND_STATUS)
+        check(row("Do Not Disturb", "No notifications, devices or battery popping up on the island. Your own timers "
+                                    "and her turns still show. The moon in Controls does the same.", "Panels"),
+              "island_dnd", "Hush the island")
+        check(row("Shelf", "Files dropped on her eyes wait on the shelf panel, to drag out where you want them. Off, "
+                           "it's empty each time she starts.", "Panels"), "island_shelf_keep",
+              "Keep the shelf for next time")
+        slider(row("Focus", "A round of the focus timer, when you don't say how long. \u201cStart a pomodoro\u201d.",
+                   "Panels"), "focus_minutes", 5, 90, " min")
+        slider(row("Break", "The break after each round. Every fourth one is 15 minutes.", "Panels"),
+               "break_minutes", 1, 30, " min")
+        check(row("Volume", "Rest the pointer against the left edge of the screen: the volume slides out, with the "
+                            "apps playing sound beside it.", "Edges"), "edge_volume", "At the left edge")
+        check(row("Brightness", "The same at the right edge, for the screen's brightness. Only on a screen Windows "
+                                "can dim.", "Edges"), "edge_brightness", "At the right edge")
+        check(row("When they change", "The slider shows for a moment when the volume or brightness changes, from the "
+                                      "keys or anywhere. Windows' own still shows too.", "Edges"), "level_hud",
+              "Show the change")
+        check(row("In the notch", "A change shows in her island instead, with her light along her bottom as far as "
+                                  "it's set, as Glance's notch does. Off, the slider shows it.", "Edges"), "level_notch",
+              "Show it in the notch")
+        check(row("Round corners", "The top corners of the screen rounded off, like a MacBook's.", "Edges"),
+              "island_corners", "Round the top corners")
+        check(row("Dock", "Your pinned and open apps along the bottom of the screen, growing as you point at them. "
+                          "Click to open or switch, right-click to pin.", "Dock"), "dock", "Show the dock")
+        combo(row("Hiding", "Out of a window's way, or only when the pointer's at the bottom of the screen.", "Dock"),
+              "dock_mode", DOCK_MODES)
+        check(row("Taskbar", "Hides Windows' taskbar while the dock is on, and brings it back when the dock's off or "
+                             "she quits. The tray icons are under the taskbar.", "Dock"), "dock_replace_taskbar",
+              "Hide Windows' taskbar")
 
         found = cards["Plugins"][1]
         self._label(found, "What the island shows while she isn't busy. Each one reads only what Windows already "
@@ -2569,6 +2708,40 @@ class AssistantWindow:
             return
         settings.put(key, value)
         getattr(self.bubble, "reload", lambda: None)()
+        if self.edges is not None:
+            self.edges.reload()
+        if key.startswith("dock") or key == "island_theme":
+            self._dock_changed()
+
+    def _dock_changed(self):
+        """Her dock (dock.py) started, stopped or set again as Settings has it now. Off, and her last run ended with
+        Windows' taskbar hidden, it's put back."""
+        want = bool(settings.get("dock"))
+        if self.dock is not None and not want:
+            self.dock.close()
+            self.dock = None
+        elif self.dock is not None:
+            self.dock.reload()
+        elif want:
+            try:
+                import dock
+                self.dock = dock.Dock(self.root)
+            except Exception as exc:
+                print(f"  the dock didn't start: {exc!r}")
+                self.dock = None
+        elif os.path.exists(os.path.join(win.APPDATA_DIR, "taskbar-hidden")):
+            import dock
+            dock.show_taskbar()
+
+    def _start_edges(self):
+        """Her edges of the screen (edges.py): the volume's slider at the left, the brightness's at the right and
+        the round corners. None if they wouldn't start here: the rest of her goes on without them."""
+        try:
+            import edges
+            return edges.Edges(self.root)
+        except Exception as exc:
+            print(f"  the edges didn't start: {exc!r}")
+            return None
 
     def style_changed(self, style):
         if settings.get("popup_style") == style:
@@ -2669,7 +2842,7 @@ class AssistantWindow:
         # in parts, each a card with its colour and its name along the top to jump to (29 October 2026, the owner:
         # one long list was hard to find things in and to scroll): (name, colour, icon, its rows by number below)
         parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14)),
-                 ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20)),
+                 ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23)),
                  ("Models", "green", "\ue99a", (1, 21, 22)), ("Speaking up", "amber", "\uea8f", (12, 13)),
                  ("Phone", "rose", "\ue8ea", (16,)), ("Window", "slate", "\ue737", (4, 5, 6, 19)))
         cards, where, form = {}, {}, None
@@ -2897,10 +3070,32 @@ class AssistantWindow:
         ttk.Checkbutton(form, text="Heal herself", variable=self.heal_var,
                         command=lambda: settings.put("self_heal", self.heal_var.get())).grid(row=44, column=1,
                                                                                            rowspan=2, sticky="e")
+        row(23, "Her own browser", "Jobs on websites happen in a Chrome of her own, out of your way, never on your "
+                                   "screen. Sign her in to the sites she should use: press Show it (or say “sign "
+                                   "in to LinkedIn in your browser”), sign in, then say “hide your "
+                                   "browser”. Her sign-ins stay in it; she never types a password. Off, her jobs "
+                                   "work on your screen.")
+        own = tk.Frame(form, bg=BG)
+        own.grid(row=46, column=1, rowspan=2, sticky="e")
+        self.own_browser_var = tk.BooleanVar(value=bool(settings.get("own_browser")))
+        ttk.Button(own, text="Show it", command=self.show_her_browser).pack(side="left", padx=(0, self.px(8)))
+        ttk.Checkbutton(own, text="Her own browser", variable=self.own_browser_var,
+                        command=lambda: settings.put("own_browser", self.own_browser_var.get())).pack(side="left")
         self.settings_note = self._label(page, "", self.f_small, MUTED, wraplength=self.px(660))
         self.settings_note.pack(fill="x", pady=(self.px(18), 0))
         self.models_loaded = False
         return page
+
+    def show_her_browser(self):
+        """Her own browser put in front of you, to sign her in (herbrowser.show), off the window's thread."""
+        import herbrowser
+
+        def go():
+            try:
+                herbrowser.show()
+            except Exception as exc:
+                print(f"  her browser: {exc!r}")
+        threading.Thread(target=go, name="show-her-browser", daemon=True).start()
 
     def open_builder_picker(self):
         if self.picker is not None:
@@ -3543,11 +3738,37 @@ class AssistantWindow:
         self.on_top_var.set(self.on_top)
 
     def quit(self):
+        for part in (self.edges, self.dock):  # the dock first puts Windows' taskbar back, if it hid it
+            if part is not None:
+                part.close()
         self.bubble.close()
         self.root.destroy()
 
 
+def _native_faults():
+    """A crash in native code (an abort, an access violation) leaves each thread's Python stack in native-faults.log,
+    as pythonw has no console for it: on 30 October 2026 she stopped twice with 0xC0000409 in ucrtbase, abort's code,
+    and nothing in her log said where."""
+    import ctypes
+    import faulthandler
+    try:
+        path = win.log_path("native-faults.log")
+        out = open(path, "a", buffering=1, encoding="utf-8")
+        out.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} started, pid {os.getpid()}\n")
+        faulthandler.enable(out, all_threads=True)
+        # Python's own last words on a fatal error ("Fatal Python error: ...", then each thread's stack) go to the C
+        # runtime's stderr, which pythonw has none of: it's this file too
+        crt = ctypes.CDLL("ucrtbase")
+        crt.__acrt_iob_func.restype, crt.__acrt_iob_func.argtypes = ctypes.c_void_p, [ctypes.c_uint]
+        crt._wfreopen.restype = ctypes.c_void_p
+        crt._wfreopen.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_void_p]
+        crt._wfreopen(path, "a", crt.__acrt_iob_func(2))
+    except Exception as exc:
+        print(f"  no native fault log: {exc!r}")
+
+
 def run_app():
+    _native_faults()
     win.prepare_gui()  # before Tk starts, so text is sharp on scaled screens
     if not win.single_instance():
         win.show_existing(identity.hey(), TITLE, win.OLD_NAME)  # already running with the window closed: back

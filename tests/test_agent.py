@@ -600,25 +600,26 @@ class Learning(Live):
         self.assertIsNone(agent.match("night light please and then my mail"))
 
     def test_a_switch_held_for_a_yes_is_learned_with_its_state(self):
-        sounds = "Allow notifications to play sounds"  # "allow": a yes first
+        # "grant": a yes first, as only the very sensitive ask now (agent.HIGH, 31 October; "allow" used to)
+        sounds = "Grant apps access to the camera"
         w = self.app.window("settings", "systemsettings.exe", "Settings")
         w.switch = Control(sounds, "checkbox", state="off")
         w.switch.on = lambda: setattr(w.switch, "state", "off" if w.switch.state == "on" else "on")  # a press flips it
         w.opened = lambda: setattr(w, "controls", [Control("Back"), w.switch, Control("Do not disturb", "checkbox")])
         w.opened()
         self.app.show("settings")
-        task = "turn on allow notifications to play sounds in settings"
+        task = "turn on grant apps access to the camera in settings"
         self.model(lambda: {"steps": [{"do": "click", "id": self.app.id(sounds), "state": "on"}], "done": True,
                             "expect": {"has": sounds, "state": "on"}, "say": "It's on."})
         with self.planner({"do": "open", "app": "Settings"}, {"do": "screen", "task": task}), \
                 mock.patch.dict(siri._learning, turns=10, last=0.0):
             siri.handle(task)
-        siri.handle("Yes, allow it.", gate=True)
+        siri.handle("Yes, grant it.", gate=True)
         (name, proc), = self.learned().items()
         self.assertEqual(proc["steps"][2]["state"], "on")
         self.no_model()  # it's on already: the yes leaves it on
         siri.handle(task)
-        siri.handle("Yes, allow it.", gate=True)
+        siri.handle("Yes, grant it.", gate=True)
         self.assertEqual((w.switch.state, self.said[-1]), ("on", "It's already on."))
         self.assertEqual(agent.load_stats()[name]["ok"], 1)
 

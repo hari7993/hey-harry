@@ -672,6 +672,41 @@ def next_up(now=None, days=30, fetch=None):
     return later[0] if later else (found[0] if found else None)
 
 
+_KEPT = {}  # url: (the kept file's mtime, its events), so the island's month doesn't read a feed's file every minute
+
+
+def kept(a, b):
+    """Everything on your calendars from a to b, soonest first, from what's on this PC only: her own events, and each
+    calendar from elsewhere as it was last fetched, never fetched now (30 October 2026: the island's month, read on a
+    thread that mustn't wait on the network, and never moving a feed's next fetch, as a failed one would)."""
+    with _lock:
+        data = _load()
+    out = []
+    for e in data["events"]:
+        o = _occurrence(e)
+        if o["start"] and o["start"] < b and (o["end"] or o["start"]) > a:
+            out.append(o)
+    for f in data["feeds"]:
+        url = f["url"]
+        got = _feeds.get(url)
+        events = got[1] if got else None
+        if events is None:
+            try:
+                mtime = os.path.getmtime(_feed_file(url))
+                hit = _KEPT.get(url)
+                if hit is None or hit[0] != mtime:
+                    with open(_feed_file(url), encoding="utf-8") as fh:
+                        hit = _KEPT[url] = (mtime, parse_ics(fh.read(FEED_MOST)))
+                events = hit[1]
+            except OSError:
+                events = []
+        for o in expand(events, a, b):
+            o["source"] = f.get("name") or "Google"
+            out.append(o)
+    out.sort(key=lambda o: (o["start"], not o["all_day"], o["title"].lower()))
+    return out
+
+
 # --------------------------------------------------------------------------- words to times
 def _hour(h, m, ap, text, default_pm=True):
     """A clock time as 24-hour (hour, minute): "1" alone for an event is 1 PM, "8" is 8 AM, unless the words say
