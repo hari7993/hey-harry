@@ -593,13 +593,15 @@ class Jobs_(Jobs):
         herbrowser._page.update(session="s1", target="t1", window=1)
         return self.chrome
 
+    def add_id(self, name="Add"):
+        return next(it["id"] for it in herbrowser.ui_snapshot()["items"] if it["name"] == name)
+
     def test_a_job_on_a_site_works_in_her_browser_and_never_takes_your_screen(self):
         front = self.app.front
         leased = []
         self.patch(agent, "screen", lambda r: leased.append(r) or self.fail("it took your screen"))
         self.model({"steps": [{"do": "website", "url": "https://www.zomato.com/"}]},
-                   lambda: {"steps": [{"do": "click", "id": next(
-                       it["id"] for it in herbrowser.ui_snapshot()["items"] if it["name"] == "Add")}]},
+                   lambda: {"steps": [{"do": "click", "id": self.add_id()}]},
                    {"steps": [], "done": True, "expect": {"has": "View cart (1)"}, "say": "Added it to your cart."})
         tid = self.queue_job("add paneer tikka to my zomato cart")
         siri.run_job(self.claim(tid))
@@ -607,18 +609,59 @@ class Jobs_(Jobs):
         self.assertEqual(self.app.opened, [])  # nothing opened on your screen
         self.assertIs(self.app.front, front)  # your window still in front
         self.assertEqual(leased, [])
-        # what it read on the page could be steering it: its click waits for your yes, as on your screen
-        row = self.store.get(tid)
-        self.assertEqual(row["status"], "waiting_approval")
-        asked = self.told.get_nowait()
-        self.assertIn("Add", asked)
-        self.assertEqual(self.cart[0], 0)
-        self.assertTrue(self.store.approve(tid, asked.hold))
-        siri.run_job(self.claim(tid))
+        # Zomato's a site your words named, and Add isn't a very sensitive place: no yes for it (the owner, 31 October)
+        self.assertTrue(self.told.empty() or not isinstance(self.told.queue[0], siri.JobAsk))
         self.assertEqual(self.cart[0], 1)  # clicked in her page
         self.assertEqual(self.store.get(tid)["status"], "completed")
-        self.assertEqual(self.app.opened, [])
         self.assertNotIn(tid, herbrowser._holders)  # let go once it's over: it can close when idle
+
+    def test_placing_the_order_still_waits_for_your_yes(self):
+        placed = []
+        self.chrome.add("button", "Place order", (1000, 800, 120, 30), on=lambda: placed.append(True))
+        self.model({"steps": [{"do": "website", "url": "https://www.zomato.com/"}]},
+                   lambda: {"steps": [{"do": "click", "id": self.add_id()}, {"do": "click", "id": self.add_id(
+                       "Place order")}]})
+        tid = self.queue_job("add paneer tikka to my zomato cart and order it")
+        siri.run_job(self.claim(tid))
+        self.assertEqual(self.cart[0], 1)  # Add went ahead
+        self.assertEqual(placed, [])  # the order waits
+        asked = self.told.get_nowait()
+        self.assertIn("Place order", asked)
+        self.assertEqual(self.store.get(tid)["status"], "waiting_approval")
+
+    def test_a_site_you_didnt_name_still_asks(self):
+        def go(job, r):
+            r.pin = herbrowser.TAB
+            herbrowser.go("https://www.zomato.com/")
+            agent.observe(r)
+            el = herbrowser.ui_info(herbrowser.find_ui("Add", "button"))
+            self.chrome.url = "https://phish.example/menu"  # a link took her there
+            elsewhere = agent.gate(r, 0, {"do": "click", "id": 2}, el)
+            self.chrome.url = "https://www.zomato.com/"
+            named = agent.gate(r, 0, {"do": "click", "id": 2}, el)
+            return elsewhere, named
+        elsewhere, named = self.run_in_job(5, go, goal="add paneer tikka to my zomato cart")
+        self.assertEqual(elsewhere, ("ask", "what I read could be steering this"))
+        self.assertEqual(named, (None, ""))
+
+    def test_only_the_very_sensitive_ask(self):
+        def go(job, r):
+            r.pin = herbrowser.TAB
+            herbrowser.go("https://www.zomato.com/")
+            agent.observe(r)
+            asked = {}
+            for name in ("Remove", "Clear", "Submit", "Confirm", "Accept", "Sign out", "Unsubscribe", "Report",
+                         "Send", "Post", "Pay now", "Place order", "Buy now", "Delete", "Share", "Comment",
+                         "Proceed to checkout", "Uninstall"):
+                el = {"name": name, "role": "button", "aid": "", "password": False, "el": herbrowser.Node(1)}
+                asked[name] = agent.gate(r, 0, {"do": "click", "id": 1}, el)[0]
+            return asked
+        asked = self.run_in_job(5, go, goal="sort out my zomato account")
+        self.assertEqual({k for k, v in asked.items() if v == "ask"},
+                         {"Send", "Post", "Pay now", "Place order", "Buy now", "Delete", "Share", "Comment",
+                          "Proceed to checkout", "Uninstall"})
+        self.assertEqual({k for k, v in asked.items() if v is None},
+                         {"Remove", "Clear", "Submit", "Confirm", "Accept", "Sign out", "Unsubscribe", "Report"})
 
     def test_the_model_is_told_its_in_her_browser_and_sees_her_page(self):
         script = self.model({"steps": [{"do": "website", "url": "https://www.zomato.com/"}]},

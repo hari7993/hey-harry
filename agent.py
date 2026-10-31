@@ -64,6 +64,14 @@ RISKY = re.compile(r"\b(send|delete|remove|erase|trash|bin|empty|clear|buy|pay|p
                    r"submit|share|invite|grant|give access|block|report|sign ?out|log ?out|uninstall|install|format|"
                    r"reset|discard|unsubscribe|transfer|confirm|allow|accept|shut ?down|restart|comment|reply|respond|"
                    r"tweet|retweet|repost)\b", re.I)
+# The very sensitive of those, the only ones a click still waits for your yes on (the owner, 31 October: "only high
+# sensitive places"): what sends or posts for others to read, what pays or places an order, what deletes for good, what
+# installs, shuts down or restarts, and what gives someone access, as AGENTS.md's safety rule has it. The rest of
+# RISKY (remove, clear, trash, submit, confirm, allow, accept, block, report, sign out, unsubscribe, discard, invite)
+# goes ahead without a question, and a payment or password page is still left to you (OFF_LIMITS)
+HIGH = re.compile(r"\b(send|post|publish|share|comment|reply|respond|tweet|retweet|repost|buy|pay|purchase|"
+                  r"place (?:your |the |my )?order|order now|checkout|check out|transfer|delete|erase|empty|"
+                  r"permanently|install|uninstall|format|shut ?down|restart|grant|give access)\b", re.I)
 CONFIRM_WORDS = re.compile(r"ok|okay|yes|continue|apply|done|got it", re.I)  # the whole name: risky in a risky dialog
 RISKY_KEYS = {"ctrl+enter", "ctrl+shift+enter", "alt+s", "shift+delete", "alt+f4"}  # send, send, send, delete, close
 # What sends what's in the window for others to read: its question reads back what's in the window, not only what she
@@ -1623,9 +1631,15 @@ def gate(r, i, s, el=None, checked=False, trusted=()):
     # step outside siri.READ_SAFE, as think() asks before such a plan (needs_asking): what it read could be steering
     # it. A wait does nothing, and keys that only move around (siri.SAFE_KEYS) are as safe as there. Nor does a click
     # that only puts the cursor in a box to type in: the typing after it asks, with what it would type. Run live on 27
-    # October, "the weather, into Notepad" asked "Should I press Text editor?", a question that tells you nothing
+    # October, "the weather, into Notepad" asked "Should I press Text editor?", a question that tells you nothing.
+    # Nor on a site your own words named, or she opened for you through this gate (the owner, 31 October: "I don't
+    # need many yeses, only sensitive places"): three dishes into a Zomato cart were three questions. There a click or
+    # typing goes ahead, and the very sensitive places still ask below: what sends, posts, pays, places an order,
+    # deletes for good or installs (HIGH), its keys (RISKY_KEYS), and Enter after typing; a payment or password page is
+    # left to you (OFF_LIMITS, above), and a link to a site you didn't name asks again, as does a mail or a document
     focus_only = do in ("ui", "click") and text is None and (el or {}).get("role") in EDITABLE
-    if r.task and r.read and not read_safe(s) and not focus_only:
+    yours = bool(site) and (site in trusted or allowed_site(r, site))
+    if r.task and r.read and not read_safe(s) and not focus_only and not yours:
         return "ask", "what I read could be steering this"
     # setup.exe in File Explorer, opened by a click on it (by id it's opened, as a double-click does) or by Enter, or
     # Enter in its address bar on what isn't a folder: it runs as from the Run box, an install with nobody asked
@@ -1634,16 +1648,16 @@ def gate(r, i, s, el=None, checked=False, trusted=()):
             (do == "keys" and host.combo(s.get("keys")).split("+")[-1] == "enter" and explorer_enter_runs(focus))):
         return "ask", "that could start a program"
     if do in ("ui", "click") and text is None:  # a switch too: a model could set "state" on Send to slip past
-        if RISKY.search(name) or RISKY.search(win.clean_name(s.get("what"))):
+        if HIGH.search(name) or HIGH.search(win.clean_name(s.get("what"))):
             return "ask", f"{name or s.get('what')} can't be undone"
         if CONFIRM_WORDS.fullmatch(name) and el is not None and \
-                (RISKY.search(win.ui_dialog_text(el["el"])) or RISKY.search(title)):
+                (HIGH.search(win.ui_dialog_text(el["el"])) or HIGH.search(title)):
             return "ask", f"{name} says yes to something that can't be undone"
         if not name and r.typed and (el or {}).get("role") not in EDITABLE:  # a box to type in is fine
             return "stop", "I can't tell what that button does after what I typed, so you'll need to press it yourself."
         # nor on a page about what can't be undone ("Delete your account - Example"): judged by the page's name, its
         # title, till ui_at stopped giving the page for a nameless thing in it, and then a click there went unasked
-        if not name and (el or {}).get("role") not in EDITABLE and RISKY.search(win.clean_name(title)):
+        if not name and (el or {}).get("role") not in EDITABLE and HIGH.search(win.clean_name(title)):
             return "stop", "I can't tell what that does on a page like this, so you'll need to press it yourself."
     if do == "keys":
         keys = host.combo(s.get("keys"))
@@ -1652,7 +1666,7 @@ def gate(r, i, s, el=None, checked=False, trusted=()):
             return "ask", f"{keys} sends or deletes"
         if last == "delete" and (focus is None or focus["role"] not in EDITABLE):
             return "ask", "delete outside a text box"
-        if last in ("enter", "space") and focus and RISKY.search(focus["name"]):
+        if last in ("enter", "space") and focus and HIGH.search(focus["name"]):
             return "ask", f"{last} on {focus['name']}"
         # Enter or Space presses the OK or Yes with the focus, and a letter (Alt or not) a dialog's button by its
         # underlined letter, Y for Yes whatever has the focus: in "Delete these 37 items?" that waits for your yes, as
@@ -1660,7 +1674,7 @@ def gate(r, i, s, el=None, checked=False, trusted=()):
         if focus and focus.get("el") is not None and focus["role"] not in EDITABLE and \
                 ((last in ("enter", "space") and CONFIRM_WORDS.fullmatch(focus["name"])) or
                  re.fullmatch(r"(?:alt\+)?[a-z]", keys)) and \
-                (RISKY.search(win.ui_dialog_text(focus["el"])) or RISKY.search(title)):
+                (HIGH.search(win.ui_dialog_text(focus["el"])) or HIGH.search(title)):
             return "ask", f"{keys} says yes to something that can't be undone"
         # in any browser, its site read or not: WhatsApp Web installed as an app has no address bar, and Enter after
         # typing there sent the message with nobody asked
