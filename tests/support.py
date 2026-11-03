@@ -47,6 +47,12 @@ def tripwire(name):
 
 requests.sessions.Session.request = tripwire("network")  # web, Fish, the model and YouTube all go through requests
 
+# The accessibility command can read and act on the real desktop. No unit test reaches it unless that test replaces
+# this tripwire with a fake command result first.
+import agentdesktop  # noqa: E402
+DESKTOP_ORIGINAL = agentdesktop._execute
+agentdesktop._execute = tripwire("agent-desktop")
+
 import backup  # noqa: E402
 import dictation  # noqa: E402
 import filesearch  # noqa: E402
