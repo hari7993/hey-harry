@@ -1,7 +1,7 @@
 """Her tasks in apps and her procedures (agent.py): a procedure replayed step by step against the window in front,
 nothing sent before your yes to her own question, one yes for one action, runs that end with their turn, the gate on
 her vision mode's clicks, keys and typing, and procedures only code writes. Nothing here reads or presses the real
-screen: tests.support trips UI Automation, and FakeUI stands in for the window in front."""
+screen: tests.support trips agent-desktop, and FakeUI stands in for the window in front."""
 import contextlib
 import json
 import re
@@ -30,7 +30,7 @@ class El:
 
 
 class FakeUI:
-    """The window in front as UI Automation would read it: its controls by name and role, what's typed in them, what
+    """The window in front as agent-desktop would read it: its controls by name and role, what's typed in them, what
     pressing one does (on_press), and a control that only shows after a few looks (later)."""
 
     def __init__(self, exe="chrome.exe", title="Inbox (3) - Gmail", site="mail.google.com"):
@@ -996,42 +996,29 @@ class Kept(Agent):
                          {"to": "ravi.kumar@gmail.com", "subject": "<5 chars>", "body": "<13 chars>"})
 
 
-class Fake:
-    """A UI Automation element, pattern or list, as comtypes hands them over."""
-
-    def __init__(self, **kw):
-        self.__dict__.update(kw)
-
-    def QueryInterface(self, interface):
-        return self
-
-
-def element(name, ctype=50000, patterns=None, offscreen=False):
-    return Fake(CurrentName=name, CurrentControlType=ctype, CurrentAutomationId="", CurrentIsOffscreen=offscreen,
-                CurrentIsEnabled=True, CurrentIsPassword=False, GetCurrentPattern=(patterns or {}).get,
-                CurrentBoundingRectangle=SimpleNamespace(left=0, top=0, right=10, bottom=10))
-
-
 class Automation(unittest.TestCase):
-    """winplatform's UI Automation helpers, on a fake UI Automation."""
+    """winplatform's agent-desktop helpers, with synthetic snapshots and command results."""
 
     @classmethod
     def setUpClass(cls):
         cls.win = untripped_winplatform()
+        from tests import desktopfakes
+        cls.df = desktopfakes
 
-    def found(self, *polls):
-        """find_ui's view of a window whose controls are polls[0], then polls[1] at its next look, and so on."""
-        looks = list(polls)
-        root = Fake(FindAll=lambda scope, cond: (lambda els: Fake(Length=len(els), GetElement=els.__getitem__))(
-            looks.pop(0) if len(looks) > 1 else looks[0]))
-        fake = Fake(ElementFromHandle=lambda h: root, CreatePropertyCondition=lambda *a: a,
-                    CreateOrCondition=lambda *a: a, CreateAndCondition=lambda *a: a)
-        clock = [0.0]
-        for name, value in (("uia", lambda: fake), ("_clock", lambda: clock[0]),
-                            ("_sleep", lambda secs: clock.__setitem__(0, clock[0] + secs))):
-            p = mock.patch.object(self.win, name, value)
-            p.start()
-            self.addCleanup(p.stop)
+    def snapshots(self, *looks):
+        values, clock = list(looks), [0.0]
+
+        def read(hwnd=None, **_):
+            value = values.pop(0) if len(values) > 1 else values[0]
+            if isinstance(value, Exception):
+                raise value
+            return value
+        for target, name, value in ((self.win, "_desktop_snapshot", read),
+                                    (self.win, "_clock", lambda: clock[0]),
+                                    (self.win, "_sleep", lambda secs: clock.__setitem__(0, clock[0] + secs))):
+            patch = mock.patch.object(target, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def test_names_as_people_read_them(self):
         self.assertEqual(self.win.clean_name(SEND), "Send")
@@ -1040,153 +1027,272 @@ class Automation(unittest.TestCase):
         self.assertEqual(self.win.clean_name("Save (draft)"), "Save (draft)")
 
     def test_found_by_name_only_when_there_is_exactly_one(self):
-        send = element(SEND)
-        self.found([send, element("Discard draft")])
-        self.assertIs(self.win.find_ui("send", "button", hwnd=1), send)
-        self.found([send, element("Send")])
-        self.assertIsNone(self.win.find_ui("Send", "button", hwnd=1, wait=5))
-        self.assertIs(self.win.find_ui("Send", "button", hwnd=1, unique=False), send)
-        self.found([element("Send", offscreen=True)])
-        self.assertIsNone(self.win.find_ui("Send", "button", hwnd=1))
+        one = self.df.snapshot([self.df.node(SEND), self.df.node("Discard draft")])
+        self.snapshots(one)
+        send = self.win.find_ui("send", "button", hwnd=7)
+        self.assertEqual(self.win.ui_info(send)["name"], "Send")
+        twins = self.df.snapshot([self.df.node(SEND), self.df.node("Send")])
+        self.snapshots(twins)
+        self.assertIsNone(self.win.find_ui("Send", "button", hwnd=7, wait=5))
+        self.snapshots(twins)
+        self.assertEqual(self.win.ui_info(self.win.find_ui("Send", "button", hwnd=7, unique=False))["name"], "Send")
+        hidden = self.df.snapshot([self.df.node("Send", rect=None)])
+        self.snapshots(hidden)
+        self.assertIsNone(self.win.find_ui("Send", "button", hwnd=7))
 
     def test_a_control_still_loading_is_waited_for(self):
-        subject = element("Subject", 50004)
-        self.found([], [], [subject])
-        self.assertIs(self.win.find_ui("Subject", "edit", hwnd=1, wait=8), subject)
-        self.found([])
-        self.assertIsNone(self.win.find_ui("Subject", "edit", hwnd=1, wait=1))
+        empty, subject = self.df.snapshot([]), self.df.snapshot([self.df.node("Subject", "edit")])
+        self.snapshots(empty, empty, subject)
+        self.assertEqual(self.win.ui_info(self.win.find_ui("Subject", "edit", hwnd=7, wait=8))["name"], "Subject")
+        self.snapshots(empty)
+        self.assertIsNone(self.win.find_ui("Subject", "edit", hwnd=7, wait=1))
 
-    def test_switches_are_switched_only_if_need_be_and_text_goes_in_by_value(self):
-        toggle = Fake(CurrentToggleState=1, toggled=[])
-        toggle.Toggle = lambda: toggle.toggled.append(1)
-        value = Fake(CurrentIsReadOnly=False, set=[], CurrentValue="")
-        value.SetValue = value.set.append
-        invoke = Fake(done=[])
-        invoke.Invoke = lambda: invoke.done.append(1)
-        self.assertEqual(self.win.ui_act(element("Night light", 50002, {10015: toggle}), state="on"), "already")
-        self.assertEqual(self.win.ui_act(element("Night light", 50002, {10015: toggle}), state="off"), "toggled")
-        self.assertEqual(toggle.toggled, [1])
-        self.assertEqual(self.win.ui_act(element("Subject", 50004, {10002: value}), text="Lunch"), "set")
-        self.assertEqual(value.set, ["Lunch"])
-        self.assertEqual(self.win.ui_act(element("Send", 50000, {10000: invoke})), "invoked")
-        self.assertEqual(invoke.done, [1])
+    VERIFIED = {"disposition": {"delivery": "delivered_verified", "retry": "unsafe"}}
 
-    def test_typing_at_the_cursor_keeps_what_the_box_has(self):
-        """A "type" step goes in where the cursor is: by the Value pattern it took the place of everything in the box,
-        a shopping list in Notepad, with no undo."""
-        value = Fake(CurrentIsReadOnly=False, set=[], CurrentValue="eggs\nbread\n")
-        value.SetValue = value.set.append
-        box, focused, pasted = element("Text editor", 50030, {10002: value}), [], []
-        box.SetFocus = lambda: focused.append(1)
-        with mock.patch.object(self.win, "clipboard_snapshot", lambda: "kept"), \
-                mock.patch.object(self.win, "clipboard_restore", lambda kept: pasted.append(("put back", kept))), \
-                mock.patch.object(self.win, "paste", pasted.append):
-            self.assertEqual(self.win.ui_act(box, "buy milk", caret=True), "pasted")
-        self.assertEqual((value.set, focused, pasted), ([], [1], ["buy milk", ("put back", "kept")]))
+    def pasting(self, pasted):
+        """The clipboard and Ctrl+V faked: what's pasted goes in pasted, then what was on the clipboard, put back."""
+        stack = contextlib.ExitStack()
+        for name, value in (("clipboard_snapshot", lambda: ["kept"]), ("paste", pasted.append),
+                            ("clipboard_restore", lambda kept: pasted.append(("put back", kept)))):
+            stack.enter_context(mock.patch.object(self.win, name, value))
+        return stack
+
+    def test_switch_text_click_and_cursor_typing_use_the_right_commands(self):
+        switch = self.df.element("Night light", "checkbox", state="on")
+        field = self.df.element("Subject", "edit")
+        send = self.df.element("Send")
+        calls, pasted = [], []
+
+        def get(el, prop):
+            return list(el.states) if prop == "states" else el.value if prop == "value" else None
+
+        def act(el, command, value=None, headed=False, **_):
+            calls.append((command, value, headed))
+            if command == "uncheck":
+                el.states.discard("checked")
+            if command == "set-value":
+                el.value = value
+            return self.VERIFIED if command == "focus" else {}
+        with mock.patch.object(self.win._desktop, "get", get), mock.patch.object(self.win._desktop, "act", act), \
+                self.pasting(pasted):
+            self.assertEqual(self.win.ui_act(switch, state="on"), "already")
+            self.assertEqual(self.win.ui_act(switch, state="off"), "toggled")
+            self.assertEqual(self.win.ui_act(field, text="Lunch"), "set")
+            self.assertEqual(self.win.ui_act(field, text=" today", caret=True), "pasted")
+            self.assertEqual(self.win.ui_act(send), "invoked")
+        self.assertEqual(calls, [("uncheck", None, False), ("set-value", "Lunch", False),
+                                 ("focus", None, True), ("click", None, False)])
+        self.assertEqual(pasted, [" today", ("put back", ["kept"])])
+
+    def test_cursor_typing_never_replaces_the_whole_field(self):
+        """Pasted where the cursor is, as before agent-desktop: never by set-value, and never its own typing, which
+        sends a line break as a key of its own."""
+        field = self.df.element("Text editor", "edit", value="eggs bread")
+        calls, pasted = [], []
+        with mock.patch.object(self.win._desktop, "act", lambda el, command, value=None, headed=False, **_:
+                               calls.append((command, value, headed)) or self.VERIFIED), self.pasting(pasted):
+            self.assertEqual(self.win.ui_act(field, "buy milk\nand eggs", caret=True), "pasted")
+        self.assertEqual(calls, [("focus", None, True)])
+        self.assertEqual(pasted, ["buy milk\nand eggs", ("put back", ["kept"])])
+
+    def test_nothing_is_pasted_where_the_keyboard_couldnt_be_seen_in_the_box(self):
+        field = self.df.element("Text editor", "edit", actions=["SetFocus"])
+        pasted = []
+        with mock.patch.object(self.win._desktop, "act", lambda el, command, value=None, headed=False, **_: {}), \
+                mock.patch.object(self.win._desktop, "get", lambda el, prop: []), self.pasting(pasted):
+            with self.assertRaisesRegex(RuntimeError, "couldn't put the cursor"):
+                self.win.ui_act(field, "hello")
+        self.assertEqual(pasted, [])
+
+    def test_the_keyboard_goes_into_a_window_behind_only_once_it_comes_forward(self):
+        """agent-desktop moves the keyboard only in the window in front (3 November): after its safe no the window
+        is brought forward, as UI Automation's SetFocus did, and it's asked once more. An unsafe failure isn't."""
+        field = self.df.element("Message", "edit", actions=["SetFocus"])
+        refused = self.win._desktop.DesktopError("not in front", "ACTION_FAILED", {"disposition": {
+            "delivery": "not_delivered", "retry": "safe"}})
+        calls, fronted = [], []
+
+        def act(el, command, value=None, headed=False, **_):
+            calls.append(command)
+            if not fronted:
+                raise refused
+            return self.VERIFIED
+        with mock.patch.object(self.win._desktop, "act", act), \
+                mock.patch.object(self.win, "bring_to_front", fronted.append), \
+                mock.patch.object(self.win, "_sleep", lambda secs: None):
+            self.assertTrue(self.win.ui_focus(field))
+        self.assertEqual((calls, fronted), (["focus", "focus"], [7]))
+        unsafe = self.win._desktop.DesktopError("maybe", "ACTION_FAILED", {"disposition": {
+            "delivery": "delivered_unverified", "retry": "unsafe"}})
+        with mock.patch.object(self.win._desktop, "act", side_effect=unsafe) as acted, \
+                mock.patch.object(self.win, "bring_to_front", side_effect=AssertionError("brought forward")):
+            with self.assertRaises(self.win._desktop.DesktopError):
+                self.win.ui_focus(field)
+        acted.assert_called_once()
+
+    def test_a_press_that_timed_out_on_the_question_it_opened_was_still_pressed(self):
+        """A WinForms button that opens "Are you sure?" doesn't come back from its Invoke till the question closes
+        (3 November, the smoke window's Ask First): taken as pressed, never pressed again to find out. A press
+        agent-desktop says it never made is still an error."""
+        button = self.df.element("Delete")
+        timed_out = self.win._desktop.DesktopError("the app took too long to answer", "TIMEOUT")
+        with mock.patch.object(self.win._desktop, "act", side_effect=timed_out) as acted:
+            self.assertEqual(self.win.ui_act(button), "invoked")
+        acted.assert_called_once()
+        never = self.win._desktop.DesktopError("waited", "TIMEOUT", {"disposition": {
+            "delivery": "not_delivered", "retry": "safe"}})
+        with mock.patch.object(self.win._desktop, "act", side_effect=never):
+            with self.assertRaises(self.win._desktop.DesktopError):
+                self.win.ui_act(button)
+
+    def test_a_modal_question_ends_the_wait_for_its_press(self):
+        button, enabled = self.df.element("Ask First"), [True]
+        with mock.patch.object(self.win.user32, "IsWindowEnabled", lambda hwnd: enabled[0]):
+            opened = self.win._modal_opened(button)
+            self.assertFalse(opened())
+            enabled[0] = False  # a modal question over it turns its window off
+            self.assertTrue(opened())
+            self.assertIsNone(self.win._modal_opened(button))  # off already: a question from before isn't this one
+
+    def test_a_control_without_a_semantic_click_uses_its_middle_only_with_the_screen(self):
+        tab = self.df.element("Display", "tab", rect=(0, 0, 10, 20), actions=[])
+        clicked = []
+        with mock.patch.object(self.win, "ui_rect", return_value=None), \
+                mock.patch.object(self.win._desktop, "mouse_click", lambda rect: clicked.append(rect)):
+            self.assertEqual(self.win.ui_act(tab), "clicked")
+        self.assertEqual(clicked, [(0.0, 0.0, 10.0, 20.0)])
+        with self.assertRaisesRegex(RuntimeError, "needs the screen"):
+            self.win.ui_act(tab, focus_free=True)
+
+    def test_a_failure_after_possible_delivery_is_never_retried(self):
+        button = self.df.element("Delete")
+        error = self.win._desktop.DesktopError("could not verify", "ACTION_FAILED", {"disposition": {
+            "delivery": "delivered_unverified", "retry": "unsafe"}})
+        with mock.patch.object(self.win._desktop, "act", side_effect=error) as acted, \
+                mock.patch.object(self.win, "_desktop_snapshot", side_effect=AssertionError("retried")):
+            with self.assertRaises(self.win._desktop.DesktopError):
+                self.win.ui_act(button)
+        acted.assert_called_once()
 
     def test_a_window_that_couldnt_be_read_isnt_one_without_the_control(self):
-        """Saying Send has gone takes a clean read: a look that timed out, or no window in front, raises when
-        strict, and is as good as not there otherwise."""
-        def timed_out(scope, cond):
-            raise OSError("UIA_E_TIMEOUT")
-        for root in (Fake(FindAll=timed_out), None):
-            fake = Fake(ElementFromHandle=lambda h: root, CreatePropertyCondition=lambda *a: a,
-                        CreateOrCondition=lambda *a: a, CreateAndCondition=lambda *a: a)
-            with mock.patch.object(self.win, "uia", lambda: fake):
-                self.assertIsNone(self.win.find_ui("Send", "button", hwnd=1))
-                with self.assertRaises((OSError, LookupError)):
-                    self.win.find_ui("Send", "button", hwnd=1, unique=False, strict=True)
+        incomplete = self.df.snapshot([], complete=False)
+        self.snapshots(incomplete)
+        self.assertIsNone(self.win.find_ui("Send", "button", hwnd=7))
+        self.snapshots(incomplete)
+        with self.assertRaises(LookupError):
+            self.win.find_ui("Send", "button", hwnd=7, unique=False, strict=True)
 
-    def test_an_invoke_that_timed_out_on_the_dialog_it_opened_was_still_pressed(self):
-        class Timeout(Exception):
-            hresult = -2146233083  # UIA_E_TIMEOUT: a WinForms button waits in Invoke till its "Are you sure?" closes
+    def test_a_stale_ref_is_refreshed_once_only_after_proven_non_delivery(self):
+        old = self.df.element("Send")
+        fresh_snap = self.df.snapshot([self.df.node("Send")])
+        fresh_snap.elements[1].ref = "@fresh:e1"
+        error = self.win._desktop.DesktopError("gone", "STALE_REF", {"disposition": {
+            "delivery": "not_delivered", "retry": "safe"}})
+        calls = []
 
-        class Gone(Exception):
-            hresult = -2147220991
+        def act(el, command, value=None, headed=False):
+            calls.append(el.ref)
+            if len(calls) == 1:
+                raise error
+            return {}
+        self.snapshots(fresh_snap)
+        with mock.patch.object(self.win._desktop, "act", act):
+            self.assertEqual(self.win.ui_act(old), "invoked")
+        self.assertEqual(calls, ["@test7:e1", "@fresh:e1"])
 
-        def invoke(error):
-            def raise_it():
-                raise error()
-            return Fake(Invoke=raise_it)
-        self.assertEqual(self.win.ui_act(element("Delete", 50000, {10000: invoke(Timeout)})), "invoked")
-        with self.assertRaises(Gone):  # anything else is still an error
-            self.win.ui_act(element("Delete", 50000, {10000: invoke(Gone)}))
+    def test_a_changed_control_is_found_again_only_in_a_whole_fresh_read(self):
+        stale = self.win._desktop.DesktopError("gone", "STALE_REF", {"disposition": {
+            "delivery": "not_delivered", "retry": "safe"}})
+        unproven = self.df.snapshot([self.df.node("Send")])
+        unproven.identity_unproven = True
+        for fresh in (self.df.snapshot([self.df.node("Send")], complete=False), unproven):
+            budgets = []
+            with mock.patch.object(self.win._desktop, "act", side_effect=stale) as acted, \
+                    mock.patch.object(self.win, "_desktop_snapshot", lambda hwnd=None, timeout_ms=None:
+                                      budgets.append(timeout_ms) or fresh):
+                with self.assertRaises(LookupError):
+                    self.win.ui_act(self.df.element("Send"))
+            acted.assert_called_once()
+            self.assertEqual(budgets, [self.win.DESKTOP_PROOF])
 
-    def test_a_control_clicked_in_its_middle_is_found_in_the_pixels_the_click_uses(self):
-        inside, read, clicked = [False], [], []
-
-        @contextlib.contextmanager
-        def real_pixels():
-            inside[0] = True
-            yield
-            inside[0] = False
-
-        class Tab(Fake):
-            @property
-            def CurrentBoundingRectangle(self):
-                read.append(inside[0])
-                return SimpleNamespace(left=0, top=0, right=10, bottom=20)
-        tab = Tab(CurrentName="Display", CurrentControlType=50019, GetCurrentPattern={}.get)  # no Invoke: a click
-        with mock.patch.object(self.win, "_real_pixels", real_pixels), \
-                mock.patch.object(self.win, "click", lambda x, y: clicked.append((x, y))):
-            self.assertEqual(self.win.ui_act(tab), "clicked")
-        self.assertEqual((read, clicked), ([True], [(5, 10)]))
-
-    def test_a_job_without_the_screen_never_falls_back_to_the_mouse_or_a_paste(self):
-        """27 October: a job presses its own window behind yours by a pattern only (focus_free). A tab with no Invoke
-        is clicked at its middle by the real mouse, and a box with no Value it may write is focused and pasted into:
-        both land on whatever's in front, your window."""
-        invoke, value = Fake(done=[]), Fake(CurrentIsReadOnly=False, set=[])
-        invoke.Invoke, value.SetValue = lambda: invoke.done.append(1), value.set.append
-        tab, box = element("Display", 50019), element("Name", 50004, {10002: Fake(CurrentIsReadOnly=True)})
-        send, to = element("Send", 50000, {10000: invoke}), element("To", 50004, {10002: value})
-        self.assertEqual([self.win.ui_focus_free(tab), self.win.ui_focus_free(box, "Ravi"),
+    def test_a_job_without_the_screen_never_uses_headed_input(self):
+        tab = self.df.element("Display", "tab", actions=[])
+        read_only = self.df.element("Name", "edit", actions=["SetFocus"])
+        send = self.df.element("Send")
+        to = self.df.element("To", "edit")
+        self.assertEqual([self.win.ui_focus_free(tab), self.win.ui_focus_free(read_only, "Ravi"),
                           self.win.ui_focus_free(send), self.win.ui_focus_free(to, "Ravi"),
                           self.win.ui_focus_free(tab, state="on")], [False, False, True, True, True])
-        box.SetFocus = lambda: self.fail("focused")
-        with mock.patch.object(self.win, "click", lambda *a: self.fail("clicked")), \
-                mock.patch.object(self.win, "paste", lambda *a: self.fail("pasted")):
-            for el, text in ((tab, None), (box, "Ravi")):
-                with self.subTest(el.CurrentName), self.assertRaisesRegex(RuntimeError, "needs the screen"):
-                    self.win.ui_act(el, text, focus_free=True)
-            self.assertEqual(self.win.ui_act(to, "Ravi", focus_free=True), "set")
-            self.assertEqual(self.win.ui_act(send, focus_free=True), "invoked")
-        self.assertEqual((value.set, invoke.done), (["Ravi"], [1]))
+        with self.assertRaisesRegex(RuntimeError, "needs the screen"):
+            self.win.ui_act(tab, focus_free=True)
+        with self.assertRaisesRegex(RuntimeError, "needs the screen"):
+            self.win.ui_act(read_only, "Ravi", focus_free=True)
 
     def test_a_windows_own_site_is_read_from_its_own_address_bar(self):
-        """A job's window behind yours: its site from its own address bar, never the one in front."""
-        self.found([element(self.win.OMNIBOX, 50004, {10002: Fake(CurrentValue="https://www.phish.test/login")})])
-        self.assertEqual(self.win.window_site(7, "chrome.exe"), "phish.test")
+        snap = self.df.snapshot([self.df.node(self.win.OMNIBOX, "edit", value="https://www.phish.test/login")])
+        self.snapshots(snap)
+        with mock.patch.object(self.win._desktop, "get", lambda el, prop: el.value):
+            self.assertEqual(self.win.window_site(7, "chrome.exe"), "phish.test")
         self.assertIsNone(self.win.window_site(7, "notepad.exe"))
         self.assertIsNone(self.win.window_site(None, "chrome.exe"))
 
-    def test_whats_at_a_point_is_never_the_page_around_it(self):
-        page, canvas = element("Mail - Example", 50030), element("", 50006)  # a picture on the page
-        for el in (page, canvas):
-            el.GetCurrentPropertyValue = {30031: False, 30041: False}.get  # nothing to Invoke or Toggle
-        fake = Fake(ElementFromPoint=lambda point: canvas,
-                    ControlViewWalker=Fake(GetParentElement=lambda el: page if el is canvas else None))
-        with mock.patch.object(self.win, "uia", lambda: fake), \
-                mock.patch.object(self.win, "_real_pixels", contextlib.nullcontext):
-            got = self.win.ui_at(5, 5)
-        self.assertEqual((got["name"], got["role"]), ("", ""))  # nameless: never pressed after typing, nor held
+    def test_whats_at_a_point_climbs_a_label_but_never_to_the_page(self):
+        label = self.df.node("Send", raw_role="statictext", rect=(2, 2, 8, 8), actions=[], ref=False)
+        snap = self.df.snapshot([self.df.node("Send", "button", rect=(0, 0, 10, 10), children=[label])])
+        self.snapshots(snap)
+        got = self.win.ui_at(5, 5)
+        self.assertEqual((got["name"], got["role"], got["climbed"]), ("Send", "button", True))
+        canvas = self.df.node("", raw_role="image", rect=(2, 2, 8, 8), ref=False)
+        page = self.df.snapshot([self.df.node("Mail - Example", "document", rect=(0, 0, 20, 20),
+                                                   children=[canvas])])
+        self.snapshots(page)
+        got = self.win.ui_at(5, 5)
+        self.assertEqual((got["name"], got["role"]), ("", ""))
 
-    def test_a_password_is_never_read(self):
-        box = element("Password", 50004, {10002: Fake(CurrentValue="hunter2")})
-        box.CurrentIsPassword = True
+    def test_where_controls_overlap_the_dialog_on_top_wins_then_a_risky_press(self):
+        """agent-desktop has no hit test: a click over a web page's dialog was judged as the page's button under it."""
+        under = self.df.node("Archive", "button", rect=(0, 0, 100, 100))
+        on_top = self.df.node("Delete forever", "button", rect=(40, 40, 60, 60))
+        dialog = self.df.node("", raw_role="group", subrole="alertdialog", actions=[], rect=(30, 30, 90, 90),
+                              children=[on_top], ref=False)
+        self.snapshots(self.df.snapshot([under, dialog]))
+        with mock.patch.object(self.win.user32, "GetForegroundWindow", return_value=7):
+            self.assertEqual(self.win.ui_at(50, 50)["name"], "Delete forever")
+            twins = self.df.snapshot([self.df.node("Reply", "button", rect=(0, 0, 50, 50)),
+                                      self.df.node("Send", "button", rect=(0, 0, 50, 50))])
+            self.snapshots(twins)
+            self.assertEqual(self.win.ui_at(10, 10)["name"], "Send")  # which is on top can't be told: it asks
+
+    def test_a_web_dialogs_own_words_come_before_its_buttons(self):
+        """An OK is judged by what it says yes to: a web page's alertdialog, not the whole page cut at 300 letters."""
+        ok = self.df.node("OK", "button")
+        words = self.df.node("Delete this conversation?", raw_role="statictext", actions=[], ref=False)
+        page = self.df.node("Inbox " * 80, "document", children=[
+            self.df.node("", raw_role="group", subrole="alertdialog", actions=[], ref=False,
+                         children=[self.df.node(f"Button {n}", "button") for n in range(40)] + [words, ok])])
+        snap = self.df.snapshot([page], app="chrome.exe")
+        el = next(it for it in snap.elements if it.name == "OK")
+        self.assertTrue(self.win.ui_dialog_text(el).startswith("Delete this conversation?"))
+
+    def test_a_password_is_never_read_or_typed(self):
+        box = self.df.element("Password", "edit", value="hunter2", password=True)
         self.assertIsNone(self.win.ui_value(box))
+        with self.assertRaisesRegex(RuntimeError, "password"):
+            self.win.ui_act(box, "new secret")
 
     def test_the_site_from_the_address_bar(self):
-        for url, site in (("mail.google.com/mail/u/0/#inbox", "mail.google.com"), ("https://www.Example.com/a", "example.com"),
-                          ("careerid.in", "careerid.in"), ("search for cats", None)):
+        for url, site in (("mail.google.com/mail/u/0/#inbox", "mail.google.com"),
+                          ("https://www.Example.com/a", "example.com"), ("careerid.in", "careerid.in"),
+                          ("search for cats", None)):
             self.assertEqual(self.win.site_of(url), site, url)
 
 
 class Tripwires(unittest.TestCase):
-    def test_ui_automation_is_tripped_in_tests(self):
-        for name in ("uia", "find_ui", "ui_act", "ui_at", "ui_focused", "ui_fields", "foreground", "browser_site",
-                     "window_exists"):
+    def test_agent_desktop_is_tripped_in_tests(self):
+        for name in ("find_ui", "ui_act", "ui_at", "ui_focused", "ui_fields", "ui_focus", "ui_rect",
+                     "foreground", "browser_site", "window_exists"):
             self.assertTrue(getattr(getattr(winplatform, name), "tripwire", None), name)
+        self.assertTrue(getattr(winplatform._desktop._execute, "tripwire", None))
         self.assertNotIn("win.ui_act", TRIPPED)
 
     def test_the_clipboard_and_the_start_menu_are_tripped_too(self):

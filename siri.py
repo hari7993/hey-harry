@@ -8719,11 +8719,12 @@ def in_terminal(exe, focus=False):
     focus = win.ui_focused() if focus is False else focus
     if focus is None:
         return exe in IDES
-    try:
-        kind = str(getattr(focus.get("el"), "CurrentClassName", "") or "")
-    except Exception:  # a control gone since: can't tell, so it counts as one
-        return True
+    kind = " ".join((str(focus.get("class_name") or ""), str(focus.get("kind") or "")))
     name = str(focus.get("name") or "")
+    if focus.get("role") in ("edit", "document") and not name and not focus.get("class_name"):
+        # agent-desktop gives no ClassName (3 November 2026), so xterm.js's or Windows Terminal's box with no name
+        # can't be told from any other: an unnamed box counts as a terminal, as the class did before
+        return True
     if exe in IDES and not (name and focus.get("role") in ("edit", "document")):
         return True
     return bool(TERMINAL_BOX.match(name) or TERMINAL_CLASS.search(kind))

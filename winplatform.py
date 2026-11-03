@@ -15,6 +15,8 @@ from ctypes import wintypes
 from functools import lru_cache
 from urllib.parse import quote
 
+import agentdesktop as _desktop
+
 
 # --------------------------------------------------------------------------- the C++ runtime, first
 def _system_cpp_runtime():
@@ -174,6 +176,7 @@ _sig(user32.GetWindowThreadProcessId, [HWND, ctypes.POINTER(DWORD)], DWORD)
 _sig(user32.IsWindowVisible, [HWND])
 _sig(user32.IsIconic, [HWND])
 _sig(user32.IsWindow, [HWND])
+_sig(user32.IsWindowEnabled, [HWND])
 _sig(user32.GetWindow, [HWND, UINT], HWND)
 _sig(user32.GetAncestor, [HWND, UINT], HWND)
 _sig(user32.GetWindowLongW, [HWND, ctypes.c_int], LONG)
@@ -2346,145 +2349,94 @@ def native_to_wav(text, wav_path, voice=None, voice_id=None):
         v.AudioOutputStream = None
 
 
-# --------------------------------------------------------------------------- Fast UI Automation Element Inspection
-# Buttons the fast path never presses: the vision path, with its own rules, decides those
+# --------------------------------------------------------------------------- agent-desktop element inspection
+# Buttons the fast path never presses: the vision path, with its own rules, decides those.
 RISKY_CLICKS = re.compile(r"\b(?:send|delete|remove|erase|buy|pay|purchase|order|checkout|post|publish|submit|sign ?out|"
                           r"log ?out|uninstall|format|reset|discard|unsubscribe|transfer|confirm|allow|accept|install)\b")
 
-
-def find_and_click_ui_element(target_name, hwnd=None):
-    """Click a button, link, menu item, tab or list item in the window in front whose name is exactly target_name, in
-    about 40 ms instead of a screenshot and the model. Only when exactly one visible, enabled element has that name;
-    anything vaguer, or a risky button like Send or Delete, returns False so vision mode handles it."""
-    clean = " ".join(str(target_name or "").lower().split())
-    if not clean or RISKY_CLICKS.search(clean):
-        return False
-    _com()
-    hwnd = hwnd or user32.GetForegroundWindow()
-    if not hwnd:
-        return False
-    try:
-        import comtypes.client
-        comtypes.client.GetModule("UIAutomationCore.dll")
-        from comtypes.gen.UIAutomationClient import CUIAutomation, IUIAutomation
-        uia = comtypes.client.CreateObject(CUIAutomation, interface=IUIAutomation)
-        root = uia.ElementFromHandle(hwnd)
-        if not root:
-            return False
-        hits = []
-        for ctype in (50000, 50005, 50011, 50019, 50007):  # button, hyperlink, menu item, tab item, list item
-            found = root.FindAll(4, uia.CreatePropertyCondition(30003, ctype))
-            if not found:
-                continue
-            for i in range(min(200, found.Length)):
-                el = found.GetElement(i)
-                if " ".join((el.CurrentName or "").lower().split()) != clean:
-                    continue
-                if el.CurrentIsOffscreen or not el.CurrentIsEnabled:
-                    continue
-                rect = el.CurrentBoundingRectangle
-                if rect.right > rect.left and rect.bottom > rect.top:
-                    hits.append(rect)
-        if len(hits) != 1:  # none, or more than one with that name: let vision work out which
-            return False
-        rect = hits[0]
-        click((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
-        return True
-    except Exception as exc:
-        print(f"  uia element click failed: {exc!r}")
-    return False
-
-
-# --------------------------------------------------------------------------- UI Automation for her own procedures
-# What agent.py reads and presses: controls found by their name and role, never by where they are on the screen, so a
-# button that moved is still found and one that's gone is never pressed by mistake. Each call to UI Automation has a
-# time limit, so a slow or hung app makes it give up instead of holding her up, and no extra threads are needed.
-_ui = threading.local()  # this thread's UI Automation: a COM object made on one thread mustn't be used from another
-ROLES = {"button": 50000, "checkbox": 50002, "combobox": 50003, "edit": 50004, "link": 50005, "listitem": 50007,
-         "menuitem": 50011, "radio": 50013, "tab": 50019, "document": 50030}
-ROLE_OF = {v: k for k, v in ROLES.items()}
-UIA_LIMIT = 800  # ms one UI Automation call may take, then it raises
+# agent-desktop gives the same controls platform-neutral names. The rest of Harry keeps its old small vocabulary so
+# learned procedures still find an edit, radio or list item by the role saved before this change.
+_AGENT_ROLES = {"button": "button", "menubutton": "button", "checkbox": "checkbox", "switch": "checkbox",
+                "combobox": "combobox", "textfield": "edit", "link": "link", "option": "listitem",
+                "menuitem": "menuitem", "radiobutton": "radio", "tab": "tab", "document": "document"}
+ROLES = tuple(dict.fromkeys(_AGENT_ROLES.values()))
 BROWSER_EXES = {"chrome.exe", "msedge.exe", "brave.exe"}
-OMNIBOX = "Address and search bar"  # the address bar's name in Chrome, Edge and Brave
-# Direction marks and a shortcut hint on the end of a name: Gmail's Send button is "Send \u202a(Ctrl-Enter)\u202c"
+OMNIBOX = "Address and search bar"
+# Direction marks and a shortcut hint on the end of a name: Gmail's Send button is "Send \u202a(Ctrl-Enter)\u202c".
 BIDI = re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 SHORTCUT_HINT = re.compile(r"\s*\((?:ctrl|control|alt|shift|win|cmd)\s*[-+][^()]*\)$", re.I)
-_sleep, _clock = time.sleep, time.monotonic  # swapped for a fake clock in the tests, so polling takes no time
-
-
-def uia():
-    """This thread's UI Automation (CUIAutomation8, made once a thread), every call limited to UIA_LIMIT."""
-    got = getattr(_ui, "uia", None)
-    if got is None:
-        _com()
-        import comtypes.client
-        comtypes.client.GetModule("UIAutomationCore.dll")
-        from comtypes.gen.UIAutomationClient import CUIAutomation8, IUIAutomation2
-        got = comtypes.client.CreateObject(CUIAutomation8, interface=IUIAutomation2)
-        got.TransactionTimeout = got.ConnectionTimeout = UIA_LIMIT
-        _ui.uia = got
-    return got
+_sleep, _clock = time.sleep, time.monotonic  # swapped for a fake clock in tests, so polling takes no time
+DESKTOP_LIMIT = _desktop.DEFAULT_OBSERVE_MS
+DESKTOP_PROOF = 8000  # ms for the whole fresh read a changed control is found again in: a cut one can't prove it
+SLOW_FOR = 60.0
+_slow = {}  # window -> until when agent-desktop timed out on it
+NO_FOCUS_FREE = "That needs the screen: it has no way in but the keyboard or the mouse"
 
 
 def clean_name(name):
-    """A control's name as a person reads it: no invisible direction marks, single spaces, and no shortcut hint on
-    the end, so "Send \u202a(Ctrl-Enter)\u202c" is "Send"."""
+    """A control's name as a person reads it: no direction marks, single spaces, and no shortcut hint."""
     return SHORTCUT_HINT.sub("", " ".join(BIDI.sub("", str(name or "")).split())).strip()
 
 
 def _text(value):
-    """What's typed in a control, without direction marks and with single spaces, the way typed text is compared."""
+    """What's typed in a control, without direction marks and with single spaces."""
     return " ".join(BIDI.sub("", str(value or "")).split())
 
 
-def ui_info(el):
-    """What a control is: {"name", "role", "aid", "password", "el"}, role one of ROLES or ""."""
-    return {"name": clean_name(el.CurrentName), "role": ROLE_OF.get(el.CurrentControlType, ""),
-            "aid": str(el.CurrentAutomationId or ""), "password": bool(el.CurrentIsPassword), "el": el}
+def _role(el):
+    return _AGENT_ROLES.get(getattr(el, "raw_role", ""), "")
 
 
 def _shown(el):
-    """On the screen, enabled and with a size: one a person could use."""
-    if el.CurrentIsOffscreen or not el.CurrentIsEnabled:
-        return False
-    rect = el.CurrentBoundingRectangle
-    return rect.right > rect.left and rect.bottom > rect.top
+    """On screen, enabled and with a size: one a person could use."""
+    rect, states = getattr(el, "rect", None), getattr(el, "states", set())
+    return bool(rect and rect[2] > rect[0] and rect[3] > rect[1] and
+                not states.intersection(("disabled", "hidden", "offscreen")))
+
+
+def _desktop_snapshot(hwnd=None, timeout_ms=None):
+    """The raw bounded agent-desktop snapshot. This one seam is faked by the UI helper tests."""
+    return _desktop.snapshot(hwnd, timeout_ms=timeout_ms or DESKTOP_LIMIT)
+
+
+def _controls(snap):
+    return [el for el in snap.elements if _role(el) and _shown(el)]
+
+
+def ui_info(el):
+    """What a control is: name, old role, AutomationId, password flag and its agent-desktop element."""
+    if el is None:
+        raise LookupError("that control is gone")
+    return {"name": clean_name(getattr(el, "name", "")), "role": _role(el),
+            "aid": str(getattr(el, "aid", "") or ""), "password": bool(getattr(el, "password", False)),
+            "class_name": str(getattr(el, "class_name", "") or ""),
+            "kind": str(getattr(el, "kind", "") or ""),
+            "item_type": str(getattr(el, "item_type", "") or ""), "el": el}
+
+
+def _matching(snap, want, role, aid):
+    items = [el for el in _controls(snap) if role not in ROLES or _role(el) == role]
+    if aid:
+        by_id = [el for el in items if str(el.aid) == str(aid)]
+        if by_id:
+            return by_id
+    return [el for el in items if want and clean_name(el.name).lower() == want]
 
 
 def _find(want, role, aid, hwnd):
-    """The shown controls of role (any of ROLES if None) in window hwnd, by AutomationId, else by clean name. Raises
-    LookupError when it couldn't really look (no window in front, or more controls than it reads, the one wanted
-    maybe among those left), rather than answer that it isn't there."""
-    a = uia()
+    """Shown matching controls in hwnd. An incomplete read raises rather than pretending one is absent."""
     hwnd = hwnd or user32.GetForegroundWindow()
-    root = a.ElementFromHandle(hwnd) if hwnd else None
-    if not root:
+    if not hwnd:
         raise LookupError("no window in front to read")
-    types = [ROLES[role]] if role in ROLES else list(ROLES.values())
-    kinds = a.CreatePropertyCondition(30003, types[0])  # ControlType: one FindAll by role, never a walk of the tree
-    for t in types[1:]:
-        kinds = a.CreateOrCondition(kinds, a.CreatePropertyCondition(30003, t))
-    for by_id in ([True, False] if aid else [False]):  # an AutomationId can change with the app's version: then the name
-        found = root.FindAll(4, a.CreateAndCondition(kinds, a.CreatePropertyCondition(30011, str(aid))) if by_id
-                             else kinds)
-        hits = []
-        for i in range(min(500, found.Length if found else 0)):
-            el = found.GetElement(i)
-            if (by_id or (want and clean_name(el.CurrentName).lower() == want)) and _shown(el):
-                hits.append(el)
-        if hits or not want:
-            return hits
-        if not by_id and found and found.Length > 500:  # it may be one of those past the ones read
-            raise LookupError("more controls than she reads")
-    return []
+    snap = _desktop_snapshot(hwnd)
+    hits = _matching(snap, want, role, aid)
+    if snap.cut and not hits:
+        raise LookupError("agent-desktop couldn't read the whole window")
+    return hits
 
 
 def find_ui(name=None, role=None, aid=None, hwnd=None, wait=0.0, unique=True, strict=False):
-    """The shown, enabled control of this role in the window in front (or hwnd): by its AutomationId, else exactly by
-    name (clean_name, any case). unique: only if there's exactly one, else None, since two Send buttons mean two mails
-    open and she can't tell which. Looks again every 0.3 s for up to wait seconds, for a page still loading.
-    strict: a window that couldn't be read (too slow, none in front, more controls than she reads) raises, rather
-    than passing for one without the control, since saying it's gone takes a clean read."""
+    """The shown control in hwnd by AutomationId, else exact clean name; exactly one unless unique is false."""
     want = clean_name(name).lower()
     if not want and not aid:
         return None
@@ -2492,10 +2444,10 @@ def find_ui(name=None, role=None, aid=None, hwnd=None, wait=0.0, unique=True, st
     while True:
         try:
             hits = _find(want, role, aid, hwnd)
-        except Exception as exc:  # slow, gone or not answering: as good as not there, unless strict
+        except Exception as exc:
             if strict:
                 raise
-            print(f"  ui automation: {exc!r}")
+            print(f"  agent-desktop: {exc!r}")
             hits = []
         if hits and (len(hits) == 1 or not unique):
             return hits[0]
@@ -2505,77 +2457,132 @@ def find_ui(name=None, role=None, aid=None, hwnd=None, wait=0.0, unique=True, st
 
 
 def find_all_ui(name=None, role=None, aid=None, hwnd=None):
-    """Every shown, enabled control find_ui would find, in the window's order, or [] if none or it couldn't read the
-    window: a settings card is often named like the switch in it, and comes first."""
+    """Every shown control find_ui would find, in screen-reader order."""
     want = clean_name(name).lower()
     if not want and not aid:
         return []
     try:
         return _find(want, role, aid, hwnd)
-    except Exception as exc:  # slow, gone or not answering: as good as not there
-        print(f"  ui automation: {exc!r}")
+    except Exception as exc:
+        print(f"  agent-desktop: {exc!r}")
         return []
 
 
-UIA_E_TIMEOUT = -2146233083  # 0x80131505 as comtypes gives it: the app didn't answer within UIA_LIMIT
-
-
-def _pattern(el, pattern, interface):
-    """el's UI Automation pattern (Invoke 10000, Value 10002, Toggle 10015) as its interface, or None."""
+def _hwnd(el):
+    window = getattr(getattr(el, "snapshot", None), "window_id", "")
     try:
-        got = el.GetCurrentPattern(pattern)
-        if not got:
-            return None
-        _com()
-        from comtypes.gen import UIAutomationClient
-        return got.QueryInterface(getattr(UIAutomationClient, interface))
-    except Exception:
+        return int(window[2:]) if window.startswith("w-") else None
+    except ValueError:
         return None
 
 
-NO_FOCUS_FREE = "That needs the screen: it has no way in but the keyboard or the mouse"
+def _refresh(el):
+    """Replace one stale ref with the only live control of the same identity, from a whole fresh read of its window:
+    a cut one, or one whose refs agent-desktop can't tell apart, can't say that one's the only one."""
+    hwnd = _hwnd(el) or user32.GetForegroundWindow()
+    if not hwnd:
+        raise LookupError("that control changed and its window is gone")
+    snap = _desktop_snapshot(hwnd, timeout_ms=DESKTOP_PROOF)
+    if snap.cut or snap.identity_unproven:
+        raise LookupError("that control changed and its window couldn't be read whole again")
+    hits = _matching(snap, clean_name(el.name).lower(), _role(el), el.aid)
+    if len(hits) != 1:
+        raise LookupError("that control changed and isn't uniquely identifiable now")
+    el.__dict__.update(hits[0].__dict__)
+    return el
+
+
+def _live(el, prop):
+    try:
+        return _desktop.get(el, prop)
+    except _desktop.DesktopError as exc:
+        if exc.code == "STALE_REF" and exc.safe:
+            return _desktop.get(_refresh(el), prop)
+        raise
+
+
+def _ref_action(el, command, value=None, headed=False, settled=None):
+    more = {} if settled is None else {"settled": settled}
+    try:
+        return _desktop.act(el, command, value, headed=headed, **more)
+    except _desktop.DesktopError as exc:
+        # STALE_REF proves nothing was delivered. Refresh once and let the ref's uniqueness check guard the retry.
+        if exc.code == "STALE_REF" and exc.safe:
+            return _desktop.act(_refresh(el), command, value, headed=headed, **more)
+        raise
 
 
 def ui_focus_free(el, text=None, state=None):
-    """True if ui_act would do this to el by its own pattern alone, never the focus, a paste or the mouse: a switch
-    by Toggle, text by a Value it may write, a press by Invoke. A job in the background does only these on its own
-    window while yours is in front (agent.needs_screen): a list item or a tab with no Invoke, common in Chrome and
-    Settings, is clicked at its middle by the real mouse, which lands on whatever's on top there, and a box with no
-    writable Value is focused and pasted into, which Windows' foreground lock can leave as your window's paste."""
+    """True if ui_act can do this semantically without focus, keyboard or pointer side effects."""
     if state in ("on", "off"):
-        return True  # by Toggle, or refused if it has none: never a click
+        return True  # check/uncheck is semantic, or ui_act refuses when the control cannot Toggle
     if text is not None:
-        value = _pattern(el, 10002, "IUIAutomationValuePattern")
-        try:
-            return value is not None and not value.CurrentIsReadOnly
-        except Exception:
-            return False
-    return _pattern(el, 10000, "IUIAutomationInvokePattern") is not None
+        return "SetValue" in el.actions and "readonly" not in el.states and not el.password
+    return "Click" in el.actions
+
+
+def ui_is_focused(el):
+    """True only when a fresh state read says this control has keyboard focus."""
+    try:
+        return "focused" in set(_live(el, "states") or ())
+    except Exception:
+        return False
+
+
+def ui_focus(el):
+    """True once agent-desktop has put the keyboard on el and seen it there. It only does that in the window in
+    front, so after its safe no the window is brought forward and it's asked once more, as UI Automation's SetFocus
+    brought it forward itself (3 November: "did not become foreground before headed delivery")."""
+    try:
+        done = _ref_action(el, "focus", headed=True)
+    except _desktop.DesktopError as exc:
+        hwnd = _hwnd(el)
+        if exc.code != "ACTION_FAILED" or not exc.safe or not hwnd:
+            raise
+        bring_to_front(hwnd)
+        _sleep(0.15)
+        done = _ref_action(el, "focus", headed=True)
+    if ((done or {}).get("disposition") or {}).get("delivery") == "delivered_verified":
+        return True
+    return ui_is_focused(el)
+
+
+def _modal_opened(el):
+    """While a press runs: True once its window has been turned off, which a modal question over it does. None if it
+    isn't on now, so a question there from before isn't taken for this press's."""
+    hwnd = _hwnd(el)
+    if not hwnd or not user32.IsWindowEnabled(hwnd):
+        return None
+    return lambda: not user32.IsWindowEnabled(hwnd)
 
 
 def ui_act(el, text=None, state=None, caret=False, focus_free=False):
     """Use a control as a person would, and say how: a switch turned "on" or "off" only if it isn't already
-    ("already"); text put in by its Value pattern, else by focusing it and pasting, the clipboard put back after; else
-    Invoked, the way its own keyboard shortcut would; else clicked in its middle. caret: the text is typed where the
-    cursor is (a "type" step), never by the Value pattern, which puts it in place of everything in the box: a list in
-    Notepad, a draft or its signature in Gmail, and in an Edit its undo too. focus_free: by a pattern only, for a job
-    in the background without the screen (ui_focus_free): RuntimeError rather than the focus and a paste, or a click."""
+    ("already"); text put in by agent-desktop's set-value ("set"), else by focusing it and pasting, the clipboard put
+    back after ("pasted"); else pressed by its own action ("invoked"); else clicked in its middle ("clicked"). caret:
+    the text goes where the cursor is (a "type" step), never by set-value, which puts it in place of everything in
+    the box. focus_free: semantic actions only, for a job in the background without the screen (ui_focus_free):
+    RuntimeError rather than the focus and a paste, or a click. Never a password."""
     if state in ("on", "off"):
-        toggle = _pattern(el, 10015, "IUIAutomationTogglePattern")
-        if toggle is None:
+        if "Toggle" not in el.actions:
             raise RuntimeError("That isn't something I can switch on or off")
-        if ("on" if toggle.CurrentToggleState == 1 else "off") == state:
+        now = ui_toggle(el)
+        if now == state:
             return "already"
-        toggle.Toggle()
+        _ref_action(el, "check" if state == "on" else "uncheck")
         return "toggled"
     if text is not None:
-        value = None if caret else _pattern(el, 10002, "IUIAutomationValuePattern")
-        if value is not None and not value.CurrentIsReadOnly:
-            value.SetValue(str(text))
+        if el.password:
+            raise RuntimeError("I won't type a password")
+        if not caret and "SetValue" in el.actions and "readonly" not in el.states:
+            _ref_action(el, "set-value", str(text))
             return "set"
         if focus_free:
             raise RuntimeError(NO_FOCUS_FREE)
-        el.SetFocus()
+        # pasted, as before agent-desktop: its typing sends a line break as a key of its own, which a chat box can
+        # take for Send, and a paste is one key however long the text
+        if not ui_focus(el):
+            raise RuntimeError("I couldn't put the cursor in that box")
         kept = clipboard_snapshot()
         try:
             paste(str(text))
@@ -2583,107 +2590,185 @@ def ui_act(el, text=None, state=None, caret=False, focus_free=False):
         finally:
             clipboard_restore(kept)
         return "pasted"
-    invoke = _pattern(el, 10000, "IUIAutomationInvokePattern")
-    if invoke is not None:
+    if "Click" in el.actions:
         try:
-            invoke.Invoke()
-        except Exception as exc:
-            # A WinForms or Win32 button that opens a modal dialog (Are you sure?, Save As) doesn't return from Invoke
-            # till the dialog closes, so UI Automation gives up at UIA_LIMIT though it was pressed. What's on the
-            # screen next says if it worked: it's never pressed again to find out
-            if getattr(exc, "hresult", None) != UIA_E_TIMEOUT:
+            _ref_action(el, "click", settled=_modal_opened(el))
+        except _desktop.DesktopError as exc:
+            # A WinForms or Win32 button that opens a modal question (Are you sure?, Save As) doesn't come back
+            # from its Invoke till the question closes, so agent-desktop waits on, though it was pressed (3
+            # November, the smoke window's Ask First). What's on the screen next says if it worked: it's never
+            # pressed again to find out
+            if exc.code != "TIMEOUT" or exc.delivery == "not_delivered":
                 raise
-            print("  ui automation: Invoke timed out, taken as pressed")
+            print("  agent-desktop: the press didn't come back, taken as pressed")
         return "invoked"
     if focus_free:
         raise RuntimeError(NO_FOCUS_FREE)
-    with _real_pixels():  # in the real pixels click uses: read outside, a screen scaled unlike the main one is off
-        rect = el.CurrentBoundingRectangle
-    click((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
+    rect = ui_rect(el) or el.rect
+    _desktop.mouse_click(rect)
     return "clicked"
 
 
 def ui_value(el):
-    """What's typed in a control, or None: it has no Value pattern, it's a password box, or it couldn't be read."""
+    """What's typed in a control, or None for a password, an unreadable value or a stale control."""
+    if el is None or getattr(el, "password", False):
+        return None
     try:
-        if el.CurrentIsPassword:
-            return None
-        value = _pattern(el, 10002, "IUIAutomationValuePattern")
-        return None if value is None else _text(value.CurrentValue)
+        value = _live(el, "value")
+        return _text(value) if isinstance(value, str) else None
     except Exception:
         return None
 
 
 def ui_toggle(el):
-    """"on" or "off" for a switch or a tick box, else None."""
-    toggle = _pattern(el, 10015, "IUIAutomationTogglePattern")
+    """'on' or 'off' for a switch or checkbox, else None."""
+    if el is None or not ({getattr(el, "raw_role", "")} & {"checkbox", "switch"} or "Toggle" in el.actions):
+        return None
     try:
-        return None if toggle is None else "on" if toggle.CurrentToggleState == 1 else "off"
+        states = set(_live(el, "states") or ())
+        return None if "indeterminate" in states else "on" if "checked" in states else "off"
     except Exception:
         return None
 
 
-def ui_at(x, y):
-    """What's at a point on the screen, in real pixels: the control there, or the nearest one around it that can be
-    pressed or switched, since a button's label is often a text inside it. Never the page around it: a picture, a
-    canvas or a button a web page doesn't show UI Automation isn't the page, whose name is only its title, so the
-    thing at the point is given as it is, often with no name, which the gate won't press after typing or hold for a
-    yes. ui_info with "climbed": it's one around the thing at the point (a button around its label, or a mail's row
-    around an icon in it that UI Automation doesn't show, which the gate won't hold for a yes: pressing the row opens
-    the mail). None if UI Automation can't say."""
+def ui_rect(el):
+    """A control's current (left, top, right, bottom), in real screen pixels, or None."""
     try:
-        a = uia()
-        with _real_pixels():
-            el = a.ElementFromPoint(wintypes.POINT(int(x), int(y)))
-        first, walker = el, a.ControlViewWalker
-        for depth in range(8):
-            if not el or (depth and el.CurrentControlType == ROLES["document"]):
-                break
-            if el.CurrentControlType in ROLE_OF or el.GetCurrentPropertyValue(30031) or \
-                    el.GetCurrentPropertyValue(30041):  # can be Invoked or Toggled
-                return {**ui_info(el), "climbed": bool(depth)}
-            el = walker.GetParentElement(el)
-        return {**ui_info(first), "climbed": False} if first else None
+        return _desktop.rectangle(_live(el, "bounds"))
+    except Exception:
+        return None
+
+
+def ui_click_point(x, y):
+    """Click an already-checked foreground point through agent-desktop's headed pointer input."""
+    _desktop.point_click(x, y)
+
+
+def _contains(rect, x, y):
+    return bool(rect and rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3])
+
+
+def _area(rect):
+    return (rect[2] - rect[0]) * (rect[3] - rect[1]) if rect else 0
+
+
+def _climb(first):
+    """first, or the control that can be pressed around it (a button around its label), never the page."""
+    el = first
+    for depth in range(8):
+        if el is None or (depth and el.raw_role == "document"):
+            break
+        if _role(el) or el.actions.intersection(("Click", "Toggle")):
+            return {**ui_info(el), "climbed": bool(depth)}
+        el = el.parent
+    return {**ui_info(first), "climbed": False}
+
+
+def ui_at(x, y):
+    """What's at a screen point, in real pixels, from one snapshot of the window in front: the deepest control
+    there, or the one around it that can be pressed. agent-desktop has no hit test of its own, so where controls
+    overlap and which is on top can't be told, one inside a dialog wins, then one whose name is a risky press: the
+    gate then asks, rather than taking the harmless one under it. None if it can't say."""
+    try:
+        snap = _desktop_snapshot(user32.GetForegroundWindow())
+        inside = [el for el in snap.elements[1:] if _shown(el) and _contains(el.rect, x, y)]
+        if not inside:
+            return None
+        leaves = [el for el in inside if not any(other.has_ancestor(el) for other in inside)]
+        dialogs = [el for el in inside if _is_dialog(el)]
+        if dialogs:  # a dialog is drawn over the page it's in
+            top = max(dialogs, key=lambda el: el.depth)
+            leaves = [el for el in leaves if el is top or el.has_ancestor(top)] or leaves
+        found = [_climb(el) for el in sorted(leaves, key=lambda el: (-el.depth, _area(el.rect)))]
+        return next((it for it in found if RISKY_CLICKS.search(it["name"].lower())), found[0])
     except Exception as exc:
-        print(f"  ui automation: {exc!r}")
+        print(f"  agent-desktop: {exc!r}")
         return None
 
 
 def ui_focused():
-    """The control with the keyboard focus, as ui_info, or None."""
+    """The deepest control with keyboard focus in the foreground window, as ui_info, or None."""
     try:
-        el = uia().GetFocusedElement()
-        return ui_info(el) if el else None
+        snap = _desktop_snapshot(user32.GetForegroundWindow())
+        found = [el for el in snap.elements if "focused" in el.states and _role(el)]
+        return ui_info(max(found, key=lambda el: el.depth)) if found else None
     except Exception as exc:
-        print(f"  ui automation: {exc!r}")
+        print(f"  agent-desktop: {exc!r}")
         return None
 
 
+def _is_dialog(el):
+    """A dialog: a window's own, a web page's (ARIA dialog or alertdialog, Gmail's new mail), or a modal one."""
+    return el.raw_role == "dialog" or getattr(el, "subrole", "") in ("dialog", "alertdialog") or \
+        "modal" in el.states
+
+
+def _scope(el, include_window=True):
+    """The dialog el is in, else its window (include_window), else None."""
+    at = el
+    while at is not None:
+        if _is_dialog(at) or include_window and at.raw_role == "window":
+            return at
+        at = at.parent
+    return None
+
+
+def _words(elements, most):
+    out = []
+    for item in elements:
+        if item.password:
+            continue
+        for value in (clean_name(item.name), _text(item.value)):
+            if value and value not in out:
+                out.append(value)
+        if len(" ".join(out)) >= most:
+            break
+    return " ".join(out)[:most]
+
+
+def ui_text(el, most=6000):
+    """The readable text below an element in the snapshot that produced its ref."""
+    if el is None or not getattr(el, "snapshot", None):
+        return ""
+    return _words(el.descendants(), most)
+
+
 def ui_dialog_text(el, most=300):
-    """The words of the dialog a control is in, up to most characters: its title and the text in it, so an OK is
-    judged by what it says yes to, like "Delete this conversation?". "" if it isn't in one."""
+    """The words of the dialog a control is in (else its window), up to most characters: its title and its texts
+    first, so an OK is judged by what it says yes to, like "Delete this conversation?", not cut off by its buttons."""
     try:
-        a = uia()
-        box, walker = el, a.ControlViewWalker
-        for _ in range(12):
-            if not box:
-                return ""
-            if box.CurrentControlType == 50032 or str(box.CurrentAriaRole or "").lower() in ("dialog", "alertdialog"):
-                break  # a window, or a dialog in a web page
-            box = walker.GetParentElement(box)
-        else:
+        box = _scope(el)
+        if box is None:
             return ""
-        texts = box.FindAll(4, a.CreatePropertyCondition(30003, 50020))  # its texts
-        words = [clean_name(box.CurrentName)] + [clean_name(texts.GetElement(i).CurrentName)
-                                                 for i in range(min(20, texts.Length if texts else 0))]
-        return " ".join(w for w in words if w)[:most]
+        below = box.descendants()
+        return _words([box] + [it for it in below if it.raw_role == "statictext"] +
+                      [it for it in below if it.raw_role != "statictext"], most)
     except Exception as exc:
-        print(f"  ui automation: {exc!r}")
+        print(f"  agent-desktop: {exc!r}")
         return ""
 
 
+def find_and_click_ui_element(target_name, hwnd=None):
+    """Click the one safe, exact button-like control in a window through agent-desktop, or return False."""
+    clean = " ".join(str(target_name or "").lower().split())
+    if not clean or RISKY_CLICKS.search(clean):
+        return False
+    try:
+        hwnd = hwnd or user32.GetForegroundWindow()
+        snap = _desktop_snapshot(hwnd)
+        hits = [el for el in _controls(snap) if _role(el) in ("button", "link", "menuitem", "tab", "listitem")
+                and clean_name(el.name).lower() == clean]
+        if snap.cut or len(hits) != 1:
+            return False
+        ui_act(hits[0])
+        return True
+    except Exception as exc:
+        print(f"  agent-desktop element click failed: {exc!r}")
+        return False
+
+
 def foreground():
-    """(hwnd, exe, title) of the window in front, exe as a lower-case file name like "chrome.exe"."""
+    """(hwnd, exe, title) of the window in front, exe as a lower-case file name."""
     hwnd = user32.GetForegroundWindow()
     if not hwnd:
         return None, "", ""
@@ -2691,15 +2776,14 @@ def foreground():
 
 
 def site_of(url):
-    """The domain of a web address, without "www.": "https://www.Example.com/a" and "mail.google.com/mail/u/0" (as
-    the address bar shows it) give "example.com" and "mail.google.com". None if it isn't one."""
+    """The domain of a web address, without www., or None when it is not an address."""
     m = re.match(r"(?:[a-z][\w+.-]*://)?(?:[^@/\s]*@)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})(?::\d+)?(?:[/?#]|$)",
                  str(url or "").strip(), re.I)
     return m[1].lower().removeprefix("www.") if m else None
 
 
 def browser_site():
-    """The site in front, from the address bar of Chrome, Edge or Brave, as site_of has it. None for anything else."""
+    """The site in the foreground Chrome, Edge or Brave address bar, or None."""
     hwnd, exe, _ = foreground()
     if exe not in BROWSER_EXES:
         return None
@@ -2708,9 +2792,7 @@ def browser_site():
 
 
 def window_site(hwnd, exe=None):
-    """The site a Chrome, Edge or Brave window shows, in front or behind others, from its own address bar, as site_of
-    has it: a job in the background reads its own window's (agent.site_in), never the one in front. None for another
-    program, or an address bar that couldn't be read."""
+    """The site a browser window shows, in front or behind other windows, or None."""
     if not hwnd:
         return None
     exe = exe or os.path.basename(window_exe(hwnd)).lower()
@@ -2720,17 +2802,13 @@ def window_site(hwnd, exe=None):
     return site_of(ui_value(box)) if box is not None else None
 
 
-# A site is a tab, not an app: "Close the YouTube" on 22 October got "YouTube isn't running". Its tab is found by
-# its title, the site's own name a part of it ("Akka Official Trailer | Keerthy Suresh - YouTube", "(3) Feed |
-# LinkedIn", "Home / X"), never the name as a word in it: "download youtube videos - Google Search" isn't YouTube
 TAB_BROWSERS = BROWSER_EXES | {"firefox.exe"}
 TITLE_PARTS = re.compile(r"\s+[-|/\u00b7\u2013\u2014]\s+")
-TITLE_COUNT = re.compile(r"^\(\d[\d,]*\+?\)\s*")  # "(3) YouTube": what's unread
+TITLE_COUNT = re.compile(r"^\(\d[\d,]*\+?\)\s*")
 
 
 def shows_site(title, names):
-    """True if a window or tab title is one of the site's own: one of names ("YouTube", "Google Search") is a part of
-    it, as a site puts its name in its pages' titles."""
+    """True if a browser window or tab title has one of the site's own title parts."""
     names = [names] if isinstance(names, str) else names
     parts = {" ".join(TITLE_COUNT.sub("", p).split()).lower() for p in TITLE_PARTS.split(BIDI.sub("", title or ""))}
     return any(" ".join(str(n).split()).lower() in parts for n in names if str(n).strip())
@@ -2745,36 +2823,26 @@ def browser_windows():
 
 
 def _tab_items(hwnd):
-    """The tabs in a browser window's tab strip, as (UI Automation element, name)."""
-    a = uia()
-    root = a.ElementFromHandle(hwnd)
-    found = root.FindAll(4, a.CreatePropertyCondition(30003, ROLES["tab"])) if root else None
-    items = [found.GetElement(i) for i in range(min(100, found.Length if found else 0))]
-    return [(el, clean_name(el.CurrentName)) for el in items]
+    """The tabs in a browser window's agent-desktop snapshot, as (element, name)."""
+    snap = _desktop_snapshot(hwnd)
+    return [(el, clean_name(el.name)) for el in snap.elements if el.raw_role == "tab" and _shown(el)]
 
 
 def close_site_tab(names):
-    """Closes the browser tab showing a site (names as shows_site has them): one in front of its window is brought
-    forward and closed with Ctrl+W, else one behind another tab is picked in the tab strip first. The tab's title.
-    LookupError if no tab shows it, RuntimeError if it couldn't be brought to the front, so the keys can't go to
-    another window."""
+    """Bring forward and close the browser tab showing a site, or raise when it cannot be identified safely."""
     windows = browser_windows()
     target = next((h for h in windows if shows_site(window_title(h), names)), None)
     for hwnd in windows if target is None else ():
         try:
             tab = next((el for el, name in _tab_items(hwnd) if shows_site(name, names)), None)
-        except Exception as exc:  # slow or not answering: the next window
-            print(f"  ui automation: {exc!r}")
+        except Exception as exc:
+            print(f"  agent-desktop: {exc!r}")
             continue
         if tab is None:
             continue
         bring_to_front(hwnd)
         _sleep(0.15)
-        pick = _pattern(tab, 10010, "IUIAutomationSelectionItemPattern")  # SelectionItem: the tab to the front
-        if pick is not None:
-            pick.Select()
-        else:
-            ui_act(tab)
+        ui_act(tab)
         _sleep(0.3)
         target = hwnd
         break
@@ -2789,171 +2857,111 @@ def close_site_tab(names):
     return title
 
 
-# What a snapshot reads of each control, all in the one call: name, role, AutomationId, off screen, enabled,
-# password, where it is, keyboard focus, what's typed in it, and whether it's a switch and how it's set
-SNAP_PROPS = (30005, 30003, 30011, 30022, 30010, 30019, 30001, 30008, 30045, 30041, 30086)
-SNAP_LISTS = 15  # list items in a snapshot: a mailbox has hundreds, and the first screenful is what she needs
-SNAP_NAME = 60  # characters of a name
-SLOW_FOR = 60.0  # seconds a window UI Automation timed out on is left to a screenshot
-_slow = {}  # window -> until when it is
-
-
-def _cached(value, kind):
-    """A cached property's value if it's a kind (str, int, bool), else None: UI Automation's "not supported" comes
-    back as an object, and a bool is an int too."""
-    return value if type(value) is kind else None
-
-
-def _focus_box(a, walk=True):
-    """Where the dialog the keyboard focus is in sits, (left, top, right, bottom), or None if it isn't in one short of
-    the window itself (or not walk: not looked for); and the control with the focus as (role, name, what's typed in
-    it), or None. (None, None) if UI Automation can't say."""
-    try:
-        f = a.GetFocusedElement()
-        if not f:
-            return None, None
-        focused = (ROLE_OF.get(f.CurrentControlType, ""), clean_name(f.CurrentName)[:SNAP_NAME],
-                   None if f.CurrentIsPassword else _cached(f.GetCurrentPropertyValue(30045), str))
-        e, walker = f if walk else None, a.ControlViewWalker
-        for _ in range(12):  # as ui_dialog_text: a window, or a dialog in a web page (Gmail's new mail)
-            if not e:
-                break
-            if e.CurrentControlType == 50032 or str(e.CurrentAriaRole or "").lower() in ("dialog", "alertdialog"):
-                r = e.CurrentBoundingRectangle
-                return (r.left, r.top, r.right, r.bottom), focused
-            e = walker.GetParentElement(e)
-        return None, focused
-    except Exception:
-        return None, None
+SNAP_LISTS = 15
+SNAP_NAME = 60
 
 
 def _inside(rect, box):
-    return box is not None and box[0] <= rect[0] and box[1] <= rect[1] and rect[2] <= box[2] and rect[3] <= box[3]
+    return bool(rect and box and box[0] <= rect[0] and box[1] <= rect[1] and rect[2] <= box[2] and rect[3] <= box[3])
 
 
-def _snapshot(hwnd, most, browser=False, root=None, lists=SNAP_LISTS):
-    """The shown controls of window hwnd (or under root), of ROLES, read in one FindAllBuildCache: (items, web, total,
-    focused, cut), web being how many of them are inside the page of a browser (None if there's no page), total how
-    many there were before the first most were kept, focused the control with the focus (_focus_box), and cut True
-    if some were left out: past most, or list items past lists.
-    With more than most, the order they're in the window doesn't decide alone which are kept: Chrome's own buttons
-    and Gmail's inbox came first, and the new mail, last on the page, was never seen. So the address bar comes first
-    (the site is read from it), then what's in the dialog the focus is in (the new mail: Gmail puts the cursor in its
-    To), then the page, then the rest. In a browser, the tabs along its top are left out: every other tab's title,
-    your bank's too, went to the model each round."""
-    a = uia()
-    root = root or a.ElementFromHandle(hwnd)
-    if not root:
-        return [], None, 0, None, False
-    cache = a.CreateCacheRequest()
-    for prop in SNAP_PROPS:
-        cache.AddProperty(prop)
-    kinds = None
-    for t in ROLES.values():
-        one = a.CreatePropertyCondition(30003, t)
-        kinds = one if kinds is None else a.CreateOrCondition(kinds, one)
-    found = root.FindAllBuildCache(4, a.CreateAndCondition(kinds, a.CreatePropertyCondition(30022, False)), cache)
-    items, listed, page, cut = [], 0, None, False
-    for i in range(found.Length if found else 0):
-        el = found.GetElement(i)
-        rect = el.CachedBoundingRectangle
-        if el.CachedIsOffscreen or not el.CachedIsEnabled or rect.right <= rect.left or rect.bottom <= rect.top:
+def _snapshot_items(snap, most, browser=False, lists=SNAP_LISTS):
+    page = next((el.rect for el in snap.elements if el.raw_role == "document" and _shown(el)), None)
+    focused_el = max((el for el in snap.elements if "focused" in el.states and _role(el)),
+                     key=lambda el: el.depth, default=None)
+    dialog = _scope(focused_el, include_window=False) if focused_el else None
+    listed, cut, items = 0, bool(snap.cut), []
+    for el in _controls(snap):
+        role, name = _role(el), clean_name(el.name)[:SNAP_NAME]
+        if browser and page and role == "tab" and el.rect[3] <= page[1]:
             continue
-        role = ROLE_OF.get(el.CachedControlType, "")
-        name = clean_name(el.CachedName)[:SNAP_NAME]
-        value = None if el.CachedIsPassword else _cached(el.GetCachedPropertyValue(30045), str)
-        state = _cached(el.GetCachedPropertyValue(30086), int) if _cached(el.GetCachedPropertyValue(30041), bool) \
-            else None
-        if role == "document" and page is None:
-            page = (rect.left, rect.top, rect.right, rect.bottom)
         if role == "listitem":
             listed += 1
             if listed > lists:
                 cut = True
                 continue
+        value = None if el.password else _text(el.value) if el.value else None
         if not name and not value and role not in ("edit", "document", "combobox"):
-            continue  # a button with no name: nothing she could tell anyone about it
-        items.append({"id": len(items) + 1, "role": role, "name": name, "value": _text(value) if value else None,
-                      "state": {0: "off", 1: "on"}.get(state), "password": bool(el.CachedIsPassword),
-                      "focus": bool(el.CachedHasKeyboardFocus), "aid": str(el.CachedAutomationId or ""),
-                      "rect": (rect.left, rect.top, rect.right, rect.bottom), "el": el})
-    if browser and page is not None:  # the tab strip, above the page
-        items = [it for it in items if not (it["role"] == "tab" and it["rect"][3] <= page[1])]
-    web = None if page is None else sum(1 for it in items if it["role"] != "document" and _inside(it["rect"], page))
+            continue
+        state = None
+        if el.raw_role in ("checkbox", "switch") or "Toggle" in el.actions:
+            state = "on" if "checked" in el.states else "off"
+        items.append({"id": 0, "role": role, "name": name, "value": value, "state": state,
+                      "password": el.password, "focus": "focused" in el.states, "aid": el.aid,
+                      "rect": el.rect, "class_name": el.class_name, "kind": el.kind,
+                      "item_type": el.item_type, "el": el})
     total = len(items)
-    box, focused = _focus_box(a, walk=total > most)
     if total > most:
-        def rank(it):
-            if it["role"] == "edit" and it["name"] == OMNIBOX:
+        def rank(item):
+            if item["role"] == "edit" and item["name"] == OMNIBOX:
                 return 0
-            return 1 if _inside(it["rect"], box) else 2 if _inside(it["rect"], page) else 3
-        items, cut = sorted(items, key=rank)[:most], True  # sorted keeps the window's order within each
-    for n, it in enumerate(items):
-        it["id"] = n + 1
+            return 1 if dialog and _inside(item["rect"], dialog.rect) else 2 if _inside(item["rect"], page) else 3
+        items, cut = sorted(items, key=rank)[:most], True
+    for number, item in enumerate(items, 1):
+        item["id"] = number
+    focused = None if focused_el is None else (_role(focused_el), clean_name(focused_el.name)[:SNAP_NAME],
+                                                None if focused_el.password else _text(focused_el.value))
+    web = None if page is None else sum(1 for item in items if item["role"] != "document" and
+                                        _inside(item["rect"], page))
     return items, web, total, focused, cut
 
 
 def ui_snapshot(hwnd=None, most=60):
-    """What's in the window in front (or hwnd) for her to read and press, in one go: {"hwnd", "title", "exe", "site",
-    "focus" (the id with the keyboard focus, or None), "total" (how many controls there were, most of them kept),
-    "focused" (the control with the focus as (role, name, value), kept or not), "cut" (some were left out, so a
-    name's only once in items maybe isn't in the window), "items": [{"id", "role", "name", "value", "state",
-    "password", "focus", "aid", "rect", "el"}]}, up to most controls in the order they're on the page (with more,
-    those that matter first: _snapshot), SNAP_LISTS list items of them, names cut to SNAP_NAME. A
-    password's value is never read. None if UI Automation timed out on the window: it's left to a screenshot for
-    SLOW_FOR seconds after, rather than held up each time.
-    Chrome fills in a page's controls lazily, when something first asks: with fewer than 5 in the page, it reads
-    once more after half a second. Only that read is timed for being slow: timed with the half second and the read
-    before it, a page still loading shut UI Automation off for the whole of Chrome, all its tabs, for a minute."""
+    """The foreground or named window's controls from one bounded agent-desktop snapshot."""
     hwnd = hwnd or user32.GetForegroundWindow()
     if not hwnd or _clock() < _slow.get(hwnd, 0.0):
         return None
     exe, began = os.path.basename(window_exe(hwnd)).lower(), _clock()
     browser = exe in BROWSER_EXES
     try:
-        items, web, total, focused, cut = _snapshot(hwnd, most, browser)
+        snap = _desktop_snapshot(hwnd)
+        items, web, total, focused, cut = _snapshot_items(snap, most, browser)
         if browser and web is not None and web < 5:
             _sleep(0.5)
-            began = _clock()  # the read the next look will do: not the half second, nor a page still filling in
-            items, web, total, focused, cut = _snapshot(hwnd, most, browser)
-    except Exception as exc:  # UI Automation's time limit, or the window went away: a screenshot will do
-        print(f"  ui snapshot: {exc!r}")
+            began = _clock()
+            snap = _desktop_snapshot(hwnd)
+            items, web, total, focused, cut = _snapshot_items(snap, most, browser)
+    except Exception as exc:
+        print(f"  agent-desktop snapshot: {exc!r}")
         _slow[hwnd] = _clock() + SLOW_FOR
         return None
-    if _clock() - began > 2 * UIA_LIMIT / 1000:  # it got there, but slowly: next time straight to a screenshot
+    if _clock() - began > 2 * DESKTOP_LIMIT / 1000:
         _slow[hwnd] = _clock() + SLOW_FOR
-    box = next((it for it in items if it["role"] == "edit" and it["name"] == OMNIBOX), None)
+    box = next((item for item in items if item["role"] == "edit" and item["name"] == OMNIBOX), None)
     return {"hwnd": hwnd, "title": window_title(hwnd), "exe": exe,
             "site": site_of(box["value"]) if box is not None and browser else None,
-            "focus": next((it["id"] for it in items if it["focus"]), None), "total": total, "focused": focused,
-            "cut": cut, "items": items}
+            "focus": next((item["id"] for item in items if item["focus"]), None), "total": total,
+            "focused": focused, "cut": cut, "items": items}
+
+
+def _same_scope(old, candidate):
+    if old.aid:
+        return old.aid == candidate.aid
+    if clean_name(old.name):
+        return clean_name(old.name) == clean_name(candidate.name)
+    return old.rect == candidate.rect
 
 
 def ui_fields(el=None):
-    """What a send would send, read in one go as [(role, name, value)]: every shown control in the dialog el is in
-    (Gmail's new mail is one, in its page), else in the window in front, however many: a snapshot's caps could leave a
-    recipient out. A password's value is never read. None if UI Automation couldn't read it, never [] for that: who a
-    mail goes to that couldn't be read isn't a mail to nobody."""
+    """Every readable field in the control's dialog, else in its foreground window; None on an uncertain read."""
     try:
-        a = uia()
-        hwnd = user32.GetForegroundWindow()
-        box, walker, scope = el, a.ControlViewWalker, None
-        for _ in range(12):  # as ui_dialog_text: a window, or a dialog in a web page
-            if not box:
-                break
-            if box.CurrentControlType == 50032 or str(box.CurrentAriaRole or "").lower() in ("dialog", "alertdialog"):
-                scope = box
-                break
-            box = walker.GetParentElement(box)
-        scope = scope or (a.ElementFromHandle(hwnd) if hwnd else None)
-        if not scope:
+        hwnd = _hwnd(el) if el is not None else user32.GetForegroundWindow()
+        if not hwnd:
             return None
-        browser = bool(hwnd) and os.path.basename(window_exe(hwnd)).lower() in BROWSER_EXES
-        items = _snapshot(hwnd, 10 ** 5, browser, root=scope, lists=10 ** 5)[0]
+        snap = _desktop_snapshot(hwnd)
+        old_dialog = _scope(el, include_window=False) if el is not None else None
+        scope = snap.root
+        if old_dialog is not None:
+            matches = [at for at in snap.elements if _is_dialog(at) and _same_scope(old_dialog, at)]
+            if len(matches) != 1:
+                return None
+            scope = matches[0]
+        elements = [scope] + scope.descendants()
+        return [(_role(item), clean_name(item.name), None if item.password else _text(item.value))
+                for item in elements if _role(item) and _shown(item)]
     except Exception as exc:
-        print(f"  ui automation: {exc!r}")
+        print(f"  agent-desktop: {exc!r}")
         return None
-    return [(it["role"], it["name"], it["value"]) for it in items]
 
 
 # --------------------------------------------------------------------------- Native Window Management & Shell

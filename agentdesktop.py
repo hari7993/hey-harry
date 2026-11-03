@@ -8,25 +8,45 @@ import os
 import platform
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 
 PROTOCOL = "2"
-DEFAULT_OBSERVE_MS = 1800
+DEFAULT_OBSERVE_MS = 3000  # Kiro's window, 530 controls, took 1.4-1.5 s to read whole on 3 November
 DEFAULT_ACTION_MS = 5000
+
+# What a failure means, in words she can say out loud: agent-desktop's own message is kept for the log (detail)
+PLAIN = {"STALE_REF": "that control changed before I could use it",
+         "AMBIGUOUS_TARGET": "there's more than one control like that, so I can't tell which one",
+         "ELEMENT_NOT_FOUND": "that control isn't there any more",
+         "WINDOW_NOT_FOUND": "that window isn't open any more",
+         "APP_NOT_FOUND": "that app isn't open",
+         "APP_UNRESPONSIVE": "the app isn't answering",
+         "TIMEOUT": "the app took too long to answer",
+         "PERM_DENIED": "Windows wouldn't let me use that window",
+         "POLICY_DENIED": "Windows wouldn't let me use that window",
+         "ACTION_NOT_SUPPORTED": "that control can't do that",
+         "ACTION_FAILED": "that didn't work"}
 
 
 class DesktopError(RuntimeError):
-    """An agent-desktop failure, with whether another delivery would be safe."""
+    """An agent-desktop failure, in plain words, with whether another delivery would be safe."""
 
     def __init__(self, message, code="AGENT_DESKTOP_ERROR", error=None):
         super().__init__(str(message or "agent-desktop failed"))
         self.code = str(code or "AGENT_DESKTOP_ERROR")
         self.error = error if isinstance(error, dict) else {}
+        self.detail = str(self.error.get("message") or message or "")
+        details = self.error.get("details")
+        self.kind = str(details.get("kind") or "") if isinstance(details, dict) else ""  # "identity_not_unique"
         disposition = self.error.get("disposition") or {}
         self.delivery = disposition.get("delivery")
         self.retry = disposition.get("retry")
         self.safe = self.delivery == "not_delivered" and self.retry == "safe"
+
+    def __repr__(self):
+        return f"DesktopError({self.code}: {self.detail})"
 
 
 class Element:
@@ -39,6 +59,7 @@ class Element:
         self.depth = depth
         self.ref = str(node.get("ref_id") or "")
         self.raw_role = str(node.get("role") or "")
+        self.subrole = str(node.get("subrole") or "")  # a web page's ARIA role: "dialog", "alertdialog", ...
         self.name = str(node.get("name") or "")
         self.value = node.get("value") if isinstance(node.get("value"), str) else None
         self.description = str(node.get("description") or "")
@@ -49,10 +70,12 @@ class Element:
         self.actions = set(node.get("available_actions") or ())
         self.password = "secure" in self.states
         self.rect = rectangle(node.get("bounds"))
-        # agent-desktop does not expose UIA ItemType or ClassName. These stay empty so callers use their existing
-        # conservative path instead of treating an unknown file or terminal as safe.
-        self.item_type = ""
-        self.class_name = ""
+        # Current agent-desktop builds do not expose UIA ItemType or ClassName. They stay empty in production so
+        # callers take their conservative path; the named fields also make synthetic snapshot tests explicit.
+        self.item_type = str(node.get("item_type") or "")
+        self.class_name = str(node.get("class_name") or "")
+        self.kind = " ".join(str(node.get(key) or "") for key in
+                             ("role_description", "subrole", "description", "placeholder"))
         self.index = len(snapshot.elements)
         snapshot.elements.append(self)
 
@@ -84,6 +107,9 @@ class Snapshot:
         self.title = str(window.get("title") or "")
         self.app = str(data.get("app") or "")
         self.complete = bool(data.get("complete"))
+        # Read whole but with refs agent-desktop can't tell apart: still all there to read, while each ref acted on
+        # is refused before anything is delivered
+        self.identity_unproven = bool(data.get("identity_unproven"))
         self.cut = not self.complete or bool(data.get("truncated"))
         self.elements = []
         self.root = self._add(data.get("tree") or {}, None, 0)
@@ -156,23 +182,40 @@ def available():
         return False
 
 
-def _execute(args, timeout):
-    """Run the native command once. Tests replace this before any real desktop can be read."""
+def _execute(args, timeout, settled=None):
+    """Run the native command once. Tests replace this before any real desktop can be read. settled: asked while it
+    runs, True to stop waiting for it there, as at its time limit."""
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    command = [binary(), *map(str, args)]
     try:
-        return subprocess.run([binary(), *map(str, args)], stdin=subprocess.DEVNULL, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", creationflags=flags,
-                              timeout=max(0.1, float(timeout)), check=False)
+        if settled is None:
+            return subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", creationflags=flags,
+                                  timeout=max(0.1, float(timeout)), check=False)
+        running = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                                   creationflags=flags)
     except subprocess.TimeoutExpired as exc:
         # A timed-out mutating command may already have landed. No caller retries it from this exception.
-        raise DesktopError("agent-desktop took too long", "TIMEOUT") from exc
+        raise DesktopError(PLAIN["TIMEOUT"], "TIMEOUT") from exc
     except OSError as exc:
         raise DesktopError(f"agent-desktop couldn't start: {exc}", "START_FAILED") from exc
+    end = time.monotonic() + max(0.1, float(timeout))
+    while True:
+        try:
+            out, err = running.communicate(timeout=0.15)
+            return subprocess.CompletedProcess(command, running.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            if time.monotonic() < end and not settled():
+                continue
+        running.kill()
+        running.communicate()
+        raise DesktopError(PLAIN["TIMEOUT"], "TIMEOUT")
 
 
-def call(*args, timeout=8.0):
-    """Run one command and return its data object, or raise DesktopError."""
-    done = _execute(args, timeout)
+def call(*args, timeout=8.0, settled=None):
+    """Run one command and return its data object, or raise DesktopError. settled: see _execute."""
+    done = _execute(args, timeout) if settled is None else _execute(args, timeout, settled)
     text = str(getattr(done, "stdout", "") or "").strip()
     try:
         envelope = json.loads(text)
@@ -186,8 +229,9 @@ def call(*args, timeout=8.0):
     if version.split(".", 1)[0] != PROTOCOL:
         raise DesktopError(f"agent-desktop protocol {version or 'unknown'} isn't supported", "BAD_VERSION")
     if not envelope.get("ok"):
-        error = envelope.get("error") or {}
-        raise DesktopError(error.get("message") or "agent-desktop failed", error.get("code"), error)
+        error = envelope.get("error") if isinstance(envelope.get("error"), dict) else {}
+        code = error.get("code")
+        raise DesktopError(PLAIN.get(code) or error.get("message") or "agent-desktop failed", code, error)
     data = envelope.get("data")
     if not isinstance(data, (dict, list)):
         raise DesktopError("agent-desktop returned no data", "BAD_OUTPUT")
@@ -207,12 +251,12 @@ def get(element, prop):
     """A live property of an element ref."""
     if not isinstance(element, Element) or not element.ref:
         raise DesktopError("that control has no usable agent-desktop ref", "NO_REF")
-    data = call("get", element.ref, "--property", prop, timeout=4.0)
+    data = call("get", element.ref, "--property", prop, timeout=6.0)  # finding it again reads its whole window
     return data.get("value")
 
 
-def act(element, command, value=None, headed=False, timeout_ms=DEFAULT_ACTION_MS):
-    """Run one ref action. A mutating failure is never retried here."""
+def act(element, command, value=None, headed=False, timeout_ms=DEFAULT_ACTION_MS, settled=None):
+    """Run one ref action. A mutating failure is never retried here. settled: see _execute."""
     if not isinstance(element, Element) or not element.ref:
         raise DesktopError("that control has no usable agent-desktop ref", "NO_REF")
     args = [command, element.ref]
@@ -221,7 +265,7 @@ def act(element, command, value=None, headed=False, timeout_ms=DEFAULT_ACTION_MS
     if headed:
         args.append("--headed")
     args += ["--timeout-ms", str(timeout_ms)]
-    data = call(*args, timeout=timeout_ms / 1000 + 3.0)
+    data = call(*args, timeout=timeout_ms / 1000 + 3.0, settled=settled)
     post = data.get("post_state") or {}
     if isinstance(post.get("value"), str):
         element.value = post["value"]
@@ -231,10 +275,14 @@ def act(element, command, value=None, headed=False, timeout_ms=DEFAULT_ACTION_MS
     return data
 
 
+def point_click(x, y, timeout_ms=DEFAULT_ACTION_MS):
+    """Click one verified absolute point with the real pointer."""
+    return call("mouse-click", "--xy", f"{round(x)},{round(y)}", "--headed", "--timeout-ms", str(timeout_ms),
+                timeout=timeout_ms / 1000 + 3.0)
+
+
 def mouse_click(rect, timeout_ms=DEFAULT_ACTION_MS):
     """Click the middle of rect with the real pointer; only for a foreground action."""
     if not rect or rect[2] <= rect[0] or rect[3] <= rect[1]:
         raise DesktopError("that control has no place on the screen", "NO_BOUNDS")
-    x, y = round((rect[0] + rect[2]) / 2), round((rect[1] + rect[3]) / 2)
-    return call("mouse-click", "--xy", f"{x},{y}", "--headed", "--timeout-ms", str(timeout_ms),
-                timeout=timeout_ms / 1000 + 3.0)
+    return point_click((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2, timeout_ms)

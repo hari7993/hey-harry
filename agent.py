@@ -9,11 +9,11 @@ undone (send, delete, pay, post, ...) waits for your yes to her own question, re
 action. Passwords, codes and card numbers are left to you, and chat apps and chat sites aren't driven here: WhatsApp
 and Telegram have their own messaging, which reads a message back before it's sent.
 
-A task she hasn't done before she does live (run, through siri.see): she reads the window in front by UI Automation,
-asks the model what to do next, does it, and looks again, a screenshot going to the model that sees only when the
-controls aren't enough. Once it's done and checked on the screen, code keeps what she did as a procedure (learn), so
-next time it's done without the model; and when a step of one stops working, she works that bit out live again from
-where it stopped (repair). Steps of a procedure and of a live run pass the same gate."""
+A task she hasn't done before she does live (run, through siri.see): she reads the window in front through
+agent-desktop, asks the model what to do next, does it, and looks again, a screenshot going to the model that sees
+only when the controls aren't enough. Once it's done and checked on the screen, code keeps what she did as a
+procedure (learn), so next time it's done without the model; and when a step of one stops working, she works that
+bit out live again from where it stopped (repair). Steps of a procedure and of a live run pass the same gate."""
 import contextlib
 import contextvars
 import hashlib
@@ -1577,10 +1577,7 @@ def opens_program(el):
         return True
     if el.get("role") != "listitem":
         return False
-    try:
-        kind = str(el["el"].CurrentItemType or "")
-    except Exception:
-        kind = ""
+    kind = str(el.get("item_type") or "")
     return not kind or bool(PROGRAM_TYPES.search(kind))
 
 

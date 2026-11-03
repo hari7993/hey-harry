@@ -1,6 +1,6 @@
 """Her eyes on your screen all the time (27 October 2026, the owner's ask: "it needs to see my screen always ...
 monitor what's going on"). Every few seconds, on a thread of its own, she reads the window in front on this PC: its
-app, its title, its site and the words on it, by Windows UI Automation, the way she reads a window for a task
+app, its title, its site and the words on it, through agent-desktop, the way she reads a window for a task
 (winplatform.ui_snapshot), and keeps the last ten minutes of where you've been. Reading costs nothing online: what's
 on the screen goes to the model only with something you ask her (lines, in the turn's context), and when she glances
 at it to see whether something there needs you (glance), which is how she speaks up on her own: an error or a
@@ -24,7 +24,7 @@ import winplatform as win
 from hermes_memory.threat_patterns import first_threat_message
 
 LOOK_EVERY = 3.0  # seconds between looks at which window's in front: a title read, about a millisecond
-READ_AGAIN = 15.0  # seconds before the words of the same window are read again (a UI Automation read, 50-300 ms)
+READ_AGAIN = 15.0  # seconds before the words of the same window are read again (an agent-desktop read, 0.2-1.5 s)
 KEEP = 600.0  # seconds of where you've been she keeps, for "what was I doing?" and for her glances
 TEXT_CHARS = 900  # of a window's words, at most, for the model
 MOST_CONTROLS = 60  # read from a window, as a task reads one

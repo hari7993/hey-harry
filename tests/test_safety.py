@@ -391,12 +391,12 @@ class ChatApps(unittest.TestCase):
             self.assertIn("command windows", said[0], exe)
         # a terminal by its kind, whatever it's called: xterm.js's box, Windows Terminal's
         for kind in ("xterm-helper-textarea", "TermControl"):
-            focus = {"name": "", "role": "edit", "el": SimpleNamespace(CurrentClassName=kind)}
+            focus = {"name": "", "role": "edit", "class_name": kind}
             self.assertEqual(self.run_quick(r"C:\x\sometool.exe", "type dir and press enter", focus=focus)[1], [], kind)
         for exe in (r"C:\x\pycharm64.exe", r"C:\x\zed.exe"):  # an editor it can't tell the focus of
             self.assertEqual(self.run_quick(exe, "press enter", focus=None)[1], [], exe)
         # PyCharm paints its terminal itself and Zed shows only its window: the focus read is the window, by its file
-        window = {"name": "hey-harry – app.py", "role": "", "el": SimpleNamespace(CurrentClassName="SunAwtFrame")}
+        window = {"name": "hey-harry – app.py", "role": "", "class_name": "SunAwtFrame"}
         for exe in (r"C:\x\pycharm64.exe", r"C:\x\zed.exe"):
             for words in ("type npm run build and press enter", "press enter"):
                 self.assertEqual(self.run_quick(exe, words, focus=window)[1], [], (exe, words))
@@ -405,10 +405,22 @@ class ChatApps(unittest.TestCase):
         # ordinary typing goes, in an editor's own file or any other app, focus told or not
         for exe, focus in ((r"C:\x\pycharm64.exe", {"name": "Editor for app.py", "role": "edit"}),
                            (r"C:\Windows\notepad.exe", {"name": "Text editor", "role": "edit",
-                                                         "el": SimpleNamespace(CurrentClassName="RichEditD2DPT")}),
+                                                         "class_name": "RichEditD2DPT"}),
                            (r"C:\x\sometool.exe", None)):
             self.assertEqual(self.run_quick(exe, "type hello and press enter", focus=focus),
                              ([], [("paste", "hello"), ("enter",)]), exe)
+
+    def test_an_unnamed_box_counts_as_a_terminal_without_a_class_to_tell(self):
+        """agent-desktop gives no ClassName: xterm.js's box with no name, as agent-desktop reads it, is refused. Its
+        role description ("edit") is no class, so it can't make the box pass for an ordinary one."""
+        from tests import desktopfakes
+        win = untripped_winplatform()
+        unnamed = win.ui_info(desktopfakes.element("", "edit", role_description="edit"))
+        named = win.ui_info(desktopfakes.element("Message", "edit", role_description="edit"))
+        self.assertEqual(unnamed["class_name"], "")
+        self.assertTrue(siri.in_terminal("sometool.exe", unnamed))
+        self.assertFalse(siri.in_terminal("sometool.exe", named))
+        self.assertTrue(siri.in_terminal("sometool.exe", win.ui_info(desktopfakes.element("Terminal input", "edit"))))
 
     def test_start_search_is_never_typed_into(self):
         """A plan pressed Win+S, typed a command into Start's search and pressed Enter, which runs it."""

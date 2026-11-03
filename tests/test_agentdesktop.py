@@ -82,6 +82,48 @@ class Client(unittest.TestCase):
         with self.assertRaisesRegex(desktop.DesktopError, "no usable"):
             desktop.act(el, "click")
 
+    def test_a_failure_is_said_in_plain_words_and_its_own_is_kept_for_the_log(self):
+        """She reads a failure out ("I've not sent anything: ..."): never "Saved ref was not proven unique"."""
+        body = {"version": "2.6", "ok": False, "command": "click", "error": {
+            "code": "AMBIGUOUS_TARGET", "message": "Saved ref was not proven unique when it was captured",
+            "details": {"kind": "identity_not_unique"}, "disposition": {"delivery": "not_delivered", "retry": "safe"}}}
+        with mock.patch.object(desktop, "_execute", return_value=result(body, 1)):
+            with self.assertRaises(desktop.DesktopError) as got:
+                desktop.call("click", "@s:e1")
+        self.assertEqual(str(got.exception), desktop.PLAIN["AMBIGUOUS_TARGET"])
+        self.assertEqual((got.exception.kind, got.exception.safe), ("identity_not_unique", True))
+        self.assertIn("not proven unique", repr(got.exception))
+        odd = {"version": "2.6", "ok": False, "command": "click", "error": {"code": "NEW_CODE", "message": "As is"}}
+        with mock.patch.object(desktop, "_execute", return_value=result(odd, 1)):
+            with self.assertRaisesRegex(desktop.DesktopError, "As is"):
+                desktop.call("click", "@s:e1")
+
+    def test_a_whole_read_with_refs_it_cant_tell_apart_isnt_a_cut_one(self):
+        whole = desktop.Snapshot({"complete": True, "identity_unproven": True, "tree": {"role": "window"}})
+        self.assertEqual((whole.cut, whole.identity_unproven), (False, True))
+        self.assertTrue(desktop.Snapshot({"complete": False, "tree": {"role": "window"}}).cut)
+        self.assertTrue(desktop.Snapshot({"complete": True, "truncated": True, "tree": {"role": "window"}}).cut)
+
+    def test_a_command_still_running_is_stopped_once_settled(self):
+        """A press whose modal question has opened: waited for no longer, and stopped as at its time limit."""
+        class Running:
+            killed, returncode = False, None
+
+            def communicate(self, timeout=None):
+                if self.killed:
+                    return "", ""
+                raise subprocess.TimeoutExpired("agent-desktop", timeout)
+
+            def kill(self):
+                self.killed = True
+        running, asked = Running(), []
+        with mock.patch.object(desktop, "binary", return_value="agent-desktop.exe"), \
+                mock.patch.object(desktop.subprocess, "Popen", return_value=running):
+            with self.assertRaises(desktop.DesktopError) as got:
+                DESKTOP_ORIGINAL(("click", "@s:e1"), 30, lambda: asked.append(1) or len(asked) > 1)
+        self.assertEqual((got.exception.code, got.exception.safe, running.killed, len(asked)),
+                         ("TIMEOUT", False, True, 2))
+
 
 if __name__ == "__main__":
     unittest.main()

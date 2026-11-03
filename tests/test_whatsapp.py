@@ -20,13 +20,12 @@ def real_messaging():
 
 
 class Box:
-    """WhatsApp's message box, as UI Automation shows it."""
+    """WhatsApp's message box as an agent-desktop element test double."""
 
     def __init__(self, name="Type a message to Amma \U0001f496", value="", focus=True):
-        self.CurrentName, self.value, self.CurrentHasKeyboardFocus = name, value, focus
-
-    def SetFocus(self):
-        self.CurrentHasKeyboardFocus = True
+        self.name, self.value, self.focused = name, value, focus
+        self.actions, self.states = {"SetValue", "SetFocus"}, ({"focused"} if focus else set())
+        self.password = False
 
 
 class Messaging(unittest.TestCase):
@@ -45,6 +44,19 @@ class Messaging(unittest.TestCase):
         def type_text(text):
             self.typed.append(text)
             self.box.value += text
+
+        def ui_act(box, text=None, state=None, caret=False, **_):
+            if text is not None:
+                if text:
+                    self.typed.append(text)
+                box.value = box.value + text if caret else text
+                return "pasted" if caret else "set"
+            return "invoked"
+
+        def ui_focus(box):
+            box.focused = True
+            box.states.add("focused")
+            return True
         for target, name, value in (
                 (m, "compose_box", lambda app, hwnd: (self.box, "Amma \U0001f496") if self.box else (None, "")),
                 (m, "_compose_box", lambda app, hwnd: (self.box, "Amma \U0001f496") if self.box else (None, "")),
@@ -54,7 +66,8 @@ class Messaging(unittest.TestCase):
                 (m, "open_chat", lambda app, handle, text: 99),
                 (m, "find_contact", lambda contact, app: ("amma", "919999999999")),
                 (m, "offline_reason", lambda app, hwnd: None),
-                (m.win, "press", press), (m.win, "type_text", type_text),
+                (m.win, "press", press), (m.win, "type_text", type_text), (m.win, "ui_act", ui_act),
+                (m.win, "ui_focus", ui_focus), (m.win, "ui_is_focused", lambda box: box.focused),
                 (m.time, "sleep", lambda s: None), (m.user32, "IsWindow", lambda h: True)):
             p = mock.patch.object(target, name, value)
             p.start()
@@ -72,6 +85,25 @@ class Messaging(unittest.TestCase):
         self.box.value = "old draft"
         self.m.prepare("whatsapp", "amma", "Hi")
         self.assertEqual(self.box.value, "Hi")
+
+    def test_the_message_is_typed_on_the_keyboard_never_set_as_a_value(self):
+        """A value set from outside can show in WhatsApp's box without its editor knowing, and what's sent is what
+        the editor holds: typed, as before agent-desktop, into the box with the keyboard in it."""
+        self.box.states.discard("focused")
+        with mock.patch.object(self.m.win, "ui_act", side_effect=AssertionError("set as a value")):
+            self.m.prepare("whatsapp", "amma", "Hi")
+        self.assertEqual((self.typed, self.box.value, self.box.focused), (["Hi"], "Hi", True))
+
+    def test_what_didnt_go_in_is_wiped_only_while_whatsapp_is_in_front(self):
+        def lost(text):
+            self.typed.append(text)
+            self.box.value = text[:1]  # the editor took one letter of it
+        fronts = iter([True, True, False])  # the box found, the keyboard in it, then another app in front
+        with mock.patch.object(self.m.win, "type_text", lost), \
+                mock.patch.object(self.m, "in_front", lambda app, hwnd: next(fronts, False)):
+            with self.assertRaisesRegex(RuntimeError, "didn't take the message"):
+                self.m.type_into("whatsapp", 99, "Hi")
+        self.assertEqual(self.pressed, [])  # no Ctrl+A in another app's box
 
     def test_no_message_box_means_nothing_is_typed(self):
         self.box = None
@@ -117,8 +149,7 @@ class Messaging(unittest.TestCase):
                 mock.patch.object(self.m, "window_of", lambda app: 99), \
                 mock.patch.object(self.m, "open_chat", lambda app, handle, text: shown.__setitem__(0, chat) or 99), \
                 mock.patch.object(self.m, "find_contact", lambda contact, app: ("Mum", "919999999999")), \
-                mock.patch.object(self.m, "_uia", lambda: SimpleNamespace(ElementFromHandle=lambda h: None)), \
-                mock.patch.object(self.m, "_panel_person", lambda *a: panels.append(chat) or ("", number), create=True):
+                mock.patch.object(self.m, "_panel_person", lambda hwnd: panels.append(chat) or ("", number), create=True):
             try:
                 self.m.prepare("whatsapp", "mum", "I love you")
                 return "", self.typed, panels
@@ -149,18 +180,17 @@ class Messaging(unittest.TestCase):
         self.box.value = "Hi, and more"  # you went on typing in her box
         self.assertFalse(self.m.discard(ready))
         self.assertEqual(self.pressed, [])
-        self.box.value, self.box.CurrentHasKeyboardFocus = "Hi", False  # as she left it: cleared
+        self.box.value, self.box.focused = "Hi", False  # as she left it: cleared
         self.assertTrue(self.m.discard(ready))
         self.assertEqual((self.box.value, self.pressed), ("", [("ctrl", "a"), ("backspace",)]))
 
     def test_a_send_she_couldnt_read_back_is_never_called_sent(self):
-        """8 October: after Enter the message box couldn't be read ("NULL COM pointer access"), and she said "Sent, as
-        far as I can tell" for a "Hi" that hadn't come; asked again and again, it went four times."""
+        """After Enter, an unreadable box is never reported sent or retried as another send."""
         ready = self.m.prepare("whatsapp", "amma", "Hi")
 
         def unreadable(app, hwnd):  # fine until Enter, then never again
             if ("enter",) in self.pressed:
-                raise ValueError("NULL COM pointer access")
+                raise ValueError("the accessibility read failed")
             return self.box, "Amma \U0001f496"
         with mock.patch.object(self.m, "compose_box", unreadable), mock.patch.object(self.m, "_compose_box", unreadable):
             ok, said = self.m.send(ready)
@@ -168,8 +198,10 @@ class Messaging(unittest.TestCase):
         self.assertNotIn("Sent", said)
         self.assertIn("Look at the chat before asking me again", said)
 
-    def test_a_null_com_pointer_now_and_then_is_read_again(self):
-        flaky, self.box.value = [ValueError("NULL COM pointer access")], "Hi"
+    def test_a_safe_transient_read_failure_is_tried_again(self):
+        error = self.m.win._desktop.DesktopError("changed", "WINDOW_NOT_FOUND", {"disposition": {
+            "delivery": "not_delivered", "retry": "safe"}})
+        flaky, self.box.value = [error], "Hi"
 
         def read(app, hwnd):
             if flaky:
@@ -193,8 +225,8 @@ class Messaging(unittest.TestCase):
                 with mock.patch.object(self.m, "time", SimpleNamespace(time=lambda: clock[0], sleep=lambda s: clock.
                                                                        __setitem__(0, clock[0] + s))), \
                         mock.patch.object(self.m, "window_of", lambda app: None), \
-                        mock.patch.object(self.m, "_uia", lambda: SimpleNamespace(ElementFromHandle=lambda h: None)), \
-                        mock.patch.object(self.m, "_search_box", lambda uia, root: "search" if page_at is not None
+                        mock.patch.object(self.m, "_snapshot", lambda hwnd: object()), \
+                        mock.patch.object(self.m, "_search_box", lambda snap: "search" if page_at is not None
                                           and clock[0] >= page_at else None), \
                         mock.patch.object(self.m, "compose_box", chat), mock.patch.object(self.m, "_compose_box", chat):
                     if box_at is not None:
@@ -207,14 +239,14 @@ class Messaging(unittest.TestCase):
                         self.assertEqual((self.typed, self.pressed), ([], []))
 
     def test_the_new_name_of_the_box_is_read(self):
+        from tests import desktopfakes as df
         m = real_messaging()
-        box = SimpleNamespace(CurrentName="Type a message to Amma \U0001f496")
-        uia = SimpleNamespace(ElementFromHandle=lambda h: SimpleNamespace(FindFirst=lambda scope, cond: box),
-                              CreateAndCondition=lambda a, b: None, CreatePropertyCondition=lambda p, v: None,
-                              CreatePropertyConditionEx=lambda p, v, f: None)
-        with mock.patch.object(m, "_uia", lambda: uia):
-            self.assertEqual(m.compose_box("whatsapp", 5), (box, "Amma \U0001f496"))
-            box.CurrentName = "Type a message"  # the app before 2025
+        snap = df.snapshot([df.node("Type a message to Amma \U0001f496", "edit")])
+        with mock.patch.object(m, "_snapshot", return_value=snap):
+            box, to = m.compose_box("whatsapp", 5)
+            self.assertEqual((box.name, to), ("Type a message to Amma \U0001f496", "Amma \U0001f496"))
+        older = df.snapshot([df.node("Type a message", "edit")])
+        with mock.patch.object(m, "_snapshot", return_value=older):
             self.assertEqual(m.compose_box("whatsapp", 5)[1], "")
 
     def test_its_web_view_in_front_is_it_but_another_apps_isnt(self):
@@ -252,7 +284,7 @@ class Files(unittest.TestCase):
 
         class Button:
             def __init__(self, name):
-                self.CurrentName = name
+                self.name = name
 
         def button(hwnd, name, part=False):
             if name == "Remove attachment" and self.waiting:
@@ -262,10 +294,10 @@ class Files(unittest.TestCase):
             return None
 
         def click(b):
-            if b.CurrentName.startswith("Send"):
+            if b.name.startswith("Send"):
                 self.sent += list(self.waiting)
                 self.waiting.clear()
-            elif b.CurrentName == "Remove attachment":
+            elif b.name == "Remove attachment":
                 self.waiting.pop()
 
         def set_files(paths):
@@ -277,9 +309,11 @@ class Files(unittest.TestCase):
                 (m.m, "in_front", lambda app, hwnd: True), (m.m, "open_chat", lambda app, handle, text: 99),
                 (m.m, "find_contact", lambda contact, app: ("amma", "919999999999")),
                 (m.m, "offline_reason", lambda app, hwnd: None), (m.m, "typed_text", lambda app, hwnd: ""),
+                (m.m, "_focus_box", lambda app, hwnd: box),
                 (m.m, "_button", button), (m.m, "_click", click),
                 (m.m, "waiting", lambda hwnd: (sorted(os.path.basename(p) for p in self.waiting), len(self.waiting))),
                 (m.m.win, "press", press), (m.m.win, "type_text", lambda text: None),
+                (m.m.win, "ui_is_focused", lambda box: True),
                 (m.m.win, "clipboard_snapshot", lambda: [(13, self.clipboard[0])]),
                 (m.m.win, "clipboard_restore", lambda snap: self.clipboard.__setitem__(0, snap[0][1] if snap else None)),
                 (m.m.win, "clipboard_sequence", lambda: self.copies),
@@ -302,6 +336,25 @@ class Files(unittest.TestCase):
         ok, said = self.m.send(ready)
         self.assertEqual(self.sent, self.paths)
         self.assertEqual(said, "Sent 2 files to amma.")
+
+    def test_a_caption_is_typed_into_the_previews_own_box_and_read_back(self):
+        caption, typed = Box(name="Type a message", focus=False), []
+
+        def type_text(text):
+            typed.append(text)
+            caption.value += text
+
+        def focus(box):
+            box.states.add("focused")
+            return True
+        with mock.patch.object(self.m, "_caption_box", lambda hwnd: caption), \
+                mock.patch.object(self.m, "box_value", lambda b: " ".join(b.value.split())), \
+                mock.patch.object(self.m.win, "ui_is_focused", lambda b: "focused" in b.states), \
+                mock.patch.object(self.m.win, "ui_focus", focus), \
+                mock.patch.object(self.m.win, "type_text", type_text), \
+                mock.patch.object(self.m.win, "ui_act", side_effect=AssertionError("set as a value")):
+            ready = self.m.prepare_files("whatsapp", "amma", self.paths[:1], caption="Our trip")
+        self.assertEqual((typed, ready["text"], self.waiting), (["Our trip"], "Our trip", self.paths[:1]))
 
     def test_a_no_discards_them(self):
         ready = self.m.prepare_files("whatsapp", "amma", self.paths[:1])
@@ -615,13 +668,15 @@ class LookingThemUp(unittest.TestCase):
     def test_my_mum_is_looked_for_as_mum(self):
         """"Message my mum on WhatsApp: running late": "my mum" typed into WhatsApp's search found nobody, and she
         asked for the number, where "message mum" found Mum."""
+        from tests import desktopfakes as df
         m, searched = real_messaging(), []
+        box = df.element("Search", "edit")
         with mock.patch.object(m, "bring_up", lambda app, link: 5), \
-                mock.patch.object(m, "_uia", lambda: SimpleNamespace(ElementFromHandle=lambda h: None)), \
-                mock.patch.object(m, "_search_box", lambda uia, root: "box"), \
-                mock.patch.object(m, "_look_for", lambda uia, root, hwnd, box, name, most, stop=None:
+                mock.patch.object(m, "_snapshot", lambda hwnd: box.snapshot), \
+                mock.patch.object(m, "_search_box", lambda snap: box), \
+                mock.patch.object(m, "_look_for", lambda hwnd, field, name, most, stop=None:
                                   searched.append(name) or []), \
-                mock.patch.object(m, "_set_value", lambda box, text: None):
+                mock.patch.object(m, "_set_value", lambda field, text: None):
             m.whatsapp_people("my mum")
             m.whatsapp_people("Bunty Kumar")
         self.assertEqual(searched, ["mum", "Bunty Kumar", "Bunty"])
@@ -635,16 +690,20 @@ class WhoComesFirst(unittest.TestCase):
         people = {label: {"name": m._label_name(label), "number": str(i), "shown": str(i)}
                   for i, label in enumerate(labels)}
 
-        def read(uia, root, hwnd, i, label):
+        def read(hwnd, i, label):
             opened.append((i, label))
             return people[label]
 
+        from tests import desktopfakes as df
+        box = df.element("Search", "edit")
         with mock.patch.object(m, "time", SimpleNamespace(sleep=lambda s: None, time=time.time)), \
-                mock.patch.object(m, "box_value", lambda box: ""), \
-                mock.patch.object(m, "_set_value", lambda box, text: None), \
-                mock.patch.object(m, "_results", lambda uia, root, stale=None: list(labels)), \
+                mock.patch.object(m, "box_value", lambda field: ""), \
+                mock.patch.object(m, "in_front", lambda app, hwnd: True), \
+                mock.patch.object(m.win, "ui_focus", lambda field: True), \
+                mock.patch.object(m, "_set_value", lambda field, text: None), \
+                mock.patch.object(m, "_results", lambda hwnd, stale=None: list(labels)), \
                 mock.patch.object(m, "_read_person", read):
-            found = m._look_for(None, None, 5, SimpleNamespace(SetFocus=lambda: None), name, m.LOOK_AT)
+            found = m._look_for(5, box, name, m.LOOK_AT)
         return [p["name"] for p in found], opened
 
     def test_the_one_named_it_comes_first_and_the_rest_arent_opened(self):
@@ -679,27 +738,73 @@ class WhoComesFirst(unittest.TestCase):
             self.assertEqual(m._name_rank(name, want), rank, (name, want))
 
 
+class SearchResults(unittest.TestCase):
+    """WhatsApp's search results as agent-desktop reads them: a grid of rows under their headings, each person three
+    times over, and only one of the three can be picked and take the keyboard."""
+
+    def rows(self, top):
+        from tests import desktopfakes as df
+        m = real_messaging()
+        with mock.patch.object(m, "_snapshot", lambda hwnd: df.snapshot(top, app="WhatsApp.exe")):
+            return m._rows(5)
+
+    def test_only_people_that_can_be_picked_under_their_headings(self):
+        from tests import desktopfakes as df
+
+        def person(name, role="row", pick=True):
+            return df.node(name, raw_role=role, actions=["Select", "SetFocus"] if pick else ["Click"])
+
+        def heading(name):
+            return df.node(name, raw_role="row", actions=[], ref=False)
+        found = self.rows([df.node("Search results.", raw_role="grid", actions=[], ref=False, children=[
+            heading("Chats"), person("Buntyyy 9:47 am hi"), person("Buntyyy 9:47 am hi", "cell", pick=False),
+            heading("Groups in common"), person("Family 8:00 am ok"),
+            heading("Contacts"), person("Uma Devi"), person("Hidden", pick=True) | {"states": ["offscreen"]}])])
+        self.assertEqual([label for label, _ in found], ["Buntyyy 9:47 am hi", "Uma Devi"])
+
+    def test_nobody_found_or_nothing_shown_yet(self):
+        from tests import desktopfakes as df
+        nobody = real_messaging().NOBODY
+        self.assertEqual(self.rows([df.node(nobody, raw_role="statictext", actions=[], ref=False)]), [])
+        self.assertIsNone(self.rows([df.node("Chats", raw_role="statictext", actions=[], ref=False)]))
+
+    def test_a_result_is_opened_by_a_click_on_its_name_never_its_own_action(self):
+        """A result's own action opened one chat and then nothing more, every time: clicked, as you would, where
+        WhatsApp's own window is."""
+        from tests import desktopfakes as df
+        m, clicked = real_messaging(), []
+        row = df.element("Uma Devi", raw_role="row", actions=["Click", "Select", "SetFocus"], rect=(0, 100, 300, 160))
+        with mock.patch.object(m.win, "ui_rect", lambda el: None), \
+                mock.patch.object(m, "in_front", lambda app, hwnd: True), \
+                mock.patch.object(m.win, "root_at", lambda x, y: 5), \
+                mock.patch.object(m.win, "ui_click_point", lambda x, y: clicked.append((x, y))), \
+                mock.patch.object(m.win, "ui_act", side_effect=AssertionError("its own action")), \
+                mock.patch.object(m, "compose_box", lambda app, hwnd: (None, "Uma Devi")), \
+                mock.patch.object(m.time, "sleep", lambda s: None):
+            self.assertTrue(m._open_row(5, row, "Uma Devi 8:02 am see you"))
+            self.assertEqual(clicked, [(180.0, 130.0)])  # on the name, clear of the photo
+            with mock.patch.object(m.win, "root_at", lambda x, y: 6):  # another window over it there
+                self.assertFalse(m._open_row(5, row, "Uma Devi 8:02 am see you"))
+        self.assertEqual(len(clicked), 1)
+
+
 class ReadingThePanel(unittest.TestCase):
     """Review: the number is read only off the panel of the chat she clicked, and named as that panel names it."""
 
     def read(self, texts, label="Buntyyy \U0001f43c 9:47 am hi there", title="Contact info"):
+        from tests import desktopfakes as df
         m = real_messaging()
-
-        class Texts:
-            Length = len(texts)
-
-            def GetElement(self, j):
-                return SimpleNamespace(CurrentName=texts[j])
-
-        panel = SimpleNamespace(FindAll=lambda *a: Texts(), FindFirst=lambda *a: None)
-        uia = SimpleNamespace(CreatePropertyCondition=lambda *a: None, CreateAndCondition=lambda *a: None)
-        for name, value in (("_rows", lambda uia, root: [(label, object())]), ("_open_row", lambda *a: True),
-                            ("_find_button", lambda *a: object()), ("_click", lambda b: None),
-                            ("_panel", lambda *a: (panel, title))):
-            p = mock.patch.object(m, name, value)
-            p.start()
-            self.addCleanup(p.stop)
-        return m._read_person(uia, None, 1, 0, label)
+        words = [df.node(text, raw_role="statictext", actions=[], ref=False) for text in texts]
+        snap = df.snapshot([df.node("panel", raw_role="group", actions=[], children=words, ref=False)])
+        panel = snap.elements[1]
+        with mock.patch.object(m, "_find_button", lambda *a: object()), \
+                mock.patch.object(m, "_click", lambda button: None), \
+                mock.patch.object(m, "_panel", lambda hwnd: (panel, title)):
+            person = m._panel_person(1)
+        with mock.patch.object(m, "_rows", lambda hwnd: [(label, object())]), \
+                mock.patch.object(m, "_open_row", lambda *a: True), \
+                mock.patch.object(m, "_panel_person", lambda hwnd: person):
+            return m._read_person(1, 0, label)
 
     def test_a_saved_contacts_panel(self):
         self.assertEqual(self.read(["Contact info", "Buntyyy", "+91 55555 01234", "About", "Call me +91 11111 11111"]),
