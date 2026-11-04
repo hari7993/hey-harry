@@ -12,10 +12,16 @@ with my hands when I turn it on").
 
 Seen by hands.py (MediaPipe's palm finder and its 21 points, on ONNX Runtime), followed from frame to frame from the
 points it found the frame before, the way MediaPipe follows a hand: the palm finder only looks again when it's lost
-it, so about 4 ms of CPU a frame. The camera's shared with her eyes (camera.Camera, held while this runs) and asked
-for 30 frames a second while it does."""
+it, so about 4 ms of CPU a frame, and then about ten times a second (SEARCH_EVERY), not at all 30 frames. The camera's
+shared with her eyes (camera.Camera, held while this runs) and asked for 30 frames a second while it does.
+
+Real time on battery too (4 November, "hand control no real time"): Windows took her for background work and ran
+her on its slow cores, where a look for a hand took 55 ms and the pointer kept up with 16 frames a second, so while
+it's on her process isn't throttled (winplatform.full_speed). Its log line as it stops says how it kept up."""
+import collections
 import math
 import re
+import statistics
 import threading
 import time
 
@@ -29,6 +35,9 @@ STILL_MS = 0.25  # seconds after a press the pointer holds where it was, so pinc
 SLOP = 30  # pixels the hand may move in that time and still be a click
 NO_HAND = 60.0  # seconds with no hand seen before hand control stops by itself
 FPS = 30  # frames a second asked of the camera while this runs
+SEARCH_EVERY = 0.09  # seconds at least between the palm finder's looks for a hand it's lost, every third frame at 30
+# a second: at every frame it was about half a core (14 ms a look, 30 looks a second), and once, while hand control
+# was on with no hand up, her listening fell 30 s behind
 PALM = (0, 5, 9, 13, 17)  # the wrist and the four knuckles: their middle is where the pointer is
 TRACK = (0, 5, 9, 13, 17, 1, 2)  # the points that make a palm for the next frame, in the palm finder's own order
 WRIST, THUMB, INDEX, MIDDLE, MIDDLE_KNUCKLE = 0, 4, 8, 12, 9
@@ -169,15 +178,25 @@ def screen_size():
         return ctypes.windll.user32.GetSystemMetrics(0), ctypes.windll.user32.GetSystemMetrics(1)
 
 
+def full_speed(on):
+    """Her process out of Windows' power throttling while hand control runs (winplatform.full_speed)."""
+    import winplatform as win
+    return win.full_speed(on)
+
+
 class HandMouse:
     """Hand control while it runs (start, stop), on a thread of its own: the camera's frames as they come, your hand
-    in each followed from the last, and Pointer doing what it does. on_stop(why): it stopped by itself."""
+    in each followed from the last, and Pointer doing what it does. on_stop(why): it stopped by itself. pace(on): her
+    process at full speed while it runs (full_speed)."""
 
     def __init__(self, camera, hands=None, mouse=None, screen=None, on_stop=None, locked=None, clock=time.monotonic,
-                 log=print):
+                 log=print, pace=full_speed):
         self.camera, self.finder, self.mouse, self.screen = camera, hands, mouse, screen
-        self.on_stop, self.locked, self.clock, self.log = on_stop, locked, clock, log
+        self.on_stop, self.locked, self.clock, self.log, self.pace = on_stop, locked, clock, log, pace
         self.stopped, self.thread, self.why = threading.Event(), None, None
+        self.gaps = collections.deque(maxlen=3000)  # seconds between frames that both had your hand
+        self.costs = collections.deque(maxlen=3000)  # seconds each frame looked at took
+        self.followed = 0  # frames with your hand in them
 
     @property
     def running(self):
@@ -197,9 +216,11 @@ class HandMouse:
 
     def _run(self):
         hold = getattr(self.camera, "hold", None)
+        sped = False
         try:
             if hold is not None:
                 hold("hands", FPS)
+            sped = self._pace(True)
             if self.finder is None:
                 import hands
                 self.finder = hands.Hands()
@@ -211,46 +232,82 @@ class HandMouse:
             self.log(f"  hand control stopped: {exc!r}")
             self.why = self.why or "something went wrong with it"
         finally:
+            if sped:
+                self._pace(False)
             let_go = getattr(self.camera, "let_go", None)
             if let_go is not None:
                 let_go("hands")
+            if self.costs:
+                self.log(self.summary(sped))
             if self.why and self.on_stop is not None:
                 self.on_stop(self.why)
 
+    def _pace(self, on):
+        """True if her process is at full speed now (on) or was let go of it."""
+        try:
+            return bool(self.pace(on))
+        except Exception as exc:
+            self.log(f"  hand control: no full speed ({exc!r})")
+            return False
+
+    def _gone(self, seen):
+        """True, with why, once there's been no hand for NO_HAND seconds."""
+        if self.clock() - seen > NO_HAND:
+            self.why = "I couldn't see your hand for a minute"
+            return True
+        return False
+
     def _follow(self, pointer):
-        seen, last, track = self.clock(), 0.0, None
+        seen, last, track, searched, had = self.clock(), 0.0, None, None, None
         while not self.stopped.is_set():
             if self.locked is not None and self.locked():
                 self.why = "the PC's locked"
                 return
             newest = self.camera.newest_bgr(after=last)
-            if newest is None:
-                if self.clock() - seen > NO_HAND:
-                    self.why = "I couldn't see your hand for a minute"
+            if newest is not None:
+                last, bgr = newest
+            if newest is None or (track is None and searched is not None and last - searched < SEARCH_EVERY):
+                if self._gone(seen):  # no frame, or no hand and the palm finder looked a moment ago
                     return
                 continue
-            last, bgr = newest
+            began = time.perf_counter()
             pointer.frame = (bgr.shape[1], bgr.shape[0])
             hand = self.finder.points(bgr, track) if track is not None else None
             if hand is None:  # lost, or not found yet: the palm finder looks
+                searched = last
                 palms = self.finder.palm_boxes(bgr)
                 hand = self.finder.points(bgr, max(palms, key=lambda p: p[2] - p[0])) if palms else None
             if hand is None:
-                track = None
+                track = had = None
                 pointer.feed(None, last)
-                if self.clock() - seen > NO_HAND:
-                    self.why = "I couldn't see your hand for a minute"
+                self.costs.append(time.perf_counter() - began)
+                if self._gone(seen):
                     return
                 continue
             seen = self.clock()
             track = palm_from(hand["points"])
             pointer.feed(hand["points"], last)
+            self.costs.append(time.perf_counter() - began)
+            self.followed += 1
+            if had is not None:
+                self.gaps.append(last - had)
+            had = last
+
+    def summary(self, sped=False):
+        """How it kept up, for the log: frames a second while it had your hand, and the time a frame took."""
+        cost = statistics.median(self.costs) * 1000 if self.costs else 0.0
+        speed = "at full speed" if sped else "throttled as Windows chose"
+        if not self.gaps:
+            return f"  (hand control: never had your hand two frames running, {cost:.0f} ms a look, {speed})"
+        rate = 1 / max(statistics.median(self.gaps), 1e-6)
+        return (f"  (hand control: {rate:.0f} frames a second while it had your hand, {cost:.0f} ms a frame, "
+                f"{self.followed} frames with it, {speed})")
 
 
 # --------------------------------------------------------------------------- what's said about it
 _HANDS = r"(?:hand|hands|gesture|gestures|finger|fingers)"
 ON = re.compile(r"(?:(?:turn on|start|enable|switch on|begin|use|open)(?: the| my)? )?" + _HANDS +
-                r" (?:control|mouse|mode|tracking|cursor|pointer)(?: on| mode)?|"
+                r" (?:control|controller|mouse|mode|tracking|cursor|pointer)(?: on| mode)?|"
                 r"(?:let me )?control (?:the |my |this )?(?:pc|computer|laptop|mouse|cursor|screen|you)? ?with "
                 r"(?:my )?" + _HANDS + r"|use my " + _HANDS + r" (?:as|like) (?:the|a) (?:mouse|cursor|pointer)")
 OFF = re.compile(r"(?:(?:turn off|stop|disable|end|switch off|exit|close|quit)(?: the| my)? " + _HANDS +

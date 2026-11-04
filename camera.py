@@ -49,6 +49,7 @@ class Camera:
     def __init__(self, index=0):
         self.index, self.cap = index, None
         self.lock = threading.Lock()
+        self.fresh = threading.Condition(self.lock)  # told as each frame lands, so hand control has it at once
         self.kept = collections.deque(maxlen=60)  # (time.monotonic(), a half-size BGR frame), KEEP seconds of them
         self.newest = None  # (time.monotonic(), the newest BGR frame, whole)
         self.stop, self.reader = threading.Event(), None
@@ -109,6 +110,7 @@ class Camera:
                     self.kept.append((now, small))
                 while self.kept and now - self.kept[0][0] > KEEP:
                     self.kept.popleft()
+                self.fresh.notify_all()
 
     def frame(self, wait=1.5):
         """The newest frame as RGB, one made in the last second, waiting up to wait seconds for it; or None."""
@@ -130,16 +132,17 @@ class Camera:
 
     def newest_bgr(self, after=0.0, wait=0.25):
         """(time.monotonic(), the newest whole BGR frame) once there's one newer than after, waiting up to wait
-        seconds; or None."""
+        seconds; or None. Woken as it lands (fresh), not by looking again every few milliseconds."""
         end = time.monotonic() + wait
-        while True:
-            with self.lock:
+        with self.fresh:
+            while True:
                 newest = self.newest
-            if newest is not None and newest[0] > after:
-                return newest
-            if time.monotonic() > end or self.cap is None:
-                return None
-            time.sleep(0.005)
+                if newest is not None and newest[0] > after:
+                    return newest
+                left = end - time.monotonic()
+                if left <= 0 or self.cap is None:
+                    return None
+                self.fresh.wait(left)
 
     def hold(self, name, fps=RATE):
         """name keeps it open, at fps frames a second at least, till it lets go (let_go): opened if it wasn't,
@@ -174,6 +177,7 @@ class Camera:
             with self.lock:  # after it's stopped, or the frame it was reading lands after
                 self.kept.clear()
                 self.newest = None
+                self.fresh.notify_all()  # a wait for a frame ends now: none is coming
             if reader is not None and reader.is_alive():  # still in the camera's own code: let go of it under that,
                 # and it crashes, so it's let go once that read is over
                 threading.Thread(target=lambda: (reader.join(30.0), cap.release()), daemon=True).start()

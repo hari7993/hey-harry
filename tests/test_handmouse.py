@@ -165,14 +165,63 @@ class Following(unittest.TestCase):
                     seen["followed"] += 1  # followed from the last frame's points
                 return {"points": hand(320, 270)} if cam.t < 1.0 else None
 
-        stops = []
+        stops, paced, logged = [], [], []
         m = handmouse.HandMouse(cam, hands=Finder(), mouse=FakeMouse(), screen=(1920, 1080), on_stop=stops.append,
-                                clock=lambda: now.__setitem__(0, now[0] + 0.5) or now[0])
+                                clock=lambda: now.__setitem__(0, now[0] + 0.5) or now[0], log=logged.append,
+                                pace=lambda on: paced.append(on) or True)
         m._run()
         self.assertEqual(seen["palms"] - seen["followed"] < 5, False)  # the palm finder only once it's lost it
         self.assertGreater(seen["followed"], 20)
         self.assertEqual(cam.held, [("hold", "hands", handmouse.FPS), ("let go", "hands")])
         self.assertEqual(stops, ["I couldn't see your hand for a minute"])
+        self.assertEqual(paced, [True, False])  # at full speed while it ran, and Windows left to decide after
+        self.assertIn("30 frames a second while it had your hand", logged[-1])
+        self.assertIn("at full speed", logged[-1])
+
+    def test_a_lost_hand_is_looked_for_every_third_frame_not_every_one(self):
+        class Camera:
+            def __init__(self):
+                self.t, self.frames = 0.0, 0
+
+            def newest_bgr(self, after=0.0, wait=0.25):
+                self.t += 1 / 30
+                self.frames += 1
+                return self.t, np.zeros((480, 640, 3), np.uint8)
+
+        class Finder:
+            looks = 0
+
+            def palm_boxes(self, bgr):
+                Finder.looks += 1
+                return []
+
+            def points(self, bgr, palm):
+                raise AssertionError("no palm was found to follow")
+
+        cam, now = Camera(), [0.0]
+        m = handmouse.HandMouse(cam, hands=Finder(), mouse=FakeMouse(), screen=(1920, 1080), log=lambda line: None,
+                                clock=lambda: now.__setitem__(0, now[0] + 0.25) or now[0], pace=lambda on: True)
+        m._run()
+        self.assertGreater(cam.frames, 200)
+        self.assertLess(abs(Finder.looks - cam.frames / 3), cam.frames / 20, (Finder.looks, cam.frames))
+        self.assertEqual(m.why, "I couldn't see your hand for a minute")
+
+    def test_full_speed_refused_is_said_and_never_let_go_of(self):
+        cam = mock.Mock()
+        cam.newest_bgr.return_value = None
+        logged, paced = [], []
+
+        def pace(on):
+            paced.append(on)
+            raise OSError("not on this Windows")
+
+        now = [0.0]
+        m = handmouse.HandMouse(cam, hands=mock.Mock(), mouse=FakeMouse(), screen=(1920, 1080), log=logged.append,
+                                clock=lambda: now.__setitem__(0, now[0] + 30) or now[0], pace=pace)
+        m._run()
+        self.assertEqual(paced, [True])
+        self.assertTrue(any("no full speed" in line for line in logged), logged)
+        self.assertEqual(m.why, "I couldn't see your hand for a minute")
 
 
 class Said(unittest.TestCase):
@@ -183,10 +232,10 @@ class Said(unittest.TestCase):
         started = []
         with mock.patch.object(handmouse, "start", lambda: started.append(1) or "on"):
             for words in ("hand control on", "turn on hand control", "start gesture control",
-                          "control the PC with my hand", "use my hand as the mouse"):
+                          "control the PC with my hand", "use my hand as the mouse", "hand controller."):
                 self.assertEqual(self.say(words)["say"], "on", words)
             self.assertIsNone(self.say("hand control on", gate="cold"))
-        self.assertEqual(len(started), 5)
+        self.assertEqual(len(started), 6)
         running = mock.Mock(running=True)
         with mock.patch.dict(handmouse.NOW, {"mouse": running}):
             self.assertIn("off", self.say("stop hand control")["say"])

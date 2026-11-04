@@ -1802,6 +1802,26 @@ def awake():
     return _awake["stop"] is not None
 
 
+# --------------------------------------------------------------------------- full speed
+class POWER_THROTTLING_STATE(ctypes.Structure):  # PROCESS_POWER_THROTTLING_STATE
+    _fields_ = [("Version", DWORD), ("ControlMask", DWORD), ("StateMask", DWORD)]
+
+
+PROCESS_POWER_THROTTLING, THROTTLING_VERSION, THROTTLE_SPEED = 4, 1, 0x1  # ..._EXECUTION_SPEED
+_sig(kernel32.GetCurrentProcess, [], wintypes.HANDLE)
+_sig(kernel32.SetProcessInformation, [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, DWORD])
+
+
+def full_speed(on):
+    """Her process kept out of Windows' power throttling (EcoQoS) while on, and Windows left to decide again when
+    off. Her windows are seldom the one in front, so on battery Windows takes her for background work and runs her
+    on its slow cores: on 4 November, throttled, finding a hand in a camera frame took 55 ms and hand control kept up
+    with 16 frames a second; not throttled, 14 ms and all 30. True if Windows took it."""
+    state = POWER_THROTTLING_STATE(THROTTLING_VERSION, THROTTLE_SPEED if on else 0, 0)
+    return bool(kernel32.SetProcessInformation(kernel32.GetCurrentProcess(), PROCESS_POWER_THROTTLING,
+                                               ctypes.byref(state), ctypes.sizeof(state)))
+
+
 # --------------------------------------------------------------------------- microphones
 def _is_mapper(name):
     return name.startswith(("Microsoft Sound Mapper", "Primary Sound Capture"))

@@ -194,6 +194,26 @@ class Frames(unittest.TestCase):
         self.assertIsNone(cam.frame(wait=0.1))
         self.assertEqual(cam.around(0, time.monotonic() + 1), [])
 
+    def test_a_wait_for_a_frame_ends_as_it_lands_and_never_on_an_old_one(self):
+        cam = camera.Camera()
+        cam.cap = FakeCapture()
+        landed = []
+
+        def land():
+            time.sleep(0.2)
+            with cam.lock:
+                cam.newest = (time.monotonic(), np.zeros((480, 640, 3), np.uint8))
+                landed.append(cam.newest[0])
+                cam.fresh.notify_all()
+        threading.Thread(target=land, daemon=True).start()
+        got = cam.newest_bgr(after=0.0, wait=2.0)
+        self.assertIsNotNone(got)
+        self.assertLess(time.monotonic() - landed[0], 0.05)  # handed over as it landed
+        started = time.monotonic()
+        self.assertIsNone(cam.newest_bgr(after=got[0], wait=0.15))  # only the one it's had: none newer came
+        self.assertGreaterEqual(time.monotonic() - started, 0.14)
+        cam.cap = None
+
 
 class Snaps(unittest.TestCase):
     """A snap seen: a sharp sound with your hand up in front of the camera then (cues._maybe_snap)."""
