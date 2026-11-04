@@ -2927,6 +2927,9 @@ QUICK = [(re.compile(p), make) for p, make in (
     (r"what(?: are|'re) you (?:working on|busy with|doing in the background)(?: (?:right )?now)?|"
      r"what(?:'s| is) (?:running|going on) in the background", lambda m: make_plan(say=working_on())),
     (r"(?:cancel|stop) task (?P<id>\d+)", _task_control("cancel")),
+    # every job going at once, her agents (4 November 2026): stopped together, as "stop task 3" stops one
+    (r"(?:stop|cancel|end)(?: all)?(?: of)?(?: the| my| your)? (?:agents|background (?:tasks|jobs)|tasks|jobs)"
+     r"(?: in the background)?(?: now)?|(?:stop|cancel) (?:all|every) (?:agent|task|job)", lambda m: stop_agents()),
     (r"approve task (?P<id>\d+)", _task_control("approve")),
     # a job paused, carried on from where it got to, or tried again, and what it did (31 October 2026)
     (r"(?:pause|hold) task (?P<id>\d+)", _task_control("pause")),
@@ -4197,6 +4200,22 @@ GOAL_STEP = re.compile(r'"do":\s*"(?:task|background)"')  # one planned lately
 BACKGROUND_WORDS = re.compile(r"\b(?:in the background|while i\b|keep working on|carry on with|"
                               r"(?:let me know|tell me) (?:when|once) (?:it'?s|it is|you'?re|you are|that'?s) "
                               r"(?:done|finished|ready))", re.I)
+# Several tasks said together, each in an app of its own, go at once as agents (4 November 2026, the owner's ask, from
+# Vercel's video of coloured cursors at work together): a job in the background each, on the agent lane five at a
+# time (JOB_WORKERS), each with a cursor of its own (cursors.py). In a block of its own after the cache point, only
+# for words that say so ("at the same time", "agents") or ask for three things or more (agents_asked): two things
+# said together keep the plan they had, done one after the other
+AGENT_STEPS = """Several separate tasks asked for together, each in an app or on a site of its own ("mail Ravi the report, write a shopping list in Notepad and find flights to Goa"): a {"do":"background","goal":"..."} for each, its goal in full, and they go at the same time as your agents, each with its own cursor on the screen, five at a time and the rest after. Only for tasks that don't need what another finds: those go in one goal together. One a step of yours does straight away (night light, music, the volume, a timer, opening an app or a site) stays that step"""
+AGENT_WORDS = re.compile(r"\b(?:at the same time|at once|in parallel|simultaneously|side by side|all together|"
+                         r"agents?|multi-?task(?:ing)?)\b|\b(?:two|three|four|five|2|3|4|5) (?:tasks|things|jobs)\b",
+                         re.I)
+
+
+def agents_asked(text):
+    """True if the words may ask for several tasks at once (AGENT_STEPS): they say so, or ask for three or more."""
+    return bool(AGENT_WORDS.search(text)) or len(SECOND_COMMAND.findall(text)) >= 2
+
+
 # What was copied is read only when the words name it: on the clipboard may be a password or a code just pasted
 CLIPBOARD_WORDS = re.compile(r"\b(?:clipboard|clip board|(?:i|i've|i have|just) copied|what i copied)\b", re.I)
 GATE_NOTE = ("\nThey didn't call you by name first, so this may not be for you: they could be talking to someone in the "
@@ -6867,6 +6886,7 @@ def _think(text, gate, notify=None, sure=1.0):
         COLD_NOTE + room_before()
     # after the cached part: routing's blocks (more), then a job's (GOAL_STEPS), then the look-ups (LOOK_STEPS)
     system = opencode.Cached(fixed + more + ("\n\n" + GOAL_STEPS if goals else "")
+                             + ("\n\n" + AGENT_STEPS if agents_asked(text) else "")  # several at once, as agents
                              + ("\n\n" + LOOK_STEPS if looks else "")
                              + ("\n\n" + WINDOW_STEPS if WINDOW_WORDS.search(plain(text)) else "")
                              + ("\n\n" + ORDER_STEPS if ORDER_WORDS.search(text) else "")
@@ -7198,7 +7218,10 @@ def background_payload(raw):
 # phone with buttons keyed the same (job_tap), and shows on the island with Deny and Stop; how it ended is said back
 # where it was asked from, in Hermes' "[Background job N finished]" way for the next turn's context (JOB_NEWS)
 GOAL_MOST, WORDS_MOST = 300, 600  # characters of a job's goal, and of your words pinned with it
-JOB_WORKERS = 2  # jobs at a time: each waits on a model most of its time, and only one has the screen (agent.SCREEN)
+# jobs at a time: each waits on a model most of its time, and only one has the screen (agent.SCREEN). Five since 4
+# November 2026, the owner's ask: two to five tasks said together go at once as agents (AGENT_STEPS), each with a
+# cursor of its own colour (cursors.py, cursors.MOST)
+JOB_WORKERS = 5
 AGENT_LANE = daemon_pool.DaemonThreadPoolExecutor(JOB_WORKERS, thread_name_prefix="agent-job")
 JOB_NEWS = collections.deque(maxlen=3)  # finished jobs, told to the model with the next turn (context), once
 NEWS_CHARS = 300  # of a finished job's result in that
@@ -7808,6 +7831,7 @@ def tasks_said(now=None):
 def prepare_task_steps(plan):
     """Turn command/schedule model steps into durable rows before run_plan. Returns a plan with harmless markers."""
     kept, notices, ask = [], [], None
+    agents, stopped = [], []  # (task id, its notice's place): jobs queued, and tasks cancelled, said as one (together)
     for step in plan.get("steps") or []:
         do = step.get("do")
         try:
@@ -7874,6 +7898,7 @@ def prepare_task_steps(plan):
                                     read=bool(step.get("read")), **({"hints": str(step["hints"])[:300]}
                                                                      if step.get("hints") else {}))
                 kept.append({"do": "task_queued", "id": task_id})
+                agents.append((task_id, len(notices)))
                 notices.append(f"I'll do that in the background as task {task_id}, and tell you when it's done.")
                 continue
             if do == "task_control":  # hold: a job's held step, the only one a yes to its question approves
@@ -7893,6 +7918,8 @@ def prepare_task_steps(plan):
                 if not ok:
                     raise RuntimeError(f"task {task_id} isn't waiting for that")
                 kept.append({"do": "task_queued", "id": task_id})
+                if action == "cancel" and (TASK_STORE.get(task_id) or {}).get("kind") == "agent":  # her agents
+                    stopped.append((task_id, len(notices)))
                 notices.append(f"Okay, task {task_id} can go ahead with that." if asking else
                                f"Task {task_id} {'approved and queued' if action == 'approve' else 'cancelled'}.")
                 continue
@@ -7901,6 +7928,9 @@ def prepare_task_steps(plan):
             continue
         kept.append(step)
     plan["steps"] = kept
+    notices = together(notices, (agents, lambda ids: f"{len(ids)} agents are on it, tasks {joined(ids)}. I'll tell "
+                                                     f"you as each one's done."),
+                       (stopped, lambda ids: f"Stopped tasks {joined(ids)}."))
     if notices:
         plan["say"] = " ".join(notices)
     if ask:  # a yes runs it: it's approved and queued (task_control), a no leaves it waiting, cancellable
@@ -7908,6 +7938,31 @@ def prepare_task_steps(plan):
         return {"steps": [], "say": " ".join(notices + [question]),
                 "confirm": {"steps": [{"do": "task_control", "action": "approve", "id": task_id}], "say": ""}}
     return plan
+
+
+def together(notices, *groups):
+    """notices with each group of two or more said once, where its first one was: "3 agents are on it, tasks 4, 5
+    and 6", not three lines of the same. groups: ([(task id, its notice's place)], how to say their ids). One alone
+    keeps its own line."""
+    drop, put = set(), {}
+    for marks, say in groups:
+        if len(marks) >= 2:
+            drop |= {place for _, place in marks}
+            put[marks[0][1]] = say([task_id for task_id, _ in marks])
+    return [put.get(i, line) for i, line in enumerate(notices) if i not in drop or i in put]
+
+
+def stop_agents():
+    """"Stop the agents", "stop all the tasks": every job going or waiting its turn now stopped as "stop task 3" stops
+    it (task_control cancel), said once (together). Never a reminder or a schedule, nor a job on repeat or one due
+    later, whose next go isn't these: "stop task N" stops those."""
+    soon = time.time() + 5
+    ids = sorted(row["id"] for row in TASK_STORE.list(80, active=True)
+                 if row["kind"] == "agent" and not row.get("repeat") and (row["status"] == "running"
+                                                                           or (row.get("due") or 0) <= soon))
+    if not ids:
+        return make_plan(say="No agents are working right now.")
+    return make_plan([{"do": "task_control", "action": "cancel", "id": i} for i in ids])
 
 
 def _task_result_line(task, text, success=True):

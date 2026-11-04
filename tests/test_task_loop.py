@@ -413,6 +413,21 @@ class Planner(Job):
             with self.subTest(text=text):
                 self.assertNotIn(siri.GOAL_STEPS, self.system(text))
 
+    def test_the_agents_line_rides_after_the_cache_only_for_several_tasks_at_once(self):
+        """4 November 2026: several tasks said together go at once as her agents, a job in the background each. Two
+        said together with nothing more keep the plan they had, done one after the other."""
+        self.assertNotIn(siri.AGENT_STEPS, siri.PROMPT)
+        for text in ("send hi to Ravi, make a shopping list in Notepad and search flights to Goa",
+                     "at the same time play lofi and write a poem in Notepad",
+                     "use your agents to find a hotel and mail Asha", "do these three tasks for me"):
+            with self.subTest(text=text):
+                system = self.system(text)
+                self.assertIn(siri.AGENT_STEPS, system)
+                self.assertGreater(system.index(siri.AGENT_STEPS), system.cache_at)
+        for text in ("open notepad", "what's the weather", "turn on night light and open Gmail"):
+            with self.subTest(text=text):
+                self.assertNotIn(siri.AGENT_STEPS, self.system(text))
+
     def test_a_job_step_is_registered_said_first_and_asked_about_plainly(self):
         self.assertIn("task", siri.KNOWN_STEPS)
         self.assertIn("task", siri.SPEAK_FIRST)

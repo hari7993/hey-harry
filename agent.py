@@ -26,6 +26,7 @@ import time
 from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
 
 import activity
+import cursors
 import herbrowser
 import outcomes
 import toolbox
@@ -387,15 +388,17 @@ def stop_job(task_id):
     """Stops job task_id, only it, and forgets the step it held. True if there was one going or waiting."""
     job = JOBS.pop(int(task_id), None)
     JOB_HELD.pop(int(task_id), None)
+    cursors.end(int(task_id))  # its cursor too, one waiting on your yes included
     if job is not None:
         job.stop()
     return job is not None
 
 
 def forget_job(task_id):
-    """A job that's over: its held step and its Job go, and its hold on her browser."""
+    """A job that's over: its held step and its Job go, its hold on her browser, and its cursor."""
     JOB_HELD.pop(int(task_id), None)
     JOBS.pop(int(task_id), None)
+    cursors.end(int(task_id))
     herbrowser.let_go(int(task_id))
 
 
@@ -900,6 +903,13 @@ def _yes_step(r, held, live):
     return do_held(r, held) if live else None
 
 
+def _aim(r, do, where=None):
+    """Job run r's cursor (cursors.py) to where its step do acts, a point or a control's rect, with what it's doing:
+    only drawn, and only a job's, never a turn's."""
+    if r is not None and r.job is not None:
+        cursors.aim(r.job.id, where, cursors.NOTES.get(do, ""))
+
+
 def _did(r):
     """The steps r did, for the console log: what and on which control, never what was typed."""
     return [{"do": s["do"], "name": s.get("name")} for s in r.steps if s.get("ok")]
@@ -925,10 +935,13 @@ def do_held(r, held):
         own_step(r, s, approved=True)
         return None
     try:
+        if do != "click":  # a click's cursor goes to its control, once that's found again
+            _aim(r, do)
         if do == "click":
             el = win.find_ui(target.get("name"), target.get("role"), target.get("aid"), hwnd=pin(r))
             if el is None:
                 return finish(r, "gone", GONE)
+            _aim(r, do, getattr(el, "rect", None))
             if r.job is not None and not r.job.leased and not focus_free(el, s):
                 with screen(r):  # the mouse or a paste on a job's window: with the screen, as needs_screen has it
                     act(win.ui_act, el, s.get("text"), s.get("state"))
@@ -2231,17 +2244,22 @@ def background(job, hold=None, notify=None):
         job.tid = threading.get_ident()
         interrupt.set_interrupt(False)  # a bit a job stopped before left on this pooled thread is no stop of this one
     _count(BACKGROUND, 1)
+    ended = "stopped"
     try:
         if job.cancelled():
             return "", "stopped"
+        cursors.begin(job.id, task_words(job.goal) or job.goal)  # its own cursor on the screen while it goes
         got = resume_job(job, hold, notify) if hold is not None else None
         if got is None:
             JOB_HELD.pop(job.id, None)  # a yes to a step that's gone: it starts again, and asks again
             got = task({"do": "task", "goal": job.goal, "hints": job.hints, "read": job.read}, notify)
-        return _judged(job, got[0], notify)
+        got = _judged(job, got[0], notify)
+        ended = got[1]
+        return got
     except Halted:
         return "", "stopped"
     finally:
+        cursors.end(job.id, waiting=ended == "held")  # one held for your yes stays, saying so, till it goes again
         _count(BACKGROUND, -1)
         with job.lock:  # a stop of this job now finds no thread, rather than the next job's on this one
             interrupt.set_interrupt(False)
@@ -2802,6 +2820,8 @@ def observe(r):
     hwnd, exe, title = front(r)
     if own and hwnd is None:
         r.pin = None  # closed: it opens or switches to what it needs again
+    elif own:
+        cursors.look(r.job.id, hwnd)  # its cursor goes to its window the first time it looks at it
     site = None if exe not in win.BROWSER_EXES else win.window_site(hwnd, exe) if own else win.browser_site()
     obs = {"hwnd": hwnd, "exe": exe, "title": title, "site": site, "items": None, "focus": None, "total": None,
            "focused": None, "cut": False, "own": own,
@@ -3140,6 +3160,8 @@ def do_one(r, s, obs, shot, finishing=None, at=-1):
     el = gate_vision(s, point, el, at)
     twins = _twins(obs, el) if do in ("click", "type") else None  # before she acts: a Send's gone after it
     before = win.front_window() if r.job is not None and do in OPENS else None
+    if do != "wait":
+        _aim(r, do, point or getattr((el or {}).get("el"), "rect", None))
     try:
         result = pause(s.get("seconds") or 1) if do == "wait" else act(perform, s, el, point)
     except (Halted, Yielded, BrowserDown):  # her browser's own trouble ends the run, not the step (in_her_browser)

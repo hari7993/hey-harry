@@ -53,6 +53,11 @@ import agentdesktop  # noqa: E402
 DESKTOP_ORIGINAL = agentdesktop._execute
 agentdesktop._execute = tripwire("agent-desktop")
 
+# The agents' cursors (cursors.py) draw real windows over the screen: what they'd show is kept, nothing's drawn
+import cursors  # noqa: E402
+CURSORS_WAKE = cursors._wake
+cursors._wake = lambda: None
+
 import backup  # noqa: E402
 import dictation  # noqa: E402
 import filesearch  # noqa: E402
