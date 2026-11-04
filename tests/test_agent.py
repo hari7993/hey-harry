@@ -367,8 +367,8 @@ class Learning(Live):
     def test_night_light_is_learned_by_name_and_done_again_with_no_model(self):
         script = self.night_light()
         self.assertEqual(self.said, [f"Okay: {NIGHT}.", "Night light's on, and I've learned how."])  # said first
-        # with Vision on she sees the screen each round, as OpenLive's agent does; the switch is still learned by name
-        self.assertEqual((len(self.shots), len(script.sent), script.picture(0), script.picture(1)), (2, 2, True, True))
+        # done by agent-desktop's controls alone (4 November): Settings shows enough, so no screenshot is taken
+        self.assertEqual((len(self.shots), len(script.sent), script.picture(0), script.picture(1)), (0, 2, False, False))
         (name, proc), = self.learned().items()
         self.assertEqual(name, NIGHT_NAME)
         self.assertEqual(proc["steps"], [
@@ -1018,7 +1018,7 @@ class Repair(Live):
         self.assertEqual(self.said[-1], "Done, and I've updated how I do it.")
         self.assertIn("didn't work: the Display button, it isn't on screen", script.text(0))
         self.assertTrue(script.picture(0))  # stuck: it looks at a screenshot
-        self.assertEqual(len(self.shots), 2)  # and with Vision on, at one each round it works it out live
+        self.assertEqual(len(self.shots), 1)  # only that one: once it's found the way, the controls are enough
         proc = self.learned()["turn-on-night-light"]
         self.assertEqual([s.get("name") or s.get("app") or s.get("has") for s in proc["steps"]],
                          ["Settings", "Screen", "Night light", "Night light"])  # steps[:1] kept, then what worked
