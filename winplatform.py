@@ -236,6 +236,10 @@ MONITOR_DEFAULTTOPRIMARY = 1
 
 # Windows parts that look like app windows but must never be closed or minimised as one
 SHELL_CLASSES = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Windows.UI.Core.CoreWindow"}
+# and the ones agent-desktop doesn't list, so never reads (WINDOW_NOT_FOUND): the desktop, the taskbar, Search and
+# Explorer's own flyouts. Not asked for at all: on 4 November 2026 the screen watch ran agent-desktop on them every
+# minute, as each was in front, only to be told no such window
+UNLISTED_CLASSES = SHELL_CLASSES | {"XamlExplorerHostIslandWindow_WASDK", "XamlExplorerHostIslandWindow"}
 # Never force-quit these: the taskbar, the frame UWP apps live in, and Harry herself
 PROTECTED = {"explorer.exe", "applicationframehost.exe", "python.exe", "pythonw.exe", "py.exe", "pyw.exe",
              "dwm.exe", "csrss.exe", "winlogon.exe", "svchost.exe", "searchhost.exe",
@@ -2906,17 +2910,19 @@ def _snapshot_items(snap, most, browser=False, lists=SNAP_LISTS):
     return items, web, total, focused, cut
 
 
-def ui_snapshot(hwnd=None, most=60):
-    """The foreground or named window's controls from one bounded agent-desktop snapshot."""
+def ui_snapshot(hwnd=None, most=60, settle=True):
+    """The foreground or named window's controls from one bounded agent-desktop snapshot. settle: a browser page
+    with almost nothing on it yet is read again half a second later, for a task, as it may still be loading; the
+    screen watch's look every few seconds takes it as it is, and reads it again on its next look."""
     hwnd = hwnd or user32.GetForegroundWindow()
-    if not hwnd or _clock() < _slow.get(hwnd, 0.0):
+    if not hwnd or _clock() < _slow.get(hwnd, 0.0) or _class_name(hwnd) in UNLISTED_CLASSES:
         return None
     exe, began = os.path.basename(window_exe(hwnd)).lower(), _clock()
     browser = exe in BROWSER_EXES
     try:
         snap = _desktop_snapshot(hwnd)
         items, web, total, focused, cut = _snapshot_items(snap, most, browser)
-        if browser and web is not None and web < 5:
+        if settle and browser and web is not None and web < 5:
             _sleep(0.5)
             began = _clock()
             snap = _desktop_snapshot(hwnd)

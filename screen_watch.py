@@ -82,14 +82,14 @@ Most of the time nothing needs them: then {{"say": ""}}."""
 
 class Watcher:
     """What's on the screen now and lately. read: () -> (hwnd, exe, title) of the window in front; snapshot:
-    hwnd -> winplatform.ui_snapshot's; site: (hwnd, exe) -> its site or None; idle: () -> seconds since your last
-    key or mouse; shot: () -> a vision.Shot of the window in front; judge: messages -> the model's reply text, for a
-    glance; announce: line -> said once she's free; free: () -> True while no turn of hers is going on; mode: () ->
-    "off", "quiet" (watch, say nothing) or "live" (watch, and speak up)."""
+    hwnd -> winplatform.ui_snapshot's, a browser's site with its words; idle: () -> seconds since your last key or
+    mouse; shot: () -> a vision.Shot of the window in front; judge: messages -> the model's reply text, for a glance;
+    announce: line -> said once she's free; free: () -> True while no turn of hers is going on; mode: () -> "off",
+    "quiet" (watch, say nothing) or "live" (watch, and speak up)."""
 
-    def __init__(self, read, snapshot, site, idle, shot, judge, announce, free, mode, who=lambda: "the user",
+    def __init__(self, read, snapshot, idle, shot, judge, announce, free, mode, who=lambda: "the user",
                  in_call=lambda: False, clock=time.time, cursor=None, at=None):
-        self.read, self.snapshot, self.site, self.idle, self.shot = read, snapshot, site, idle, shot
+        self.read, self.snapshot, self.idle, self.shot = read, snapshot, idle, shot
         self.judge, self.announce, self.free, self.mode, self.who = judge, announce, free, mode, who
         self.in_call, self.clock = in_call, clock
         self.cursor, self.at = cursor, at  # () -> where the mouse pointer is; (x, y) -> the control there (ui_at)
@@ -120,22 +120,20 @@ class Watcher:
         if same and now - before["read_at"] < READ_AGAIN:
             before["at"] = now
             return
+        # a browser's site comes from the same read as its words, its address bar among them (4 November 2026): read
+        # first on its own, by window_site, it was a whole read of the window and its address bar's value again, so
+        # a look at Chrome was three agent-desktop reads, about 1.5 s each and 0.6 s of the processor, every 15 s
         site = None
-        if exe in win.BROWSER_EXES:
-            try:
-                site = self.site(hwnd, exe)
-            except Exception:
-                site = None
         private = bool(PRIVATE.search(title or "") or agent.SENSITIVE.search(title or "")
-                       or agent.OFF_LIMITS.search(title or "") or (site and agent.OFF_LIMITS.search(site)))
+                       or agent.OFF_LIMITS.search(title or ""))
         words = ""
         if not private:
             snap = self.snapshot(hwnd)
             if snap is not None:
-                if any(it.get("password") for it in snap["items"]):
-                    private = True  # a password box: a sign-in, whatever the title says
+                site = snap.get("site")
+                if any(it.get("password") for it in snap["items"]) or (site and agent.OFF_LIMITS.search(site)):
+                    private = True  # a password box or a payment site: a sign-in or a payment, whatever the title
                 else:
-                    site = snap.get("site") or site
                     words = words_of(snap["items"])
         seen = {"at": now, "read_at": now, "hwnd": hwnd, "exe": exe, "title": "" if private else title,
                 "site": None if private else site, "words": words, "private": private}

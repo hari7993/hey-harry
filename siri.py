@@ -1301,8 +1301,9 @@ def start_screen_watch(free):
     """Her eyes on the screen, on a thread of their own (screen_watch): free says when she's between turns, as a
     glance never takes the model from a turn and is said only once she's free (ANNOUNCE)."""
     watcher = screen_watch.Watcher(
-        read=win.foreground, snapshot=lambda hwnd: win.ui_snapshot(hwnd, most=screen_watch.MOST_CONTROLS),
-        site=win.window_site, idle=win.idle_seconds, shot=vision.capture, judge=screen_glance,
+        read=win.foreground,
+        snapshot=lambda hwnd: win.ui_snapshot(hwnd, most=screen_watch.MOST_CONTROLS, settle=False),  # one read
+        idle=win.idle_seconds, shot=vision.capture, judge=screen_glance,
         announce=ANNOUNCE.put, free=free, mode=screen_mode, in_call=lambda: bool(win.call_apps()),
         who=lambda: " ".join(str(settings.get("name") or "").split()) or "the user",
         cursor=win.cursor_pos, at=win.ui_at)  # what's under the pointer, for "what is this?"

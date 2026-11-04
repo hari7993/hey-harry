@@ -1040,6 +1040,29 @@ class Automation(unittest.TestCase):
         self.snapshots(hidden)
         self.assertIsNone(self.win.find_ui("Send", "button", hwnd=7))
 
+    def test_a_look_for_the_screen_watch_is_one_read_and_shell_windows_none(self):
+        """4 November 2026: a browser page with almost nothing on it yet is read again half a second later for a
+        task, which the screen watch's look every few seconds doesn't wait for (settle); and the desktop, the taskbar,
+        Search and Explorer's flyouts, which agent-desktop never lists, aren't asked for at all."""
+        page = self.df.node("Flow", "document", rect=(0, 100, 1200, 900), children=[self.df.node("New project")])
+        bare = self.df.snapshot([self.df.node(self.win.OMNIBOX, "edit", value="flow.google.com/project"), page],
+                                title="Flow - Google Chrome", app="chrome.exe")
+        self.snapshots(bare)
+        read, reads, hwnd = self.win._desktop_snapshot, [], 4071
+        self.win._slow.pop(hwnd, None)
+        with mock.patch.object(self.win, "_desktop_snapshot",
+                               lambda h=None, **kw: reads.append(h) or read(h, **kw)), \
+                mock.patch.object(self.win, "window_exe", lambda h: r"C:\Program Files\Google\Chrome\chrome.exe"), \
+                mock.patch.object(self.win, "_class_name", lambda h: "Chrome_WidgetWin_1"):
+            self.assertEqual(self.win.ui_snapshot(hwnd)["site"], "flow.google.com")
+            self.assertEqual(len(reads), 2)  # a task's read waits for the page
+            self.assertEqual(self.win.ui_snapshot(hwnd, settle=False)["site"], "flow.google.com")
+            self.assertEqual(len(reads), 3)
+        for shell in ("Progman", "Shell_TrayWnd", "XamlExplorerHostIslandWindow_WASDK", "Windows.UI.Core.CoreWindow"):
+            with self.subTest(shell), mock.patch.object(self.win, "_class_name", lambda h, shell=shell: shell), \
+                    mock.patch.object(self.win, "_desktop_snapshot", side_effect=AssertionError("asked for")):
+                self.assertIsNone(self.win.ui_snapshot(hwnd))
+
     def test_a_control_still_loading_is_waited_for(self):
         empty, subject = self.df.snapshot([]), self.df.snapshot([self.df.node("Subject", "edit")])
         self.snapshots(empty, empty, subject)

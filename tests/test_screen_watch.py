@@ -37,9 +37,6 @@ class Screen:
         self.snaps += 1
         return {"items": self.items, "site": self.site_}
 
-    def site(self, hwnd, exe):
-        return self.site_
-
 
 class Watching(unittest.TestCase):
     def setUp(self):
@@ -49,7 +46,7 @@ class Watching(unittest.TestCase):
         self.reply = '{"say": ""}'
         self.shot = SimpleNamespace(url="data:image/png;base64,AAAA")
         self.w = screen_watch.Watcher(
-            read=self.screen.read, snapshot=self.screen.snapshot, site=self.screen.site, idle=lambda: self.idle,
+            read=self.screen.read, snapshot=self.screen.snapshot, idle=lambda: self.idle,
             shot=lambda: self.shot, judge=self.judge, announce=self.said.append, free=lambda: not self.busy,
             mode=lambda: self.mode, who=lambda: "Hari", in_call=lambda: self.call, clock=lambda: self.t)
 
@@ -80,6 +77,19 @@ class Watching(unittest.TestCase):
         self.screen.front = (101, "chrome.exe", "Sent - Gmail")  # a new title: read at once
         self.look(1)
         self.assertEqual(self.screen.snaps, 3)
+
+    def test_a_browsers_site_comes_with_its_words_in_one_read(self):
+        """4 November 2026: its site was read first on its own (window_site), a whole read of the window and its
+        address bar again, so a look at Chrome was three agent-desktop reads of about 1.5 s each, every 15 s."""
+        self.look()
+        self.assertEqual((self.screen.snaps, self.w.now["site"]), (1, "mail.google.com"))
+        self.screen.front, self.screen.site_ = (102, "chrome.exe", "Your order"), "pay.example.com/checkout"
+        self.screen.items = [item("Card number", "edit", "4111 1111 1111 1111"), item("Pay now", "button")]
+        self.look(1)
+        now = self.w.now
+        self.assertTrue(now["private"])  # a payment site, its title saying nothing: nothing kept of it
+        self.assertEqual((now["title"], now["words"], now["site"]), ("", "", None))
+        self.assertNotIn("Pay now", " ".join(self.w.lines(self.t)))
 
     def test_codes_and_numbers_are_masked_and_a_code_box_is_left_out(self):
         self.screen.items = [item("Your code is 482913"), item("One-time code", "edit", "739104"),
@@ -265,7 +275,7 @@ class Pointing(unittest.TestCase):
     def test_whats_under_the_pointer_goes_with_your_question(self):
         screen = Screen()
         idle = [3.0]
-        w = screen_watch.Watcher(read=screen.read, snapshot=screen.snapshot, site=screen.site, idle=lambda: idle[0],
+        w = screen_watch.Watcher(read=screen.read, snapshot=screen.snapshot, idle=lambda: idle[0],
                                  shot=lambda: None, judge=None, announce=None, free=lambda: True, mode=lambda: "live",
                                  clock=lambda: 1000.0, cursor=lambda: (640, 300),
                                  at=lambda x, y: {"role": "text", "name": "Context 73%", "password": False})
