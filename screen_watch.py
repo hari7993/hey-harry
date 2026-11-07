@@ -82,10 +82,13 @@ NAMES_SCREEN = re.compile(r"\b(?:my|the|this) (?:screen|page|window|tab)\b|\bund
 FRESH = 20.0  # seconds since your last key or mouse within which "what is this" is taken as asked of the screen
 POINT_NOTE = ("They're at the PC: \"this\", \"that\" or \"it\" with nothing else to say which is on their screen, most "
               "likely what's under their mouse pointer (above). For a question, answer it from what's read above, in "
-              "a sentence or two: it was read from their screen a moment ago through agent-desktop, as words, never a "
-              "picture, so never plan a screen step just to look. If nothing read there answers it (an app drawn "
-              "without names: a game, a video, a picture), say what you can tell from its app and title, and that you "
-              "can't read inside it.")
+              "a sentence or two: it was read from their screen a moment ago through agent-desktop, as words. Only if "
+              "nothing read there answers it (an app drawn without names: a game, a video, a picture), plan the "
+              "screen step to look: its screenshot has their pointer ringed.")
+# The pointer on nothing agent-desktop names: what "this" is can't be read, so a look is the one way to see it (7
+# November 2026, the owner: a screenshot "only when it's unable to read")
+UNNAMED_NOTE = ("Nothing named is under their mouse pointer (most likely a picture, a video, a map or a page's blank "
+                "space): if \"this\" is what's there, plan the screen step to look.")
 
 
 def asked_of_screen(words, mode, idle):
@@ -357,10 +360,24 @@ class Watcher:
                        + agent.wrapped("screen", here))
         if at_pc:  # an app drawn without names (a game, a video) has nothing under the pointer to read
             out.append(POINT_NOTE)
+        if at_pc and here is None and self.cursor is not None and self.at is not None:
+            out.append(UNNAMED_NOTE)
         before = [f"{ago(now - when)}: {what}" for when, what in lately[-6:-1] if now - when < KEEP]
         if before:
             out.append("Before that: " + "; ".join(reversed(before)) + ".")
         return out
+
+    def unread(self):
+        """True if the window in front can't be read through agent-desktop, so a question about it needs a look at a
+        screenshot (7 November 2026, the owner: a screenshot "only when it's unable to read"): it has no read, or
+        nothing in it was read (an app drawn without names: a game, a video, a picture). Never a private window: that
+        one is never looked at."""
+        front = self.front
+        with self.lock:
+            seen = self.now
+        if front is None or seen is None or seen["hwnd"] != front[0]:
+            return True
+        return not seen["private"] and not seen["words"]
 
     def pointed(self):
         """What's under the mouse pointer now, from the last read of the window (at): no read of its own, so it

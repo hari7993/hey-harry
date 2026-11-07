@@ -132,6 +132,18 @@ class Watching(unittest.TestCase):
                 self.w.urgent, self.w.next_glance = True, 0.0
                 self.assertFalse(self.w.due(self.t))  # and never glanced at
 
+    def test_a_window_agent_desktop_cant_read_needs_a_look(self):
+        """7 November 2026, the owner: a screenshot "only when it's unable to read"."""
+        self.assertTrue(self.w.unread())  # nothing read yet
+        self.look()
+        self.assertFalse(self.w.unread())  # its words were read
+        self.screen.front, self.screen.items = (77, "game.exe", "Some Game"), []
+        self.look(1)
+        self.assertTrue(self.w.unread())  # drawn without names: a screenshot is the one way to see it
+        self.screen.front = (9, "chrome.exe", "New Incognito Tab - Google Chrome")
+        self.look(1)
+        self.assertFalse(self.w.unread())  # a private window is never looked at
+
     def test_her_own_windows_are_left_alone(self):
         self.screen.front = (5, "pythonw.exe", "Hey Harry")
         self.look()
@@ -436,8 +448,20 @@ class Pointing(unittest.TestCase):
         self.assertIn('text \\"Context 73%\\"', json.dumps(lines))
         self.assertEqual(asked, [(("read", 1), 640, 300)])  # in the read she had
         self.assertEqual(screen.snaps, 1)  # and no read of its own
+        self.assertNotIn(screen_watch.UNNAMED_NOTE, lines)
         idle[0] = screen_watch.FRESH + 5
         self.assertNotIn("Under their mouse pointer", "\n".join(w.lines(1000.0)))  # not at the PC: not "this"
+
+    def test_nothing_named_under_the_pointer_means_a_look_for_this(self):
+        """7 November 2026, the owner: a screenshot "only when it's unable to read". A picture under the pointer."""
+        screen = Screen()
+        w = screen_watch.Watcher(read=screen.read, snapshot=screen.snapshot, idle=lambda: 3.0, judge=None,
+                                 announce=None, free=lambda: True, mode=lambda: "live", clock=lambda: 1000.0,
+                                 cursor=lambda: (640, 300), at=lambda raw, x, y: {"role": "image", "name": ""})
+        quiet(w.tick)
+        lines = w.lines(1000.0)
+        self.assertIn(screen_watch.UNNAMED_NOTE, lines)
+        self.assertNotIn("Under their mouse pointer", "\n".join(lines))
 
     def test_the_pointer_line_takes_whats_in_a_box_from_the_read_never_a_code(self):
         line = screen_watch.pointed_line
@@ -545,19 +569,28 @@ class Siri(unittest.TestCase):
     def test_what_is_this_goes_straight_to_the_model_with_whats_read_there(self):
         """27 October, live: asked "what is this" with the pointer on one bar, she described the whole window from
         its names, so it became a screen step with a ringed screenshot. 7 November, the owner: "it responds
-        immediately" and "don't take screenshots": the model answers at once from what's under the pointer as read
-        (Pointing above), and no shortcut after this one takes the words."""
-        with mock.patch.object(siri, "routines", lambda: []), \
+        immediately", and a screenshot "only when it's unable to read": the model answers at once from what's under
+        the pointer as read (Pointing above), and no shortcut after this one takes the words; a window agent-desktop
+        can't read is a screen step still, its screenshot the one way to see it."""
+        watcher = SimpleNamespace(fresh=mock.Mock(return_value=True), unread=mock.Mock(return_value=False))
+        with mock.patch.object(siri, "routines", lambda: []), mock.patch.object(siri, "SCREEN", [watcher]), \
                 mock.patch.object(siri.extras, "quick", mock.Mock(return_value=None)) as later:
             self.assertIsNone(quiet(siri.quick, "what is this"))
             self.assertIsNone(quiet(siri.quick, "explain this"))
             later.assert_not_called()
+            watcher.fresh.assert_called()  # read again first if you did something in it since
+            watcher.unread.return_value = True  # a game, a video: nothing agent-desktop can read
+            self.assertEqual(quiet(siri.quick, "what is this")["steps"], [{"do": "screen", "task": "what is this"}])
             self.assertIsNone(quiet(siri.quick, "what is this", "cold"))  # from across the room: not this way
             later.assert_called()
             self.saved["vision"] = False
             later.reset_mock()
             self.assertIsNone(quiet(siri.quick, "what is this"))  # Vision off: the rest as usual
             later.assert_called()
+        self.saved["vision"] = True
+        with mock.patch.object(siri, "routines", lambda: []), mock.patch.object(siri, "SCREEN", []):
+            plan = quiet(siri.quick, "what is this")  # not watching: nothing read, so a look
+            self.assertEqual(plan["steps"], [{"do": "screen", "task": "what is this"}])
 
     def test_a_question_about_the_screen_has_it_read_again_first(self):
         fake = SimpleNamespace(fresh=mock.Mock(return_value=True), lines=lambda: [], visiting=lambda: None)

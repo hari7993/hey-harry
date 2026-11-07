@@ -3912,10 +3912,17 @@ def _quick(words, gate=False):
     # October, live: asked "what is this" with the pointer on one bar, she described the whole Claude window from its
     # names, so it was a screen step, the pointer ringed on a screenshot; since 7 November (the owner: "it responds
     # immediately", "don't take screenshots") the control under the pointer is named from agent-desktop's read, and no
-    # other shortcut below gets these words
+    # other shortcut below gets these words. A window agent-desktop can't read (a game, a video) is still a screen
+    # step, its screenshot the one way to see it: the owner's "only when it's unable to read" (7 November)
     if gate != "cold" and settings.get("vision") and screen_watch.POINTED.fullmatch(t):
-        print("  pointing at the screen: the model, with what's read there")
-        return None
+        watcher = SCREEN[0] if SCREEN and screen_mode() != "off" else None
+        if watcher is not None:
+            watcher.fresh()
+        if watcher is not None and not watcher.unread():
+            print("  pointing at the screen: the model, with what's read there")
+            return None
+        print("  pointing at the screen: it can't be read, so a look")
+        return make_plan([{"do": "screen", "task": words}])
     # The newer skills (extras.py): where to click, drawn on the screen; the calendar; Spotify; named helpers;
     # files by what's in them; a reply in the email in front; meeting notes. Before messages and files below, whose
     # words ("reply saying ...", "find notes about ...") would take theirs
