@@ -44,7 +44,7 @@ HINTS = {"ptt": "Hold right Alt to talk", "wake": "Say \u201cHey Harry\u201d, \u
                                                  "then what you want. Right after she answers, just keep talking. "
                                                  "Holding right Alt works too."}
 WAITS = {"patient": "Patient (lets you pause)", "even": "Even", "quick": "Quick (can cut you off)"}  # speech.Listener
-CHATTY = {"chatty": "Chatty (every half hour or so)", "sometimes": "Now and then", "quiet": "Only when it matters"}
+CHATTY = {"chatty": "Chatty (every 20 minutes or so)", "sometimes": "Now and then", "quiet": "Only when it matters"}
 EARS_USES = {"all": "For commands and dictation", "dictation": "For dictation only"}  # a provider's ears, hearing.py
 SEP = "  \u00b7  "  # between a model's ID and what's known of it in the model list: "gpt-5.2  ·  400k"
 MODES = ("ptt", "wake")

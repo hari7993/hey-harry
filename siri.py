@@ -8011,6 +8011,10 @@ def prepare_task_steps(plan):
                 again = " and it will repeat" if repeat else ""
                 if payload.get("standing"):  # said back, so you know it won't ask
                     again += f", and it'll {' or '.join(payload['standing'])} without asking you, as you said"
+                if kind == "reminder":  # as a friend says it: "Task 8 is scheduled for today at 2:57 PM." till 7 November
+                    notices.append(f"Got it, I'll remind you {tasking.describe_due(due)}"
+                                   f"{', and again after that' if repeat else ''}.")
+                    continue
                 notices.append(f"Task {task_id} is scheduled for {tasking.describe_due(due)}{again}.")
                 continue
             if do == "background":  # a job done while you go on talking to her (run_job)

@@ -108,7 +108,9 @@ class Notes(Now):
                 friend.heard(words, "Done.")
             self.assertEqual(ran, [])
             friend.heard("I need to call Bunty tonight at 7", "Okay.")
-        self.assertEqual(ran, [("I need to call Bunty tonight at 7", "Okay.")])
+            friend.heard("Hey Harry, I noted to call Sam in twenty minutes.", "Got it.")  # 7 November, live
+        self.assertEqual(ran, [("I need to call Bunty tonight at 7", "Okay."),
+                               ("Hey Harry, I noted to call Sam in twenty minutes.", "Got it.")])
         self.assertEqual(friend.last_turn, NOW)
         self.assertTrue(friend.noting.acquire(blocking=False))  # let go once it's done
 
@@ -146,11 +148,14 @@ class Notes(Now):
 
 class TalkingFirst(Now):
     def test_she_asks_after_a_plan_once_its_time_has_come_once(self):
+        self.mode = "quiet"  # follow-ups whatever her chattiness; no check-ins in the way
         friend = self.friend()
         friend.add("plan", "call Bunty", when=NOW + 3600)
         self.later(10 * 60)
         self.assertEqual(friend.tick(), "")  # not yet
-        self.later(3600)
+        self.later(50 * 60 + 5 * 60)
+        self.assertEqual(friend.tick(), "")  # nor right on top of its reminder
+        self.later(companion.FOLLOW_LATER - 5 * 60)
         self.model.replies = ['"Did you get to call Bunty, or is he still waiting?"']
         with quiet():
             self.assertEqual(friend.tick(), "Did you get to call Bunty, or is he still waiting?")
@@ -164,9 +169,10 @@ class TalkingFirst(Now):
         self.assertEqual(self.friend().notes[0]["status"], "asked")
 
     def test_in_plain_words_when_the_model_doesnt_answer(self):
+        self.mode = "quiet"
         friend = self.friend()
         friend.add("plan", "call Bunty", when=NOW + 600)
-        self.later(15 * 60)
+        self.later(10 * 60 + companion.FOLLOW_LATER)
         self.model.replies = [ConnectionError("offline")]
         with quiet():
             self.assertEqual(friend.tick(), "Hey, did you get to call Bunty?")
@@ -207,8 +213,8 @@ class TalkingFirst(Now):
     def test_a_check_in_now_and_then(self):
         friend = self.friend()
         friend.add("event", "job interview at Infosys", when=NOW + 2 * 86400)
-        self.later(companion.CHAT_GAP["chatty"] - 60)
-        self.assertEqual(friend.tick(), "")  # not in her first half hour
+        self.later(companion.FIRST_CHAT - 60)
+        self.assertEqual(friend.tick(), "")  # not in her first few minutes
         self.later(120)
         self.model.replies = ["You've been on YouTube a while. Prepping for Monday's interview, or is this 'research'?"]
         with quiet():
@@ -216,8 +222,8 @@ class TalkingFirst(Now):
         self.assertTrue(line.startswith("You've been on YouTube a while."))
         self.assertEqual(self.said, [line])
         asked = self.model.asked[0][-1]["content"]
-        for told in ("job interview at Infosys", "On their screen now: YouTube", "6:31 PM, a Saturday evening",
-                     "you last talked 31 minutes ago", "nothing yet"):
+        for told in ("job interview at Infosys", "On their screen now: YouTube", "6:09 PM, a Saturday evening",
+                     "you last talked 9 minutes ago", "nothing yet"):
             self.assertIn(told, asked)
         self.later(10 * 60)
         self.assertEqual(friend.tick(), "")  # and not again so soon
@@ -391,6 +397,18 @@ class InSiri(Now):
             self.assertEqual(phrasebook.said("welcome"), [line])
             self.assertIsNone(siri.friend_welcome(True, self.FACTS))  # the weather, made up: fresh_welcome's go
         self.assertIn('"Hey Hari"', self.model.asked[1][-1]["content"])  # not the way she began last time
+
+    def test_a_reminder_said_back_as_a_friend_would(self):
+        """7 November, live: "I noted to call Sam in twenty minutes" was answered "Task 8 is scheduled for today at
+        2:57 PM." """
+        store = siri.tasking.Store(os.path.join(tempfile.mkdtemp(prefix="tasks-"), "tasks.db"))
+        with mock.patch.object(siri, "TASK_STORE", store), quiet():
+            plan = siri.prepare_task_steps({"steps": [{"do": "schedule", "when": "in 20 minutes", "description":
+                                                       "Call Sam", "task": {"kind": "reminder", "text": "call Sam"}}],
+                                            "say": ""})
+        self.assertRegex(plan["say"], r"^Got it, I'll remind you today at \d{1,2}:\d\d [AP]M\.$")
+        self.assertNotIn("Task", plan["say"])
+        self.assertEqual(store.list(active=True)[0]["kind"], "reminder")
 
     def test_her_welcome_says_their_name_with_a_capital(self):
         with mock.patch.object(siri, "pc_warnings", lambda: []):

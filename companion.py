@@ -30,11 +30,15 @@ import winplatform as win
 
 LIFE_PATH = os.path.join(win.APPDATA_DIR, "memories", "life.json")
 KEEP = 300  # notes kept at most, the oldest going first
-CHAT_GAP = {"chatty": 30 * 60, "sometimes": 90 * 60, "quiet": None}  # seconds between her check-ins, by chattiness
-CHATS_A_DAY = 14  # and never more than this in a day
+# seconds between her check-ins, by chattiness. Chatty was every half hour till the owner's first try on 7 November,
+# a restart and nothing from her for minutes: "she still behaves like an answering assistant, not taking initiative"
+CHAT_GAP = {"chatty": 20 * 60, "sometimes": 90 * 60, "quiet": None}
+FIRST_CHAT = 8 * 60  # her first check-in, chatty, this long after she starts
+CHATS_A_DAY = 20  # and never more than this in a day
 AFTER_TURN = 6 * 60  # seconds after you last spoke to her before she checks in: not on top of a conversation
 FOLLOW_AFTER_TURN = 90  # and before she asks about a plan
 AWAY = 120  # seconds without a key or the mouse after which you're not at the PC to be talked to
+FOLLOW_LATER = 10 * 60  # she asks how a plan went this long after its time: not on top of its reminder
 FOLLOW_WITHIN = 12 * 3600  # a plan's asked about while it's no more than this overdue; older ones close unasked
 MOOD_FOR = 2 * 86400  # how long a mood stays in what she knows of you
 SOON = 3 * 86400  # plans and events this near now are what her prompt carries
@@ -47,6 +51,7 @@ SMALL_WORDS = {"a", "an", "the", "my", "our", "that", "this", "it", "about", "i"
 SIGNAL = re.compile(
     r"\b(?:i'?ll|i will|i'?m going to|i'?m gonna|gonna|i have to|i've got to|i got to|i need to|i must|i should|"
     r"i love|i like|i hate|i prefer|my favou?rite|i always|i usually|every (?:day|morning|evening|night|week)|"
+    r"remind|call|calling|text|meet|visit|in (?:a|an|\d+|\w+) (?:minutes?|hours?)|later|"  # "I noted to call Sam in twenty minutes"
     r"tomorrow|tonight|today|this (?:morning|evening|afternoon|week|weekend)|next (?:week|month)|"
     r"on (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|meeting|interview|exam|deadline|"
     r"trip|travel|flight|birthday|anniversary|wedding|party|doctor|hospital|appointment|"
@@ -54,7 +59,7 @@ SIGNAL = re.compile(
     r"great day|bad day|long day|my (?:mom|mum|amma|dad|nanna|father|mother|brother|sister|wife|husband|friend|"
     r"girlfriend|boyfriend|boss|client|son|daughter|team)|kal|aaj|thak gaya|thak gayi|pareshan|khush)\b", re.I)
 NOTE = """You keep a close friend's notes on {who}'s life, from what they just said to {her}, their assistant. Reply with one JSON object and nothing else: {{"plans": [], "mood": "", "events": [], "likes": [], "people": []}}
-plans: what they said they'll do or must do, each {{"text": "call Sam", "when": "2026-11-07T19:00"}}, "when" in local time if they said one (now is {now}), else "". Not what they asked {her} to do right now.
+plans: what they said they'll do or must do, each {{"text": "call Sam", "when": "2026-11-07T19:00"}}, "when" in local time if they said one (now is {now}), else "". A plan they asked {her} to remind them of counts; a job they asked {her} to do on the PC doesn't.
 mood: how they seem to be, in a few words ("tired after a long day"), only if their words show it, else "".
 events: what's coming up or just happened in their life, each {{"text": "job interview at Infosys", "when": "2026-11-10"}} ("when" may be "").
 likes: what they like, dislike or usually do, each a few words ("loves biryani", "plays cricket on Sundays").
@@ -170,7 +175,8 @@ class Friend:
         self.noting = threading.Lock()  # one note-taking at a time
         self.notes = self._load()
         self.last_turn = clock()  # when you last spoke to her: no check-in on top of a conversation
-        self.last_said = clock()  # when she last spoke unasked: no check-in in her first CHAT_GAP either
+        self.last_said = clock() - CHAT_GAP["chatty"] + FIRST_CHAT  # when she last spoke unasked, as if: her first
+        # check-in, chatty, FIRST_CHAT after she starts
         self.said = []  # (when, what) she said unasked lately, so she doesn't say it again
 
     # ------------------------------------------------------------------ her notes
@@ -328,13 +334,14 @@ class Friend:
         return self.idle() <= AWAY and not self.in_call() and not self.quiet() and self.free()
 
     def due(self, now=None):
-        """The plan whose time has come and that she hasn't asked about, or None. One overdue by more than
+        """The plan whose time came FOLLOW_LATER ago and that she hasn't asked about, or None. One overdue by more than
         FOLLOW_WITHIN is closed unasked: a follow-up a day late is nagging, not a friend."""
         now = self.clock() if now is None else now
         found, closed = None, False
         with self.lock:
             for n in self.notes:
-                if n["kind"] == "plan" and n.get("status") == "open" and n.get("when") and n["when"] <= now:
+                if n["kind"] == "plan" and n.get("status") == "open" and n.get("when") and \
+                        n["when"] + FOLLOW_LATER <= now:
                     if now - n["when"] > FOLLOW_WITHIN:
                         n["status"], closed = "done", True
                     elif found is None:
