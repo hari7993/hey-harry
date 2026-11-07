@@ -35,7 +35,7 @@ MAX_TEXT = 1000
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 # Each app: how to say it, the program its window runs as, the link that opens a chat with the text typed in, what
-# the link needs, and what UI Automation can read in it (None: nothing readable, see verify)
+# the link needs, and what agent-desktop can read in it (None: nothing readable, see verify)
 APPS = {
     "whatsapp": {
         "say": "WhatsApp",
@@ -366,40 +366,48 @@ def window_of(app):
 
 
 def again(fn, tries=3, pause=0.4):
-    """fn(), tried again a moment later on a COM error: WhatsApp's web view answers UI Automation with "An event
-    was unable to invoke any of the subscribers" now and then while it redraws, or "NULL COM pointer access": never
-    tried again, that left a message unchecked after Enter. The last error if it never works."""
+    """fn(), tried again after a safe, transient accessibility read failure; the last error otherwise."""
     for i in range(tries):
         try:
             return fn()
         except Exception as exc:
-            if not ("COMError" in type(exc).__name__ or "NULL COM pointer" in str(exc)) or i == tries - 1:
+            code = getattr(exc, "code", "")
+            retry = getattr(exc, "safe", False) or code in ("TIMEOUT", "WINDOW_NOT_FOUND")
+            if not retry or i == tries - 1:
                 raise
             time.sleep(pause)
 
 
-def _uia():
-    import comtypes.client
-    comtypes.client.GetModule("UIAutomationCore.dll")
-    from comtypes.gen.UIAutomationClient import CUIAutomation, IUIAutomation
-    return comtypes.client.CreateObject(CUIAutomation, interface=IUIAutomation)
+READ_MS = 8000  # WhatsApp's page is a big one (13,000 elements when UI Automation counted them), and a read cut
+# short can miss its message box
 
 
-def _find(uia, root, control_type, name, scope=4):  # 4 = TreeScope_Descendants
-    """One targeted lookup. Never FindAll: the whole tree is 13,000 elements and takes seconds."""
-    return root.FindFirst(scope, uia.CreateAndCondition(
-        uia.CreatePropertyCondition(30003, control_type), uia.CreatePropertyCondition(30005, name)))
+def _snapshot(hwnd):
+    """One full agent-desktop read of a messaging window."""
+    if hwnd is None:
+        raise LookupError("the messaging window isn't open")
+    return win._desktop_snapshot(hwnd, timeout_ms=READ_MS)
+
+
+def _named(snap, roles, name, part=False):
+    """Shown raw elements of one of roles whose clean name is exact, or contains name with part."""
+    roles = {roles} if isinstance(roles, str) else set(roles)
+    want = win.clean_name(name).casefold()
+    out = []
+    for el in snap.elements:
+        label = win.clean_name(el.name).casefold()
+        if el.raw_role in roles and win._shown(el) and (want in label if part else label == want):
+            out.append(el)
+    return out
 
 
 def offline_reason(app, hwnd):
-    """Why the app can't send right now, or None. WhatsApp Desktop shows Reconnect when the phone isn't linked."""
+    """Why the app can't send right now, or None. WhatsApp shows Reconnect when the phone isn't linked."""
     spec = APPS[app]
     if not spec["offline_button"] or hwnd is None:
         return None
     try:
-        uia = _uia()
-        root = uia.ElementFromHandle(hwnd)
-        if _find(uia, root, 50000, spec["offline_button"]):  # 50000 = Button
+        if _find_button(hwnd, spec["offline_button"]):
             return f"{spec['say']} on this PC isn't connected to your phone"
     except Exception as exc:
         print(f"  couldn't check {app}: {exc!r}")
@@ -407,40 +415,36 @@ def offline_reason(app, hwnd):
 
 
 def compose_box(app, hwnd):
-    """See _compose_box: tried again on a COM error."""
+    """The app's message box and who its accessible name says the chat is to."""
     return again(lambda: _compose_box(app, hwnd))
 
 
 def _compose_box(app, hwnd):
-    """The app's message box, and who the app says it's to: WhatsApp's 2025 app names it "Type a message to Amma",
-    the one before "Type a message". (None, "") where Windows can't see it (Telegram draws its own)."""
+    """WhatsApp's text field named 'Type a message to Amma', or its older 'Type a message' field."""
     prefix = APPS[app]["compose"]
     if not prefix or hwnd is None:
         return None, ""
-    uia = _uia()
-    root = uia.ElementFromHandle(hwnd)
-    # one lookup for an Edit whose name has it (MatchSubstring | IgnoreCase), not a walk of the whole tree: the 2025
-    # app's "Type a message to Amma" first, as the caption box of its preview is "Type a message" too
-    edit = uia.CreatePropertyCondition(30003, 50004)
-    box = root.FindFirst(4, uia.CreateAndCondition(edit, uia.CreatePropertyConditionEx(30005, prefix + " to ", 3)))
-    if not box:
-        box = root.FindFirst(4, uia.CreateAndCondition(edit, uia.CreatePropertyConditionEx(30005, prefix, 3)))
-    if not box:  # a NULL element, not None: reading it was "NULL COM pointer access", every time
+    fields = [el for el in _snapshot(hwnd).elements if el.raw_role == "textfield" and win._shown(el)]
+    wanted = prefix.casefold()
+    box = next((el for el in fields if win.clean_name(el.name).casefold().startswith(wanted + " to ")), None)
+    box = box or next((el for el in fields if win.clean_name(el.name).casefold().startswith(wanted)), None)
+    if box is None:
         return None, ""
-    name = str(box.CurrentName or "")
-    to = name[len(prefix):].strip() if name.lower().startswith(prefix.lower()) else ""
+    name = win.clean_name(box.name)
+    to = name[len(prefix):].strip() if name.casefold().startswith(wanted) else ""
     return box, re.sub(r"^to\s+", "", to, flags=re.I).strip()
 
 
 def box_value(box):
-    """What a message box holds: "" when it's empty (WhatsApp's holds a line break then)."""
-    from comtypes.gen.UIAutomationClient import IUIAutomationValuePattern
-    value = box.GetCurrentPattern(10002)  # UIA_ValuePatternId
-    return " ".join(str(value.QueryInterface(IUIAutomationValuePattern).CurrentValue or "").split()) if value else ""
+    """What a message box holds: "" when it's empty (WhatsApp's holds a line break then). As the read that found it
+    saw it a moment ago: each box here comes from a read just made, and reading it again reads the whole window."""
+    if box is None or getattr(box, "password", False):
+        return ""
+    return " ".join(win._text(getattr(box, "value", None) or "").split())
 
 
 def typed_text(app, hwnd):
-    """What the app's message box holds, where Windows exposes it, else None (Telegram draws its own)."""
+    """What the app's message box holds, where it exposes one, else None."""
     def read():
         box, _ = _compose_box(app, hwnd)
         return box_value(box) if box else None
@@ -452,8 +456,7 @@ def typed_text(app, hwnd):
 
 
 def box_shown(app, hwnd, wait=4.0):
-    """What the chat's message box holds once it's there, giving the chat the link opened a few seconds to draw it;
-    None if it never comes (not linked to the phone, or the chat didn't open)."""
+    """What the chat's message box holds once it appears, or None if it never does."""
     end = time.time() + wait
     while True:
         shown = typed_text(app, hwnd)
@@ -462,48 +465,38 @@ def box_shown(app, hwnd, wait=4.0):
         time.sleep(0.5)
 
 
+def _wipe(app, hwnd):
+    """Ctrl+A and Backspace, only while the app is still the one in front: never into another app's box."""
+    if in_front(app, hwnd):
+        win.press("ctrl", "a")
+        win.press("backspace")
+
+
 def type_into(app, hwnd, text):
     """Type text into the chat's message box, as WhatsApp's 2025 app leaves its link's text out: the box is put in
     focus first, with the app in front, and whatever was in it cleared. Then read back. Raises if it isn't there, so
-    nothing half typed is ever asked about."""
-    end = time.time() + 3.0  # the chat the link opened may still be drawing its box: a moment, then again
-    while True:
-        box, _ = compose_box(app, hwnd)
-        if box and in_front(app, hwnd):
-            if not box.CurrentHasKeyboardFocus:  # the link usually leaves it there already
-                box.SetFocus()
-                time.sleep(0.2)
-            if box.CurrentHasKeyboardFocus and in_front(app, hwnd):
-                break
-        if time.time() > end:
-            raise RuntimeError(f"I couldn't get to the message box in {APPS[app]['say']}, so I've not typed "
-                               f"anything" if box else f"{APPS[app]['say']} didn't come to the front, so I've not "
-                               f"typed anything")
-        time.sleep(0.3)
+    nothing half typed is ever asked about. Typed on the keyboard, as it always was: a value set from outside can
+    show in WhatsApp's box without its editor knowing, and what's sent is what the editor holds."""
+    box = _focus_box(app, hwnd)
     if box_value(box):  # a draft from before: it would be sent along with this
-        win.press("ctrl", "a")
-        win.press("backspace")
+        _wipe(app, hwnd)
     win.type_text(text)
     time.sleep(0.4)
-    if box_value(box) != text:
-        win.press("ctrl", "a")
-        win.press("backspace")
+    check, _ = compose_box(app, hwnd)
+    if check is None or box_value(check) != text:
+        _wipe(app, hwnd)
         raise RuntimeError(f"{APPS[app]['say']} didn't take the message, so I've not sent anything")
 
 
 def drawn(hwnd):
-    """True once WhatsApp's page is drawn, its search box or a chat's message box there, giving it up to LOADING.
-    Started from closed ("Close WhatsApp" quits the 2025 app) the window shows long before: the chat was looked for
-    4 s, and a number that was fine got "didn't open the chat", so you had to ask again. The message box too: quit
-    while narrow, it comes back with only the chat drawn, no search box, and that ready chat got "still starting"."""
+    """True once WhatsApp has either its search field or a chat's message field."""
     end, why = time.time() + LOADING, None
     while True:
         try:
-            uia = _uia()
-            if again(lambda: _search_box(uia, uia.ElementFromHandle(hwnd))) is not None or \
-                    again(lambda: _compose_box("whatsapp", hwnd))[0] is not None:
+            snap = _snapshot(hwnd)
+            if _search_box(snap) is not None or _compose_box("whatsapp", hwnd)[0] is not None:
                 return True
-        except Exception as exc:  # the window may still be coming up
+        except Exception as exc:
             why = exc
         if time.time() > end:
             if why is not None:
@@ -573,227 +566,209 @@ def _hosted_by(front, hwnd):
 
 
 # --------------------------------------------------------------------------- finding someone in WhatsApp itself
-# Someone she hasn't been told about is often in your WhatsApp already, saved on your phone. She looks them up the way
-# you would: the name in WhatsApp's own search, each chat it finds opened, the number read off its contact panel, and
-# then she asks you if that's them (siri.look_up). No key is pressed: the search box is filled and emptied through UI
-# Automation, and a chat is opened with a click on its result only where that spot is WhatsApp's own window, so
-# nothing can land in a chat, and nothing is sent. Opening a chat does mark it read, as it would for you.
-LOOK_AT = 3  # chats she opens to read the number of, a second or two each
-LOADING = 25.0  # seconds for WhatsApp started from closed to draw its page: "Close WhatsApp" quits it
-SHOWN_NUMBER = re.compile(r"\+\d[\d\s()-]{6,}\d")  # a number as WhatsApp shows it: "+91 55555 01234"
-MARKS = re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069]")  # the direction marks it wraps a number in
-HEADINGS = ("Chats", "Contacts", "Groups in common", "Messages", "Other contacts")  # rows among the results too
-PEOPLE = ("Chats", "Contacts", "Other contacts")  # the headings people are under: not groups, not messages
-PANELS = ("Contact info", "Business info", "Group info")  # the contact panel's title says what the chat is
+# Someone she has not been told about may already be in WhatsApp. She searches its accessible controls, opens only
+# a result whose ref or checked point still belongs to WhatsApp, reads its contact panel and then asks the owner.
+LOOK_AT = 3
+LOADING = 25.0
+SHOWN_NUMBER = re.compile(r"\+\d[\d\s()-]{6,}\d")
+MARKS = re.compile("[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+HEADINGS = ("Chats", "Contacts", "Groups in common", "Messages", "Other contacts")
+PEOPLE = ("Chats", "Contacts", "Other contacts")
+PANELS = ("Contact info", "Business info", "Group info")
 
 
 def whatsapp_people(name, most=LOOK_AT, stop=None):
-    """The people WhatsApp itself finds for a name, those named it first, at most most and no groups: [{"name":
-    "Buntyyy", "number": "915555501234", "shown": "+91 55555 01234"}]. [] if it finds nobody. RuntimeError if
-    WhatsApp can't be looked in. Not linked to the phone, it finds nobody: the message she then stages says why.
-    stop: called before each chat is opened, True to open no more (you talked over her)."""
-    # the name as alias_key has it, in your own letters: "my mum" typed in found nobody, where "mum" finds Mum
-    name = clean_search(" ".join([w for w in str(name or "").split() if w.lower() not in ("my", "the")]) or name)
+    """People WhatsApp itself finds for name, with the phone number each contact panel shows."""
+    name = clean_search(" ".join([word for word in str(name or "").split() if word.lower() not in ("my", "the")])
+                        or name)
     hwnd = bring_up("whatsapp", "whatsapp:")
-    uia = _uia()
-    root = uia.ElementFromHandle(hwnd)
     box, end = None, time.time() + LOADING
-    while box is None:  # started from closed, its page takes a while to draw: the window shows long before
-        box = again(lambda: _search_box(uia, root))
+    while box is None:
+        box = again(lambda: _search_box(_snapshot(hwnd)))
         if box is None:
             if time.time() > end:
                 raise RuntimeError("I couldn't find WhatsApp's search box")
             time.sleep(0.5)
-            root = uia.ElementFromHandle(hwnd)
     try:
-        found = _look_for(uia, root, hwnd, box, name, most, stop)
+        found = _look_for(hwnd, box, name, most, stop)
         words = name.split()
         if not found and len(words) > 1 and len(words[0]) >= 3 and not (stop and stop()):
-            found = _look_for(uia, root, hwnd, box, words[0], most, stop)  # "Bunty Kumar", saved as just Bunty
+            box = _search_box(_snapshot(hwnd))
+            found = _look_for(hwnd, box, words[0], most, stop) if box is not None else []
         print(f"  WhatsApp found {len(found)} for {name!r}")
         return found
     finally:
         try:
-            _set_value(box, "")  # its chat list back
+            live = _search_box(_snapshot(hwnd))
+            if live is not None:
+                _set_value(live, "")
         except Exception as exc:
             print(f"  couldn't empty WhatsApp's search: {exc!r}")
 
 
-def _search_box(uia, root):
-    """WhatsApp's search box: the first box that isn't a chat's message box. None if there's none."""
-    found = root.FindFirst(4, uia.CreateAndCondition(uia.CreatePropertyCondition(30003, 50004), uia.CreateNotCondition(
-        uia.CreatePropertyConditionEx(30005, APPS["whatsapp"]["compose"], 3))))
-    return found if found else None
+def _search_box(snap):
+    """WhatsApp's first text field that is not a chat or preview message box."""
+    prefix = APPS["whatsapp"]["compose"].casefold()
+    fields = [el for el in snap.elements if el.raw_role == "textfield" and win._shown(el)]
+    return next((el for el in fields if not win.clean_name(el.name).casefold().startswith(prefix)), None)
 
 
 def _set_value(element, text):
-    """Fill or empty a box through UI Automation: no key is pressed, so nothing can land anywhere else. Keys typed
-    into WhatsApp's search box just after it was given the keyboard were lost, every time."""
-    from comtypes.gen.UIAutomationClient import IUIAutomationValuePattern
-    element.GetCurrentPattern(10002).QueryInterface(IUIAutomationValuePattern).SetValue(text)
+    """Fill or empty a box by its value: no key is pressed, so nothing can land anywhere else. Keys typed into
+    WhatsApp's search box just after it was given the keyboard were lost, every time."""
+    if element is None or "SetValue" not in element.actions:
+        raise RuntimeError("that box cannot be filled safely")
+    win.ui_act(element, str(text))
 
 
-def _look_for(uia, root, hwnd, box, name, most, stop=None):
-    box.SetFocus()  # the keyboard in WhatsApp's page: without it a click on a result didn't open its chat
+def _look_for(hwnd, box, name, most, stop=None):
+    try:  # the keyboard in WhatsApp's page: without it a click on a result didn't open its chat
+        win.ui_focus(box)
+    except Exception as exc:  # the name goes in by its value and each click checks where it lands, so only a try
+        print(f"  focusing WhatsApp's search: {exc!r}")
     time.sleep(0.3)
-    stale = again(lambda: _rows(uia, root)) if box_value(box) else None  # the results for what's in the box now
+    stale = again(lambda: _rows(hwnd)) if box_value(box) else None
     _set_value(box, name)
-    labels = _results(uia, root, None if stale is None else [label for label, _ in stale])
+    labels = _results(hwnd, None if stale is None else [label for label, _ in stale])
     if labels is None:
         raise RuntimeError("WhatsApp didn't show its search results")
     found = []
-    for tries, (i, label) in enumerate(_by_name(labels, name)):  # a group or two among them, not a long list
+    for tries, (i, label) in enumerate(_by_name(labels, name)):
         if tries >= most + 2 or len(found) >= most or (stop and stop()):
             break
-        if _name_rank(_label_name(label), name) == 2 and any(_name_rank(p["name"], name) < 2 for p in found):
-            break  # someone by that name is found: the rest only matched on something else, a chat each to open
-        try:  # never tried again: that would click the chat again
-            person = _read_person(uia, root, hwnd, i, label)
+        if _name_rank(_label_name(label), name) == 2 and any(_name_rank(person["name"], name) < 2
+                                                              for person in found):
+            break
+        try:
+            person = _read_person(hwnd, i, label)
         except Exception as exc:
             print(f"  couldn't read that WhatsApp contact: {type(exc).__name__}")
             continue
-        if person and all(p["number"] != person["number"] for p in found):
+        if person and all(known["number"] != person["number"] for known in found):
             found.append(person)
-    # "Send a message to Uma": WhatsApp listed Dileep Hyd before Uma Devi, and she asked about him first
-    found.sort(key=lambda p: _name_rank(p["name"], name))  # stable: WhatsApp's own order within each
+    found.sort(key=lambda person: _name_rank(person["name"], name))
     return found
 
 
-# a result's label is the name, when they last wrote, then their last message: "Dileep Hyd 9:47 am Uma will come"
 WHEN = re.compile(r"\s(?:\d{1,2}:\d{2}(?:\s?[ap]\.?m\.?)?|yesterday|today|monday|tuesday|wednesday|thursday|friday"
                   r"|saturday|sunday|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})(?=\s|$)", re.I)
 
 
 def _label_name(label):
-    """The name a search result's label starts with: "Dileep Hyd 9:47 am Uma will come" -> "Dileep Hyd". The whole
-    label if it shows no time."""
+    """The contact name at the start of a result label, before its message time."""
     label = " ".join(str(label).split())
     when = WHEN.search(label)
     return label[:when.start()] if when else label
 
 
 def _name_rank(name, want):
-    """How surely a name is the one asked for: 0 if it has each word ("Uma" in "Uma Devi"), 1 if each word starts
-    one of its words ("Bunty" in "Buntyyy"), 2 if not. Not by the letters alone: "uma" is in "Kumar"."""
-    asked = [w for w in re.findall(r"\w+", str(want).casefold()) if w not in ("my", "the")]
+    """0 for matching words, 1 for matching word starts, otherwise 2."""
+    asked = [word for word in re.findall(r"\w+", str(want).casefold()) if word not in ("my", "the")]
     words = re.findall(r"\w+", str(name).casefold())
-    if asked and all(w in words for w in asked):
+    if asked and all(word in words for word in asked):
         return 0
-    if asked and all(any(n.startswith(w) for n in words) for w in asked):
+    if asked and all(any(candidate.startswith(word) for candidate in words) for word in asked):
         return 1
     return 2
 
 
 def _by_name(labels, want):
-    """(row, label) for each search result in the order she opens them: theirs by name first, then by the start of
-    a word of it, then the rest, each in WhatsApp's own order. The row is still the result's own place."""
     return sorted(enumerate(labels), key=lambda row: _name_rank(_label_name(row[1]), want))
 
 
-STALE_FOR = 2.0  # seconds the results of what was in the search box before don't count: it searches again by then
+STALE_FOR = 2.0
+NOBODY = "No chats, contacts or messages found"
 
 
-def _results(uia, root, stale=None, wait=5.0):
-    """The labels of the people WhatsApp's search shows ("Buntyyy 9:47 am Photo"), once two looks agree: it draws
-    them as you type. [] if it shows nobody, None if it shows neither. stale: what showed for the text before, not
-    taken for the answer until it has had time to search again."""
+def _results(hwnd, stale=None, wait=5.0):
+    """Stable result labels after two matching accessibility snapshots."""
     start, last = time.time(), None
     while True:
         time.sleep(0.5)
         began = time.time()
-        rows = again(lambda: _rows(uia, root))
+        rows = again(lambda: _rows(hwnd))
         labels = None if rows is None else [label for label, _ in rows]
         if stale is not None and labels == stale and began - start < STALE_FOR:
             labels = None
         if labels is not None and labels == last:
             return labels
-        if began - start > wait:  # a look begun after the wait has the last word: one begun before may have missed
+        if began - start > wait:
             return labels
         last = labels
 
 
-NOBODY = "No chats, contacts or messages found"  # what its search shows in place of results
+ROW_ROLES = ("row", "cell", "option", "treeitem")  # what agent-desktop calls a result's rows (UI Automation's items)
 
 
-def _rows(uia, root):
+def _rows(hwnd):
     """(label, row) for each person among the search results, in order: the rows under Chats or Contacts that open a
-    chat. Each shows three times in the tree; one of them can be picked. [] if WhatsApp says it found nobody, None
-    if it shows neither yet: one lookup for both, as a lookup for what isn't there reads the whole page, for seconds."""
-    shown = root.FindFirst(4, uia.CreateOrCondition(
-        uia.CreateAndCondition(uia.CreatePropertyCondition(30003, 50028),
-                               uia.CreatePropertyCondition(30005, "Search results.")),
-        uia.CreateAndCondition(uia.CreatePropertyCondition(30003, 50020), uia.CreatePropertyCondition(30005, NOBODY))))
-    if not shown:
+    chat. Each shows three times in the tree; only one of them can be picked and takes the keyboard (Select and
+    SetFocus). [] if WhatsApp says it found nobody, None if it shows neither yet: whichever comes first in the page."""
+    snap = _snapshot(hwnd)
+    shown = next((el for el in snap.elements if win._shown(el) and (
+        el.raw_role == "grid" and win.clean_name(el.name) == "Search results." or
+        el.raw_role == "statictext" and win.clean_name(el.name) == NOBODY)), None)
+    if shown is None:
         return None
-    if shown.CurrentControlType != 50028:
+    if shown.raw_role != "grid":
         return []
-    items = shown.FindAll(4, uia.CreatePropertyCondition(30003, 50029))
     out, under = [], ""
-    for i in range(items.Length if items else 0):
-        try:
-            row = items.GetElement(i)
-            label = str(row.CurrentName or "")
-            if label in HEADINGS:
-                under = label
-            elif under in PEOPLE and row.CurrentIsKeyboardFocusable and row.GetCurrentPropertyValue(30036):
-                out.append((label, row))  # 30036: it can be picked (SelectionItem)
-        except Exception:  # gone while it redrew: what follows can't be placed under a heading
-            under = ""
+    for row in shown.descendants():
+        if row.raw_role not in ROW_ROLES:
+            continue
+        label = win.clean_name(row.name)
+        if label in HEADINGS:
+            under = label
+        elif under in PEOPLE and row.ref and win._shown(row) and {"Select", "SetFocus"} <= row.actions:
+            out.append((label, row))
     return out
 
 
-def _read_person(uia, root, hwnd, i, label):
-    """Open the i-th person among the results, if it's still label, and read their number off the contact panel:
-    {"name", "number", "shown"}, both as the panel shows them, and only if the panel is that result's chat. None for
-    a group, a panel with no number, or another chat's."""
-    rows = _rows(uia, root) or []
-    if i >= len(rows) or rows[i][0] != label:
-        return None  # the results changed under her
-    if not _open_row(hwnd, rows[i][1], label):
+def _read_person(hwnd, i, label):
+    """Open the same indexed result if it still has label, then read the matching contact panel."""
+    rows = _rows(hwnd) or []
+    if i >= len(rows) or rows[i][0] != label or not _open_row(hwnd, rows[i][1], label):
         return None
-    person = _panel_person(uia, root, hwnd)
+    person = _panel_person(hwnd)
     if person is None:
         return None
     name, shown = person
-    # the panel names the chat she clicked: by its name, or by its number for one not saved (the result then starts
-    # with the number). Never the result's own label for a name: it ends with their last message
     if not _same_chat(label, name or shown):
-        return None  # another chat's panel: the one she clicked hadn't come up
+        return None
     return {"name": name or shown, "number": clean_number(shown), "shown": shown}
 
 
-def _panel_person(uia, root, hwnd):
-    """The open chat's contact panel, opened with its Profile details button, read and closed again: (the name it
-    shows, or "" for a number not saved, and the number as shown). None for a group, a panel with no number, or one
-    that didn't open."""
+def _panel_person(hwnd):
+    """Open the current chat's contact panel, read its own name and number, and close that panel."""
     details = _find_button(hwnd, "Profile details")
     if details is None:
         return None
     try:
         _click(details)
-    except Exception as exc:  # Invoke often reports an error for a click that worked: _panel sees if it opened
+    except Exception as exc:
         print(f"  opening WhatsApp's contact panel: {type(exc).__name__}")
-    panel, title = _panel(uia, root, hwnd)
+    panel, title = _panel(hwnd)
     if panel is None:
         return None
     try:
         if title == "Group info":
             return None
-        texts = panel.FindAll(4, uia.CreatePropertyCondition(30003, 50020))
-        said = [" ".join(MARKS.sub("", str(texts.GetElement(j).CurrentName or "")).split())
-                for j in range(texts.Length if texts else 0)]
+        # its texts, as it shows them, in order: a button's or a box's words are never taken for a name
+        said = [" ".join(MARKS.sub("", str(item.name or "")).split()) for item in panel.descendants()
+                if item.raw_role == "statictext"]
+        said = [value for value in said if value]
         # the number on a line of its own, under the name: never one inside their About
-        at = next((j for j, s in enumerate(said) if SHOWN_NUMBER.fullmatch(s)), None)
+        at = next((i for i, value in enumerate(said) if SHOWN_NUMBER.fullmatch(value)), None)
         if at is None:
             return None
         return (said[at - 1] if at and said[at - 1] not in PANELS else ""), said[at]
     finally:
         try:
-            close = panel.FindFirst(4, uia.CreateAndCondition(uia.CreatePropertyCondition(30003, 50000),
-                                                              uia.CreatePropertyCondition(30005, "Close")))
-            if close:  # the panel's own: the window's Close sent WhatsApp to the tray
+            close = next((item for item in panel.descendants()
+                          if item.raw_role == "button" and win.clean_name(item.name) == "Close"), None)
+            if close is not None:
                 _click(close)
-        except Exception as exc:  # the number read stands
+        except Exception as exc:
             print(f"  closing WhatsApp's contact panel: {type(exc).__name__}")
 
 
@@ -802,19 +777,20 @@ def _open_row(hwnd, row, label):
     and then nothing more, every time. Only if WhatsApp is in front and that spot is its own window, so nothing else
     is ever clicked: not the popup over it, not another app. True once the chat open is that result's, by the name
     its message box is to; False if it isn't clicked, or doesn't come up."""
-    with win._real_pixels():  # the real pixels window_at and click use, whatever the screen's scaling
-        r = row.CurrentBoundingRectangle
-    x, y = r.left + (r.right - r.left) * 0.6, (r.top + r.bottom) / 2  # on the name, clear of the photo
-    if r.right <= r.left or r.bottom <= r.top or not in_front("whatsapp", hwnd) or not _ours(hwnd, win.root_at(x, y)):
+    rect = win.ui_rect(row) or row.rect
+    if not rect or rect[2] <= rect[0] or rect[3] <= rect[1]:
         return False
-    win.click(x, y)
+    x, y = rect[0] + (rect[2] - rect[0]) * 0.6, (rect[1] + rect[3]) / 2  # on the name, clear of the photo
+    if not in_front("whatsapp", hwnd) or not _ours(hwnd, win.root_at(x, y)):
+        return False
+    win.ui_click_point(x, y)
     start = time.time()
     while True:
         time.sleep(0.3)
         began = time.time()
         _, to = compose_box("whatsapp", hwnd)
         if to and _same_chat(label, to):
-            if began - start < 0.5:  # it was to them already: a chat by the same name may still be coming up
+            if began - start < 0.5:
                 time.sleep(0.8)
             return True
         if began - start > 4.0:
@@ -822,23 +798,18 @@ def _open_row(hwnd, row, label):
 
 
 def _ours(hwnd, at):
-    """True if window at is WhatsApp's own, or the web view its page is in."""
     return bool(at) and (at == hwnd or _hosted_by(at, hwnd))
 
 
 def _chat_key(name):
-    """A chat's name compared without spaces, case or emoji variation marks, the emoji themselves kept."""
     return re.sub(r"[\s\ufe0f]+", "", str(name or "")).casefold()
 
 
 def _letters(text):
-    """"Buntyyy 🐼 9:47 am" -> "buntyyy947am": a name compared without its emoji or spaces."""
     return re.sub(r"\W+", "", str(text)).casefold()
 
 
 def _same_chat(label, name):
-    """True if a search result's label starts with that name: by its letters and digits, or as it is for a name
-    that's only emoji."""
     key = _letters(name)
     if key:
         return _letters(label).startswith(key)
@@ -846,36 +817,32 @@ def _same_chat(label, name):
     return bool(name) and " ".join(str(label).split()).startswith(name)
 
 
-def _panel(uia, root, hwnd, wait=3.0):
-    """The contact panel just opened and its title: (element, "Contact info"), or (None, "") if it didn't open. The
-    panel is the title's container, as far up as it keeps clear of the chat list and the chat, and below WhatsApp's
-    window: a number in a message is never read as theirs, and only the panel's own Close is ever found."""
-    titles = uia.CreatePropertyCondition(30005, PANELS[0])
-    for title in PANELS[1:]:
-        titles = uia.CreateOrCondition(titles, uia.CreatePropertyCondition(30005, title))
-    want = uia.CreateAndCondition(uia.CreatePropertyCondition(30003, 50020), titles)
+def _panel(hwnd, wait=3.0):
+    """The accessible container around WhatsApp's just-opened contact-panel heading."""
     end = time.time() + wait
     while True:
         time.sleep(0.3)
-        head = root.FindFirst(4, want)
-        if head:
+        snap = _snapshot(hwnd)
+        head = next((el for el in snap.elements if win.clean_name(el.name) in PANELS and win._shown(el)), None)
+        if head is not None:
             break
         if time.time() > end:
             return None, ""
-    keep_clear = [e.CurrentBoundingRectangle for e in (_search_box(uia, root), compose_box("whatsapp", hwnd)[0]) if e]
-    if not keep_clear:  # nothing to tell the panel from the rest of the page by: no guessing
+    search = _search_box(snap)
+    compose = next((el for el in snap.elements if el.raw_role == "textfield" and
+                    win.clean_name(el.name).casefold().startswith(APPS["whatsapp"]["compose"].casefold())), None)
+    keep_clear = [el.rect for el in (search, compose) if el is not None and el.rect]
+    if not keep_clear:
         return None, ""
-    walker, panel = uia.ControlViewWalker, head
-    while True:
-        up = walker.GetParentElement(panel)
-        if not up or uia.CompareElements(up, root):
-            break
-        r = up.CurrentBoundingRectangle
-        if r.right <= r.left or any(r.left <= (k.left + k.right) / 2 <= r.right and
-                                    r.top <= (k.top + k.bottom) / 2 <= r.bottom for k in keep_clear):
+    panel = head
+    while panel.parent is not None and panel.parent.raw_role != "window":
+        up = panel.parent
+        rect = up.rect
+        if not rect or any(rect[0] <= (kept[0] + kept[2]) / 2 <= rect[2] and
+                           rect[1] <= (kept[1] + kept[3]) / 2 <= rect[3] for kept in keep_clear):
             break
         panel = up
-    return panel, str(head.CurrentName)
+    return panel, win.clean_name(head.name)
 
 
 # Files and photos, on WhatsApp: put on the clipboard as File Explorer's Copy does and pasted into the chat, where
@@ -901,66 +868,53 @@ def check_files(paths):
 
 
 def _button(hwnd, name, part=False):
-    """See _find_button: tried again on a COM error."""
+    """A button read again after a safe, transient agent-desktop failure."""
     return again(lambda: _find_button(hwnd, name, part))
 
 
 def _find_button(hwnd, name, part=False):
-    """A button in the app's window by its name, or the start of... any part of it with part (one quick lookup when
-    it's there; a long one when it isn't, so only where it's expected or in a clean-up). None if there's none."""
-    uia = _uia()
-    root = uia.ElementFromHandle(hwnd)
-    named = uia.CreatePropertyConditionEx(30005, name, 3) if part else uia.CreatePropertyCondition(30005, name)
-    found = root.FindFirst(4, uia.CreateAndCondition(uia.CreatePropertyCondition(30003, 50000), named))
-    return found if found else None
+    """The one first button in a window whose name is exact, or contains name with part."""
+    found = _named(_snapshot(hwnd), ("button", "menubutton"), name, part)
+    return found[0] if found else None
 
 
 def _click(button):
-    """Clicks a button through UI Automation: no mouse, no keys, so nothing else can be hit."""
-    from comtypes.gen.UIAutomationClient import IUIAutomationInvokePattern
-    button.GetCurrentPattern(10000).QueryInterface(IUIAutomationInvokePattern).Invoke()  # UIA_InvokePatternId
+    """Use a button's saved ref; agent-desktop refuses a stale or ambiguous target before delivery."""
+    return win.ui_act(button)
 
 
-WAITING = re.compile(r"Open [\w ]+, (?P<name>.+), item \d+ of \d+")  # "Open photo, holiday.jpg, item 1 of 2"
+WAITING = re.compile(r"Open [\w ]+, (?P<name>.+), item \d+ of \d+")
 
 
 def waiting(hwnd):
-    """See _waiting: tried again on a COM error."""
+    """See _waiting, retried only after a safe read failure."""
     return again(lambda: _waiting(hwnd))
 
 
 def _waiting(hwnd):
-    """What WhatsApp's preview holds now: ([its file names], how many its Send button says), ([], 0) with none. One
-    look through all its buttons, about 3 s on this PC: the quick lookups by name missed a preview that was there,
-    and which box has the keyboard isn't a sure sign of one (a test picture was left waiting in a chat that way)."""
-    uia = _uia()
-    found = uia.ElementFromHandle(hwnd).FindAll(4, uia.CreatePropertyCondition(30003, 50000))
+    """The file names and count in WhatsApp's attachment preview."""
+    buttons = [el for el in _snapshot(hwnd).elements if el.raw_role in ("button", "menubutton") and win._shown(el)]
     names, count = {}, 0
-    for i in range(found.Length if found else 0):
-        try:
-            label = str(found.GetElement(i).CurrentName or "")
-        except Exception:  # one element gone while it redrew: the rest still count
-            continue
-        m = WAITING.fullmatch(label)
-        if m:  # the page shows each element more than once: by the whole label, whose item number tells them apart
-            names[label] = m["name"]
-        m = re.fullmatch(r"Send (\d+) selected", label)
-        if m:
-            count = int(m[1])
+    for button in buttons:
+        label = win.clean_name(button.name)
+        match = WAITING.fullmatch(label)
+        if match:
+            names[label] = match["name"]
+        match = re.fullmatch(r"Send (\d+) selected", label)
+        if match:
+            count = int(match[1])
     return sorted(names.values()), count
 
 
 def _caption_box(hwnd):
-    """See _find_caption_box: tried again on a COM error."""
+    """The preview caption box, retried only after a safe read failure."""
     return again(lambda: _find_caption_box(hwnd))
 
 
 def _find_caption_box(hwnd):
-    """The caption box of WhatsApp's preview: an Edit named "Type a message", to nobody. None if there's none."""
-    uia = _uia()
-    found = uia.ElementFromHandle(hwnd).FindFirst(4, uia.CreateAndCondition(
-        uia.CreatePropertyCondition(30003, 50004), uia.CreatePropertyCondition(30005, "Type a message")))
-    return found if found else None
+    """The text field named exactly 'Type a message', which the attachment preview owns."""
+    found = _named(_snapshot(hwnd), "textfield", "Type a message")
+    return found[0] if found else None
 
 
 def _focus_box(app, hwnd):
@@ -969,10 +923,9 @@ def _focus_box(app, hwnd):
     while True:
         box, _ = compose_box(app, hwnd)
         if box and in_front(app, hwnd):
-            if not box.CurrentHasKeyboardFocus:  # the link usually leaves it there already
-                box.SetFocus()
-                time.sleep(0.2)
-            if box.CurrentHasKeyboardFocus and in_front(app, hwnd):
+            # the read just made says if the keyboard's there (the link usually leaves it there), else agent-desktop
+            # puts it there and checks
+            if ("focused" in box.states or win.ui_focus(box)) and in_front(app, hwnd):
                 return box
         if time.time() > end:
             raise RuntimeError(f"I couldn't get to the message box in {APPS[app]['say']}, so I've not typed "
@@ -1013,7 +966,7 @@ def prepare_files(app, contact, paths, caption=""):
         win.set_clipboard_files(paths)
         changed = win.clipboard_sequence()
         time.sleep(1.2)  # the chat the link just opened can miss a paste straight away
-        if not (in_front(app, hwnd) and box.CurrentHasKeyboardFocus):
+        if not (in_front(app, hwnd) and win.ui_is_focused(box)):
             raise RuntimeError(f"{APPS[app]['say']} went out of the front, so I've not sent anything")
         win.press("ctrl", "v")
         for _ in range(4):
@@ -1048,18 +1001,18 @@ def prepare_files(app, contact, paths, caption=""):
 
 
 def _with_caption(app, hwnd, caption, ready):
-    """The caption typed into the preview's own box and read back, then ready as it is."""
+    """The caption typed into the preview's own box and read back, then ready as it is. On the keyboard, as the
+    message is (type_into), once agent-desktop has seen the keyboard in that box with WhatsApp in front."""
     if caption:  # into the preview's own caption box: "Type a message", to nobody
         box = _caption_box(hwnd)
-        if box and not box.CurrentHasKeyboardFocus:
-            box.SetFocus()
-            time.sleep(0.2)
-        if not (box and box.CurrentHasKeyboardFocus and in_front(app, hwnd)):
+        focused = bool(box) and in_front(app, hwnd) and (win.ui_is_focused(box) or win.ui_focus(box))
+        if not (focused and in_front(app, hwnd)):
             discard_preview(app, hwnd)
             raise RuntimeError("I couldn't get to the caption box, so I've not sent anything")
         win.type_text(caption)
         time.sleep(0.4)
-        if box_value(box) != caption:
+        box = _caption_box(hwnd)
+        if box is None or box_value(box) != caption:
             discard_preview(app, hwnd)
             raise RuntimeError(f"{APPS[app]['say']} didn't take the caption, so I've not sent anything")
     return ready
@@ -1067,8 +1020,8 @@ def _with_caption(app, hwnd, caption, ready):
 
 def discard_preview(app, hwnd):
     """Take the files out of WhatsApp's preview with its own Remove attachment buttons, so they aren't left waiting
-    in the chat (Esc only asks "Discard unsent message?"), then check none are. In front or not: the buttons are
-    clicked through UI Automation, so nothing else can be hit."""
+    in the chat (Esc only asks "Discard unsent message?"), then check none are. The buttons are exact
+    agent-desktop refs, so a stale or ambiguous one is refused before delivery."""
     if not hwnd or not user32.IsWindow(hwnd):
         return False
     for _ in range(MAX_FILES + 4):
@@ -1148,10 +1101,9 @@ def _theirs(app, to, name, handle):
 
 
 def _number_open(hwnd):
-    """The number of the chat open in WhatsApp, digits only, off its contact panel (_panel_person), or ""."""
+    """The number of the chat open in WhatsApp, digits only, off its contact panel, or empty."""
     try:
-        uia = _uia()
-        person = _panel_person(uia, uia.ElementFromHandle(hwnd), hwnd)
+        person = _panel_person(hwnd)
         return re.sub(r"\D", "", person[1]) if person else ""
     except Exception as exc:
         print(f"  couldn't read the chat's number: {type(exc).__name__}")
@@ -1231,10 +1183,13 @@ def send(ready):
             raise RuntimeError("another chat is open now, so I've not sent it")
         if box_value(box) != text:
             raise RuntimeError("the message in the box changed, so I've not sent it")
-        if not box.CurrentHasKeyboardFocus:  # Enter in the box, where it sends
-            box.SetFocus()
-            time.sleep(0.15)
-        if not box.CurrentHasKeyboardFocus or not in_front(app, hwnd):
+        if "focused" not in box.states:  # Enter only after this exact box has focus, where it sends
+            if not win.ui_focus(box):
+                raise RuntimeError(f"I couldn't get to the message box in {APPS[app]['say']}, so I've not sent it")
+            box, current_to = compose_box(app, hwnd)
+            if box is None or current_to != to or "focused" not in box.states:
+                raise RuntimeError(f"I couldn't get to the message box in {APPS[app]['say']}, so I've not sent it")
+        if not in_front(app, hwnd):
             raise RuntimeError(f"I couldn't get to the message box in {APPS[app]['say']}, so I've not sent it")
     elif ready.get("checked"):
         raise RuntimeError(f"I can't see the message box in {APPS[app]['say']} now, so I've not sent it")
@@ -1358,10 +1313,13 @@ def discard(ready):
         if box:
             if (ready.get("to") and to != ready["to"]) or box_value(box) != ready["text"]:
                 return False
-            if not box.CurrentHasKeyboardFocus:
-                box.SetFocus()
-                time.sleep(0.15)
-            if not box.CurrentHasKeyboardFocus or not in_front(app, hwnd):
+            if "focused" not in box.states:
+                if not win.ui_focus(box):
+                    return False
+                box, current_to = compose_box(app, hwnd)
+                if box is None or current_to != to or "focused" not in box.states:
+                    return False
+            if not in_front(app, hwnd):
                 return False
         elif ready.get("checked"):  # it was read before: not now, so it isn't the box she typed in
             return False

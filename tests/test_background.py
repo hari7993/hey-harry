@@ -25,6 +25,7 @@ from tests.test_timers import StopsWorker
 
 import activity
 import agent
+import cursors
 import tasks
 
 ORIGINAL_ASK_ALONE = siri.ask_alone  # the real one: the rest of these tests script the judge in its place
@@ -1102,6 +1103,89 @@ class Review(Jobs):
         self.assertIn(tid, self.store.recover())
         self.assertNotEqual(self.store.get(tid)["payload"]["hold"], "0123abcd")
         self.assertFalse(self.store.approve(tid, "0123abcd"))  # the old phone button
+
+
+class Agents(Jobs):
+    """Several tasks said together, as her agents (4 November 2026, the owner's ask): a job each, said as one,
+    stopped together, and each with a cursor of its own (cursors.py), only drawn: begun with its go, sent to what it
+    presses, waiting with a step it held for your yes, and gone once it's done."""
+
+    def setUp(self):
+        super().setUp()
+        cursors.AGENTS.clear()
+        self.addCleanup(cursors.AGENTS.clear)
+
+    def queue_all(self, goals, words):
+        said, name = agent.SAID.set(words), agent.NAMED.set(True)
+        try:
+            return siri.prepare_task_steps({"steps": [{"do": "background", "goal": goal} for goal in goals],
+                                            "say": "On it."})
+        finally:
+            agent.SAID.reset(said)
+            agent.NAMED.reset(name)
+
+    def test_jobs_queued_together_are_said_once(self):
+        plan = self.queue_all(["send hi to Ravi in the mail app", "write a shopping list in Notepad",
+                               "find flights to Goa and note the cheapest"],
+                              "send hi to ravi, write a shopping list and find flights to goa at the same time")
+        ids = [step["id"] for step in plan["steps"]]
+        self.assertEqual([(self.store.get(i)["kind"], self.store.get(i)["status"]) for i in ids],
+                         [("agent", "queued")] * 3)
+        self.assertEqual(plan["say"], f"3 agents are on it, tasks {ids[0]}, {ids[1]} and {ids[2]}. I'll tell you as "
+                                      f"each one's done.")
+        plan = self.queue_all(["write a poem in Notepad"], "write a poem in notepad in the background")
+        self.assertEqual(plan["say"], f"I'll do that in the background as task {plan['steps'][0]['id']}, and tell "
+                                      f"you when it's done.")  # one alone, as ever
+
+    def test_stop_the_agents_stops_every_job_going_and_no_other_task(self):
+        ids = [step["id"] for step in self.queue_all(["write a list in Notepad", "find flights to Goa"],
+                                                     "write a list and find flights at once")["steps"]]
+        later = time.time() + 3600
+        others = [self.store.create("Drink water", "reminder", {"text": "drink water"}, due=later),
+                  self.store.create("Post on LinkedIn", "agent", {"goal": "post on LinkedIn"}, due=later),
+                  self.store.create("Check my mail", "agent", {"goal": "check my mail"},
+                                    repeat={"kind": "interval", "seconds": 3600})]
+        for words in ("stop the agents", "stop all the tasks", "cancel all jobs", "stop every agent",
+                      "stop all of my background tasks"):
+            with self.subTest(words):
+                plan = siri.from_table(siri.plain(words))
+                self.assertEqual(plan["steps"], [{"do": "task_control", "action": "cancel", "id": i} for i in ids])
+        said = siri.prepare_task_steps(siri.from_table("stop the agents"))["say"]
+        self.assertEqual(said, f"Stopped tasks {ids[0]} and {ids[1]}.")
+        self.assertEqual([self.store.get(i)["status"] for i in ids], ["cancelled", "cancelled"])
+        self.assertEqual([self.store.get(i)["status"] for i in others], ["queued"] * 3)
+        self.assertEqual(siri.from_table("stop the agents")["say"], "No agents are working right now.")
+
+    def test_a_jobs_cursor_goes_to_what_it_presses_and_waits_with_its_question(self):
+        w = self.mail()
+        for n, control in enumerate(w.controls):  # where each is on the screen, as agent-desktop gives it
+            control.rect = (100, 100 + 40 * n, 300, 130 + 40 * n)
+        aims, aim = [], cursors.aim
+        self.patch(cursors, "aim", lambda job_id, where=None, note="": aims.append((job_id, where, note)) or
+                   aim(job_id, where, note))
+        self.model({"steps": [{"do": "open", "app": "mail"}]},
+                   lambda: {"steps": [{"do": "click", "id": 1, "text": "ravi@example.com"},
+                                      {"do": "click", "id": 2, "text": "hi"}, {"do": "click", "id": 3}]},
+                   {"steps": [], "done": True, "expect": {"has": "Sent"}, "say": "Sent it to Ravi."})
+        tid = self.queue_job("send hi to ravi@example.com in the mail app", WORDS)
+        siri.run_job(self.claim(tid))
+        self.assertEqual(aims, [(tid, None, "opening"), (tid, (100, 100, 300, 130), "clicking"),
+                                (tid, (100, 140, 300, 170), "clicking")])  # Send, held for your yes, not yet
+        self.assertEqual(cursors.AGENTS[tid].window, w.hwnd)  # sent to its own window when it first looked
+        self.assertEqual([(job, slot, state) for job, slot, _, state in cursors.fleet()], [(tid, 1, "waiting")])
+        self.assertEqual(cursors.summary(), "1 agent waiting for you")
+        self.assertTrue(self.store.approve(tid, self.told.get_nowait().hold))
+        siri.run_job(self.claim(tid))
+        self.assertEqual(aims[-1], (tid, (100, 180, 300, 210), "clicking"))
+        self.assertEqual(self.app.sent, [{"To": "ravi@example.com", "Message": "hi", "Send": None}])
+        self.assertEqual([state for *_, state in cursors.fleet()], ["ended"])
+        self.assertTrue(cursors.summary().startswith("Done by 1 agent in "), cursors.summary())
+
+    def test_a_job_stopped_while_it_waits_on_you_takes_its_cursor_with_it(self):
+        cursors.begin(31, "write to Ravi")
+        cursors.end(31, waiting=True)
+        agent.stop_job(31)
+        self.assertEqual([state for *_, state in cursors.fleet()], ["ended"])
 
 
 if __name__ == "__main__":

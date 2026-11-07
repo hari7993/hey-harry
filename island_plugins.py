@@ -11,10 +11,12 @@ it in PLUGINS: what it shows as a card (Activity) is drawn without island.py kno
 """
 import asyncio
 import collections
+import itertools
 import ctypes
 import os
 import queue
 import re
+import struct
 import sys
 import threading
 import time
@@ -30,7 +32,12 @@ FULL_SCREEN = {2, 3, 4, 7}  # SHQueryUserNotificationState: busy, a game, presen
 # in from outside, never what's live or her own
 HUSHED = ("notifications", "devices", "battery")
 SETTINGS_PAGES = ("ms-settings:network-wifi", "ms-settings:bluetooth", "ms-settings:notifications",
-                  "ms-settings:sound", "ms-settings:powersleep")  # the pages a right-click in Controls may open
+                  "ms-settings:sound", "ms-settings:powersleep",
+                  "ms-settings:nightlight")  # the pages a right-click in Controls may open
+# The Launcher's buttons (island.LAUNCH, 7 November 2026, after NotchPixel's) as Windows' own keys: Windows+Print
+# Screen saves the whole screen in Pictures\Screenshots, Windows+Shift+S snips, Windows+Shift+R records the screen
+# with Windows 11's Snipping Tool
+LAUNCH_KEYS = {"shot": ("cmd", "print_screen"), "snip": ("cmd", "shift", "s"), "record": ("cmd", "shift", "r")}
 
 
 class Activity:
@@ -99,6 +106,10 @@ class Plugin:
         if self.id in HUSHED and settings.get("island_dnd"):  # Do Not Disturb, in the island's Controls
             return
         self.host.post(("show", activity))
+
+    def gone(self):
+        """Its popups taken down, the one up now and any waiting (a reminder done or snoozed)."""
+        self.host.post(("gone", self.id))
 
     def live(self, activity):
         self.host.post(("live", self.id, activity))
@@ -309,6 +320,20 @@ def player_name(app_id):
     return next((name for key, name in PLAYERS.items() if key in a), (re.split(r"[!._]", a)[0] or "Media").title())
 
 
+LRC = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
+
+
+def lrc_lines(text):
+    """Lyrics with their times (LRC, "[01:02.50] a line"), as [(seconds, line)] in order; a line with several times
+    comes at each, and one with none is left out."""
+    out = []
+    for raw in str(text or "").splitlines():
+        times = LRC.findall(raw)
+        words = LRC.sub("", raw).strip()
+        out += [(int(m) * 60 + float(sec), words) for m, sec in times]
+    return sorted(out)
+
+
 class Media(Plugin):
     id, name = "media", "Media"
     description = "What's playing, with its cover, and play, pause, next and back when you point at it."
@@ -316,7 +341,10 @@ class Media(Plugin):
     priority = 10
     options = (("art", "Show the cover", True), ("paused", "Stay a while after it's paused", True),
                ("bars", "Bars that move with the music, its lows to its highs", True),
-               ("glow", "A glow round it in the cover's colour", True))
+               ("glow", "A glow round it in the cover's colour", True),
+               # NotchPixel's lyrics that follow the song (7 November 2026): the song's name and who it's by go to
+               # LRCLIB (lrclib.net, free, no account) as each song starts, and nothing else
+               ("lyrics", "Lyrics that follow the song, from LRCLIB (it's sent the song's name)", True))
     PAUSED_FOR = 25.0  # seconds it stays after a pause, so it can be played again from the island
 
     def start(self):
@@ -406,7 +434,8 @@ class Media(Plugin):
                 "playing": playing, "position": max(0.0, position), "duration": max(0.0, end), "at": now,
                 "art": self.art if self.option("art") else None,
                 "tint": self.tint if self.option("art") and self.option("glow") else None,
-                "output": getattr(self, "output", None)}
+                "output": getattr(self, "output", None),
+                "lyrics": self._lyrics(key, title, artist, end) if self.option("lyrics") else None}
         if self.last is not None and playing and (title, artist) != (self.last.data["title"], self.last.data["artist"]):
             # another song: it peeks for a moment, as Glance's notch shows the next track (30 October 2026)
             way = getattr(self, "way", None)
@@ -416,7 +445,7 @@ class Media(Plugin):
                                seconds=2.4))
         same = ("title", "artist", "app", "playing", "duration")
         changed = self.last is None or any(self.last.data[k] != data[k] for k in same) or \
-            self.last.data["art"] is not data["art"]
+            self.last.data["art"] is not data["art"] or self.last.data.get("lyrics") is not data["lyrics"]
         if not changed:  # where it would be by now: a jump means it was moved along, or back
             old = self.last.data
             expected = old["position"] + (now - old["at"] if old["playing"] else 0.0)
@@ -428,6 +457,38 @@ class Media(Plugin):
         if playing:
             self.level = self._level()
         return playing
+
+    LYRICS_URL = "https://lrclib.net/api/get"
+
+    def _lyrics(self, key, title, artist, duration):
+        """The song's lyrics with their times, [(seconds, line)], or None while they're being looked up or there are
+        none: asked of LRCLIB once a song, on a thread of its own, and kept for the last few songs."""
+        cache = self.__dict__.setdefault("lyric_cache", collections.OrderedDict())
+        if key in cache:
+            return cache[key]
+        if not title or getattr(self, "lyric_key", None) == key:
+            return None
+        self.lyric_key = key
+
+        def look():
+            got = None
+            try:
+                import requests
+                ask = {"track_name": title, "artist_name": artist}
+                if duration > 0:
+                    ask["duration"] = int(round(duration))
+                r = requests.get(self.LYRICS_URL, params=ask, timeout=8,
+                                 headers={"User-Agent": "Hey Harry (a voice assistant for Windows)"})
+                if r.status_code == 200:
+                    got = lrc_lines(r.json().get("syncedLyrics") or "") or None
+            except Exception as exc:
+                print(f"  island: no lyrics ({exc.__class__.__name__})")
+            cache[key] = got
+            while len(cache) > 12:
+                cache.popitem(last=False)
+            self.host.poll_soon(self)
+        threading.Thread(target=look, name="island-lyrics", daemon=True).start()
+        return None
 
     def _bars(self, playing):
         """The five bars that go with the music (visualizer.py): listening only while it plays and the island shows
@@ -470,8 +531,9 @@ class Media(Plugin):
                 from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
                 device = AudioUtilities.GetSpeakers()
                 device = getattr(device, "_dev", device)
-                self.meter = ctypes.cast(device.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None),
-                                         ctypes.POINTER(IAudioMeterInformation))
+                # QueryInterface, never ctypes.cast, which COM would release twice (winplatform._mic_endpoint)
+                self.meter = device.Activate(IAudioMeterInformation._iid_, CLSCTX_ALL, None).QueryInterface(
+                    IAudioMeterInformation)
             return float(self.meter.GetPeakValue())
         except Exception:
             self.meter = None
@@ -491,6 +553,18 @@ class Media(Plugin):
                 print(f"  island: {what} didn't work ({exc!r})")
             self.props_at = 0.0  # look again straight away
             self.host.poll_soon(self)
+        elif what == "seek" and data is not None:  # a click along the card's line: there in the song
+            try:
+                self._run(self.session.try_change_playback_position_async(int(float(data) * 10_000_000)))
+            except Exception as exc:
+                print(f"  island: seek didn't work ({exc!r})")
+            self.props_at = 0.0
+            self.host.poll_soon(self)
+        elif what == "volume" and data:  # the wheel over the card, 5 a notch; Levels shows it changing
+            try:
+                win.set_volume(max(0, min(100, win.volume() + 5 * int(data))))
+            except Exception as exc:
+                print(f"  island: the volume didn't change ({exc!r})")
         elif what == "output":  # the next of the sound outputs that are on, from the music card
             try:
                 import devices
@@ -614,10 +688,13 @@ class Hub(Plugin):
     the brightness, the weather) on a thread of its own, so the music and the notifications never wait for it. A press
     on one of its controls runs here too, the slow ones on a thread of their own."""
     id, name = "hub", "Panels"
-    description = ("Click her eyes for Controls (Wi-Fi, Bluetooth, Do Not Disturb, volume and brightness), the "
-                   "calendar with a focus timer, your devices and the shelf. Scroll over it for the next one.")
+    description = ("Rest the pointer on her eyes, or click them, for Controls (Wi-Fi, Bluetooth, Do Not Disturb, "
+                   "volume and brightness), the calendar with a focus timer, your devices and the shelf. Scroll over "
+                   "it for the next one.")
     every = 1.0
-    options = (("weather", "The weather at its top, from Open-Meteo at most every half hour", True),)
+    # hover (7 November 2026, the owner's ask after NotchPixel's island): they open as the pointer rests on her eyes
+    options = (("weather", "The weather at its top, from Open-Meteo at most every half hour", True),
+               ("hover", "Open when the pointer rests on her eyes, as NotchPixel's island does", True))
     SLOW_EVERY, WEATHER_EVERY, MONTH_EVERY, DEVICES_EVERY = 5.0, 1800.0, 60.0, 2.5
 
     def start(self):
@@ -654,6 +731,12 @@ class Hub(Plugin):
             self._weather(now)
         if page == "calendar":
             self._month(now, want.get("month") if isinstance(want, dict) else None)
+        if page == "widgets":  # the Widgets' disk ring, beside the processor and the memory read above
+            try:
+                import psutil
+                d["disk"] = int(round(psutil.disk_usage(os.environ.get("SystemDrive", "C:") + "\\").percent))
+            except Exception:
+                d["disk"] = None
         if page == "today":  # the to-do list, as Glance's panel has your reminders: a small file on this PC
             try:
                 import todo
@@ -684,6 +767,8 @@ class Hub(Plugin):
             for kind in ("wifi", "bluetooth"):
                 self.data[kind] = win.radio_on(kind)
             self.data["brightness"] = win.brightness()
+            # night light and the power mode (7 November 2026, after NotchPixel's quick controls)
+            self.data["night"], self.data["power"] = win.night_light(), win.power_mode()
             # which network and which device, under their buttons (30 October 2026, the owner's ask)
             import devices
             try:
@@ -763,7 +848,7 @@ class Hub(Plugin):
             self.data["muted"] = bool(data)
         elif what == "brightness":
             self._brightness(int(data))
-        elif what in ("wifi", "bluetooth", "page", "output", "open_drive", "tick"):
+        elif what in ("wifi", "bluetooth", "page", "output", "open_drive", "tick", "night", "power", "launch"):
             threading.Thread(target=self._do, args=(what, data), name="island-hub-press", daemon=True).start()
             return
         self.host.poll_soon(self)
@@ -800,6 +885,19 @@ class Hub(Plugin):
                 except RuntimeError as exc:  # Windows wouldn't, and its page is open instead
                     print(f"  island: {exc}")
                 self.data[what] = win.radio_on(what)
+            elif what == "night":
+                try:
+                    win.set_night_light(bool(data))
+                except RuntimeError as exc:  # never set up, or this Windows: its page instead
+                    print(f"  island: {exc}")
+                    win.open_windows_page("ms-settings:nightlight")
+                self.data["night"] = win.night_light()
+            elif what == "launch" and data in LAUNCH_KEYS:  # the Launcher's, once the panels have gone
+                time.sleep(0.35)
+                win.press(*LAUNCH_KEYS[data])
+            elif what == "power" and data in win.POWER_MODES:
+                win.set_power_mode(data)
+                self.data["power"] = win.power_mode()
             elif what == "page" and data in SETTINGS_PAGES:
                 win.open_windows_page(data)
             elif what == "output" and data:
@@ -976,6 +1074,292 @@ class Meeting(Live):
             return None
         return {"glyph": "record", "accent": "red", "label": "Meeting notes", "title": "Taking notes",
                 "sub": "Say \u201cstop the meeting notes\u201d for a recap", "since": float(m.started), "wave": True}
+
+
+REMINDED = collections.deque(maxlen=8)  # reminders just due, (their words, when), told by siri as it says them
+
+
+def remind(text):
+    """A reminder due now, for the island to show with Snooze and Done (Reminders): called as she says it."""
+    REMINDED.append((str(text), time.time()))
+
+
+class Reminders(Plugin):
+    """NotchPixel's reminders (7 November 2026, the owner's ask): a reminder as it's due pops up in the island, a
+    bell in orange and its words, with Snooze, which says it again in SNOOZE seconds, and Done; one on repeat comes
+    round again by itself, as it always has (siri's task queue)."""
+    id, name = "reminders", "Reminders"
+    description = "A reminder pops up as it's due, with Snooze for ten minutes and Done."
+    every = 1.0
+    SNOOZE, SHOWN = 600, 45.0
+
+    def poll(self, now):
+        while REMINDED:
+            text, at = REMINDED.popleft()
+            if now - at > 60:
+                continue
+            self.show(Activity(self.id, "live", {
+                "glyph": "bell", "accent": "orange", "label": "Reminder", "title": text, "short": text,
+                "sub": f"Now, {time.strftime('%H:%M')}",
+                "buttons": [{"name": "snooze", "label": "Snooze 10 min", "data": text},
+                            {"name": "done", "label": "Done"}]}, seconds=self.SHOWN, mood="surprised"))
+
+    def command(self, what, data=None):
+        """Snooze: the same reminder again in SNOOZE seconds, said as any reminder is; Done: only gone."""
+        if what == "snooze" and data:
+            import tasks
+            tasks.Store().create(f"Remind me to {data}"[:160], "reminder", {"text": str(data)[:500]},
+                                 due=time.time() + self.SNOOZE)
+        self.gone()
+
+
+class Phone(Plugin):
+    """Your phone (phonelink.py, 7 November 2026, after NotchPixel's Files to your phone and PC Deck, and the owner's
+    NectarLink): the shelf's files for a phone by a QR code, or straight to the phone NectarLink has paired; and PC
+    Deck, the phone as the PC's trackpad and remote, off till it's turned on in its tab, each phone allowed here first
+    (Allow is careful: the pointer has to rest on it), off again DECK_IDLE seconds after its last touch. What the island
+    shows is posted as ("phone", {"files": a link or None, "deck": a link or None, "phones": how many are allowed,
+    "nectar": NectarLink's phone or None, "error": what went wrong last})."""
+    id, name = "phone", "Phone"
+    description = ("The shelf's files to your phone by a QR code, or through NectarLink; and PC Deck, your phone as the "
+                   "PC's trackpad and remote, off till you turn it on in its tab.")
+    every = 1.0
+    NECTAR_EVERY = 30.0
+
+    def start(self):
+        self.share = self.deck = None
+        self.sent, self.error, self.nectar, self.nectar_at = None, None, None, 0.0
+
+    def stop(self):
+        for server in (self.share, self.deck):
+            if server is not None:
+                server.stop()
+        self.share = self.deck = None
+
+    def poll(self, now):
+        import phonelink
+        if self.share is not None and now > self.share.until:
+            self.share.stop()
+            self.share = None
+        if self.deck is not None and now - self.deck.used > phonelink.DECK_IDLE:
+            self.deck.stop()
+            self.deck = None
+        if now - self.nectar_at > self.NECTAR_EVERY:
+            self.nectar_at, self.nectar = now, phonelink.nectar_phone()
+        state = {"files": self.share.url if self.share else None, "deck": self.deck.url if self.deck else None,
+                 "phones": len(self.deck.allowed) if self.deck else 0, "nectar": self.nectar, "error": self.error}
+        if state != self.sent:
+            self.sent = state
+            self.host.post(("phone", state))
+
+    def _ask(self, phone, kind):
+        """A phone not yet allowed pressed something on the Deck (the server's thread): the island asks."""
+        self.show(Activity(self.id, "live", {
+            "glyph": "link", "accent": "orange", "label": "PC Deck", "title": f"Let {kind} control this PC?",
+            "short": "A phone wants in", "sub": "It can move the pointer, click, scroll and press media keys",
+            "buttons": [{"name": "deny", "label": "No", "data": phone},
+                        {"name": "allow", "label": "Allow", "data": phone, "careful": True}]},
+            seconds=60, mood="surprised"))
+
+    def command(self, what, data=None):
+        import phonelink
+        self.error = None
+        try:
+            if what == "files":
+                if self.share is not None:
+                    self.share.stop()
+                self.share = phonelink.Share([str(p) for p in data or []])
+            elif what == "stop_files" and self.share is not None:
+                self.share.stop()
+                self.share = None
+            elif what == "deck_on" and self.deck is None:
+                import dock
+                self.deck = phonelink.Deck(self._ask, lambda: [(p["name"], p["path"]) for p in dock.pins()])
+            elif what == "deck_off" and self.deck is not None:
+                self.deck.stop()
+                self.deck = None
+            elif what in ("allow", "deny") and self.deck is not None and data:
+                self.deck.allow(str(data), what == "allow")
+                self.gone()
+            elif what == "nectar_files":
+                phonelink.nectar_send([str(p) for p in data or []])
+            elif what in ("nectar_clipboard", "nectar_find"):
+                phonelink.nectar_send(task="send-clipboard" if what == "nectar_clipboard" else "find-phone")
+        except Exception as exc:
+            self.error = str(exc) if isinstance(exc, RuntimeError) else "That didn't work"
+            print(f"  island: {what} didn't work ({exc!r})")
+        self.host.poll_soon(self)
+
+
+class GameStrip(Live):
+    """NotchPixel's game strip (7 November 2026, the owner's ask): over a full-screen game, where the island
+    otherwise goes away (island_hide_fullscreen), a slim strip with how busy the processor, the graphics and the
+    memory are, read each second. A full-screen video or slides are full screen too, so it's only while the
+    graphics are busy drawing (GAME_GPU), as a game keeps them and a video doesn't. Never the frame rate: Windows
+    gives an app that only by tracing every frame."""
+    id, name = "game", "Game strip"
+    description = "Over a full-screen game, a slim strip with how busy the processor, the graphics and the memory are."
+    every = 1.0
+    priority = 1  # shown only over a full-screen game, where nothing else is
+    GAME_GPU, GAME_FOR = 20, 3.0  # the graphics busier than this, for this many seconds: a game
+
+    def start(self):
+        super().start()
+        self.busy_since = None
+        win.gpu_load()  # starts the counting
+
+    def data(self, now):
+        if not getattr(self.host, "busy", False):
+            self.busy_since = None
+            return None
+        gpu = win.gpu_load()
+        if gpu is None or gpu < self.GAME_GPU:
+            if self.shown is None:  # once up, it stays through a quiet moment on a menu
+                self.busy_since = None
+                return None
+        self.busy_since = self.busy_since or now
+        if now - self.busy_since < self.GAME_FOR and self.shown is None:
+            return None
+        try:
+            import psutil
+            cpu, ram = int(round(psutil.cpu_percent(None))), int(round(psutil.virtual_memory().percent))
+        except Exception:
+            cpu = ram = None
+        return {"cpu": cpu, "gpu": gpu, "ram": ram}
+
+    def live(self, activity):  # its own kind, a strip, not a live activity's card
+        if activity is not None:
+            activity.kind = "strip"
+        super().live(activity)
+
+
+MIC_STORE = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
+
+
+def _mic_name(key_name, packaged):
+    """An app's name from its key under MIC_STORE: a Store app's from its family name ("5319275A.WhatsAppDesktop_cv1g"
+    is WhatsApp), any other's from its program file ("C:#Program Files#Zoom#bin#Zoom.exe" is Zoom's description)."""
+    if packaged:
+        part = key_name.split("_")[0].split(".")[-1]
+        return re.sub(r"(?<=[a-z])Desktop$", "", part) or key_name
+    path = key_name.replace("#", "\\")
+    try:
+        said = win.file_description(path)
+    except Exception:
+        said = ""
+    return said or os.path.splitext(os.path.basename(path))[0]
+
+
+def mic_users(root=None):
+    """The apps that have the mic now, newest first, as Windows keeps them for its own mic sign in the taskbar
+    (MIC_STORE: a start and no stop yet); her own listening, any Python, is left out. root: the key to read, for a
+    test."""
+    found = []
+
+    def look(key, name, packaged):
+        try:
+            start = winreg.QueryValueEx(key, "LastUsedTimeStart")[0]
+            stop = winreg.QueryValueEx(key, "LastUsedTimeStop")[0]
+        except OSError:
+            return
+        if start and not stop and not (not packaged and os.path.basename(name.replace("#", "\\")).lower()
+                                       .startswith("python")):
+            found.append((start, _mic_name(name, packaged)))
+    try:
+        with (root or winreg.OpenKey(winreg.HKEY_CURRENT_USER, MIC_STORE)) as store:
+            for i in itertools.count():
+                try:
+                    name = winreg.EnumKey(store, i)
+                except OSError:
+                    break
+                with winreg.OpenKey(store, name) as sub:
+                    if name != "NonPackaged":
+                        look(sub, name, True)
+                        continue
+                    for j in itertools.count():
+                        try:
+                            prog = winreg.EnumKey(sub, j)
+                        except OSError:
+                            break
+                        with winreg.OpenKey(sub, prog) as key:
+                            look(key, prog, False)
+    except OSError:
+        return []
+    return [name for _, name in sorted(found, reverse=True)]
+
+
+class Calls(Live):
+    """NotchPixel's one mute key and its call timer (7 November 2026, the owner's ask): Ctrl+Alt+M mutes the mic in
+    every app at once, and again unmutes it, said on the island for a moment; and while an app has the mic, a call,
+    with its name, how long it's been and whether you're muted, Mute or Unmute when you point at it. Muted with no
+    call, the island says so, as she can't hear you either then. Which apps have the mic is what Windows keeps for
+    its own mic sign (mic_users), read every 2 seconds."""
+    id, name = "calls", "Calls and the mute key"
+    description = ("Ctrl+Alt+M mutes your mic in every app at once. While an app has the mic, how long the call's "
+                   "been, and Mute or Unmute when you point at it.")
+    every = 2.0
+    priority = 24  # under her meeting notes, which hear the call too
+
+    def start(self):
+        super().start()
+        self.since, self.presses = None, collections.deque(maxlen=4)
+        if self._pressed not in win.CHORDS:
+            win.CHORDS.append(self._pressed)
+
+    def stop(self):
+        if self._pressed in win.CHORDS:
+            win.CHORDS.remove(self._pressed)
+        super().stop()
+
+    def _pressed(self, name):
+        """A shortcut pressed, inside the keyboard hook: the mute key only noted, and done soon on this thread."""
+        if name == "mute":
+            self.presses.append(time.time())
+            self.host.poll_soon(self, 0.0)
+
+    def poll(self, now):
+        while self.presses:
+            if now - self.presses.popleft() < 2.0:
+                self._set(None)
+        super().poll(now)
+
+    def _set(self, muted):
+        """The mic muted or not (None: the other way round from now) for every app, and said for a moment."""
+        try:
+            muted = (not win.mic_muted()) if muted is None else bool(muted)
+            win.set_mic_muted(muted)
+        except Exception as exc:
+            print(f"  island: the mic wasn't {'muted' if muted else 'unmuted'} ({exc!r})")
+            return
+        self.show(Activity(self.id, "live", {"glyph": "mic_off" if muted else "mic", "accent": "red" if muted else
+                                             "green", "label": "Microphone", "title": "Muted" if muted else "On",
+                                             "short": "Muted" if muted else "Mic on",
+                                             "sub": "In every app. Ctrl+Alt+M again to " +
+                                                    ("unmute" if muted else "mute")}, seconds=1.8))
+        self.host.poll_soon(self, 0.0)
+
+    def data(self, now):
+        apps = mic_users()
+        try:
+            muted = win.mic_muted()
+        except Exception:
+            muted = False
+        if not apps:
+            self.since = None
+            if not muted:
+                return None
+            return {"glyph": "mic_off", "accent": "red", "label": "Microphone", "title": "Your mic is muted",
+                    "short": "Muted", "sub": "In every app, and she can't hear you. Ctrl+Alt+M unmutes it",
+                    "buttons": [{"name": "unmute", "label": "Unmute"}]}
+        self.since = self.since or now
+        return {"glyph": "mic_off" if muted else "mic", "accent": "red" if muted else "green", "label": apps[0],
+                "title": "Muted" if muted else "In a call", "short": "Muted" if muted else apps[0],
+                "sub": "Ctrl+Alt+M mutes your mic in every app", "since": self.since,
+                "buttons": [{"name": "unmute" if muted else "mute", "label": "Unmute" if muted else "Mute"}]}
+
+    def command(self, what, data=None):
+        if what in ("mute", "unmute"):
+            self._set(what == "mute")
 
 
 class Hands(Live):
@@ -1231,7 +1615,10 @@ class Clipboard(Plugin):
         super().stop()
 
     def _pressed(self, name):
-        """A shortcut pressed (winplatform.chord), inside the keyboard hook: only noted, and looked at soon."""
+        """A shortcut pressed (winplatform.chord), inside the keyboard hook: only noted, and looked at soon. The mute
+        key is Calls' own."""
+        if name == "mute":
+            return
         self.chords.append((name, time.time()))
         self.host.poll_soon(self, 0.0)
 
@@ -1256,8 +1643,7 @@ class Clipboard(Plugin):
         got = copied()
         if got is not None:
             self.last = dict(got)
-            if got["what"] == "text":
-                self._keep(now)
+            self._keep(now, got["what"])
             how = "copy"
             if answer and now - self.cut_at < self.CUT_FOR:
                 how, self.cut_at = "cut", 0.0
@@ -1268,20 +1654,54 @@ class Clipboard(Plugin):
                 got["text"] = ""
             self.show(Activity(self.id, "copied", got, seconds=2.2))
 
-    CLIPS = 12
+    # what's kept: 12 till 7 November 2026, when NotchPixel's Clipboard tab came with pictures and files too; a
+    # picture's whole bitmap is kept to copy again, so only the newest few, and none too big
+    CLIPS, PICTURES, PICTURE_MOST = 30, 4, 40 * 1024 * 1024
 
-    def _keep(self, now):
-        """The words just copied, kept whole for the shelf's Copied (island.DynamicIsland._hub_shelf) and sent to the
-        island; the same again only moves up."""
+    def _keep(self, now, what="text"):
+        """What was just copied, kept for the island's Clipboard and the shelf's Copied
+        (island.DynamicIsland._hub_clipboard): the words whole, a picture's bitmap and a small picture of it, or the
+        files' paths; sent to the island. The same again only moves up. In memory only."""
         try:
-            full = str(win.clipboard_text() or "")[:5000]
-        except Exception:
+            if what == "text":
+                full = str(win.clipboard_text() or "")[:5000]
+                if not full.strip():
+                    return
+                link = bool(re.match(r"\s*(https?://|www\.)", full))
+                clip = {"kind": "link" if link else "text", "full": full, "text": shown(full, 80), "link": link,
+                        "key": ("text", full)}
+            elif what == "files":
+                paths = win.clipboard_files()
+                if not paths:
+                    return
+                name = os.path.basename(paths[0].rstrip("\\/")) or paths[0]
+                clip = {"kind": "files", "paths": paths, "key": ("files", tuple(paths)),
+                        "text": name if len(paths) == 1 else f"{name} and {len(paths) - 1} more"}
+            elif what == "picture":
+                dib = win.clipboard_picture()
+                if not dib or len(dib) > self.PICTURE_MOST:
+                    return
+                import hashlib
+                import island_art
+                w, h = struct.unpack_from("<ii", dib, 4) if len(dib) >= 12 else (0, 0)
+                clip = {"kind": "picture", "dib": dib, "thumb": island_art.dib_picture(dib, 56),
+                        "text": f"Picture, {w} × {abs(h)}", "key": ("picture", hashlib.sha1(dib).hexdigest())}
+            else:
+                return
+        except Exception as exc:
+            print(f"  island: what was copied wasn't kept ({exc!r})")
             return
-        if not full.strip():
-            return
-        self.clips = [{"full": full, "text": shown(full, 80), "at": now,
-                       "link": bool(re.match(r"\s*(https?://|www\.)", full))}] + \
-            [c for c in self.clips if c["full"] != full][:self.CLIPS - 1]
+        clip["at"] = now
+        rest = [c for c in self.clips if c.get("key") != clip["key"]]
+        pictures = 1 if clip["kind"] == "picture" else 0
+        kept = []
+        for c in rest:
+            if c.get("kind") == "picture":
+                pictures += 1
+                if pictures > self.PICTURES:
+                    continue
+            kept.append(c)
+        self.clips = [clip] + kept[:self.CLIPS - 1]
         self.host.post(("clips", [dict(c) for c in self.clips]))
 
     def _answer(self, name):
@@ -1418,8 +1838,8 @@ class Levels(Plugin):
             self.show(Activity(self.id, "level", {"what": what, "level": level, "muted": muted}, seconds=1.6))
 
 
-PLUGINS = (Tasks, Agents, Notifications, Clipboard, Levels, Media, Battery, Timers, Dream, Meeting, Hands, Guide, Break,
-           Focus, Devices, Hub)
+PLUGINS = (Tasks, Agents, Notifications, Clipboard, Levels, Media, Battery, Timers, Reminders, Dream, Meeting, Calls,
+           Hands, Guide, Break, Focus, Devices, Hub, GameStrip, Phone)
 
 
 def priority(plugin_id):

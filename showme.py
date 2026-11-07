@@ -1,8 +1,8 @@
 """Where to click, shown on your screen (28 October 2026):
 "where do I click to turn on Bluetooth?", "show me how to change my wallpaper", "explain this page to me".
 
-She looks at the window in front as a task in an app does (its controls by UI Automation, and a screenshot), asks the
-model what to point at, and draws it with overlay.py: a ring round each thing to click, numbered, a line from one to
+She looks at the window in front as a task in an app does (its controls through agent-desktop, and a screenshot), asks
+the model what to point at, and draws it with overlay.py: a ring round each thing to click, numbered, a line from one to
 the next, saying each step as she draws it. She never clicks or types here: that's "do it for me". When more only
 comes after your click (a menu opens, the next page loads), she watches for the click and shows what's next, up to
 ROUNDS looks in all, till it's done, you press Esc or say stop. What's on the screen goes to the model only because you
@@ -74,16 +74,12 @@ def _said(text):
 
 
 def real_rect(item):
-    """A control's place in real pixels, read again inside winplatform._real_pixels: a snapshot's rectangles are read
-    outside it, and are off on a screen scaled unlike the main one."""
+    """A control's current place in real pixels, or its snapshot place when it can't be read again."""
     try:
-        with win._real_pixels():
-            r = item["el"].CurrentBoundingRectangle
-        if r.right > r.left and r.bottom > r.top:
-            return r.left, r.top, r.right, r.bottom
+        current = win.ui_rect(item.get("el"))
     except Exception:
-        pass
-    return item.get("rect")
+        current = None
+    return current or item.get("rect")
 
 
 def points(reply, items, shot, scale=1.0):

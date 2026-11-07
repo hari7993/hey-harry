@@ -26,7 +26,6 @@ import messaging
 import onboarding
 import opencode
 import providers
-import selfwork
 import settings
 import tasks as tasking
 import todo
@@ -45,6 +44,7 @@ HINTS = {"ptt": "Hold right Alt to talk", "wake": "Say \u201cHey Harry\u201d, \u
                                                  "then what you want. Right after she answers, just keep talking. "
                                                  "Holding right Alt works too."}
 WAITS = {"patient": "Patient (lets you pause)", "even": "Even", "quick": "Quick (can cut you off)"}  # speech.Listener
+CHATTY = {"chatty": "Chatty (every 20 minutes or so)", "sometimes": "Now and then", "quiet": "Only when it matters"}
 EARS_USES = {"all": "For commands and dictation", "dictation": "For dictation only"}  # a provider's ears, hearing.py
 SEP = "  \u00b7  "  # between a model's ID and what's known of it in the model list: "gpt-5.2  ·  400k"
 MODES = ("ptt", "wake")
@@ -58,14 +58,18 @@ POPUP_STYLES = {"island": "Her island at the top", "card": "The iPhone card at t
 ISLAND_STYLES = {"panel": "Answer card", "capsule": "Glass capsule", "pill": "Black pill"}
 ISLAND_FACES = {"eyes": "Her eyes", "orb": "The orb", "wave": "The Siri wave"}
 ISLAND_THEMES = {"paper": "Paper, like her window", "amoled": "AMOLED black", "dark": "Dark", "light": "Light",
-                 "system": "Like Windows"}
+                 "system": "Like Windows", "black": "Black", "graphite": "Graphite", "rose": "Rosé",
+                 "lavender": "Lavender", "peach": "Peach", "sakura": "Sakura"}
 ISLAND_ALIGN = {"center": "In the middle", "left": "On the left", "right": "On the right"}
+ISLAND_BARS = {"wave": "A wave", "simple": "A plain line", "pixels": "Squares", "comet": "A comet", "hearts": "Hearts"}
+ISLAND_VISUALIZERS = {"pixels": "Squares", "bars": "Bars"}
 ISLAND_FONTS = {"figtree": "Figtree", "glance": "Plus Jakarta Sans and Poppins", "segoe": "Windows' own (Segoe)"}
 ISLAND_STATUS = {"": "Nothing", "time": "The time", "weather": "The weather", "battery": "The battery",
                  "time,battery": "The time and battery", "weather,time": "The weather and time",
                  "weather,battery": "The weather and battery", "weather,time,battery": "The time, weather and battery",
                  "cpu,ram": "Processor and memory", "time,weather,battery,cpu,ram": "All of them"}
 DOCK_MODES = {"smart": "Out of a window's way", "peek": "Only at the bottom edge", "fixed": "Always there"}
+DOCK_STYLES = {"taskbar": "A taskbar, like NotchPixel's", "dock": "A dock that grows, like a Mac's"}
 hermes_memory.set_memory_dir(os.path.join(win.APPDATA_DIR, "memories"))  # the same places siri.py keeps them
 hermes_memory.set_home(win.APPDATA_DIR)
 skills.set_skills_dir(os.path.join(win.APPDATA_DIR, "skills"))
@@ -491,7 +495,7 @@ class ModelPicker:
     COLUMNS = (("model", "Model", 330), ("provider", "Provider", 140), ("price", "Price", 80), ("ctx", "Context", 70))
 
     def __init__(self, app, pick=None, title="Pick a model"):
-        """pick(model): what's done with the model picked: the answer model's set_model, or Settings > Build herself's."""
+        """pick(model): what's done with the model picked: the answer model's set_model."""
         self.app, px = app, app.px
         self.pick = pick or app.set_model
         top = self.top = tk.Toplevel(app.root, bg=BG)
@@ -2624,10 +2628,18 @@ class AssistantWindow:
                           "the Siri wave on the pill."),
               "island_face", ISLAND_FACES)
         combo(row("Theme", "Paper is white with faint dots, like this window. AMOLED is pure black, like a phone's "
-                           "notch. Like Windows follows light and dark mode."),
+                           "notch. Like Windows follows light and dark mode. Black, Graphite, Rosé, Lavender, "
+                           "Peach and Sakura are NotchPixel's, each with its own colour for what's on."),
               "island_theme", ISLAND_THEMES)
         combo(row("Font", "Her words on the island. Figtree is clear at small sizes; Plus Jakarta Sans and "
                           "Poppins are Glance's; Segoe is Windows' own."), "island_font", ISLAND_FONTS)
+        combo(row("Song's line", "How the music card shows how far the song's got, as NotchPixel's choices: a wave "
+                                 "that runs while it plays, a plain line, squares, a comet or hearts."), "island_bar",
+              ISLAND_BARS)
+        combo(row("Music at rest", "What dances beside her eyes while music plays: squares, as NotchPixel's, or "
+                                   "bars."), "island_visualizer", ISLAND_VISUALIZERS)
+        check(row("Album colours", "The cover's colours behind the music card."), "island_album_bg",
+              "Show the cover's colours")
         check(row("Border", "A thin line round it, so it shows on a dark wallpaper."), "island_border",
               "Show a border")
         combo(row("Where", "Along the top of the screen you're working on."), "island_align", ISLAND_ALIGN)
@@ -2671,8 +2683,11 @@ class AssistantWindow:
               "Show it in the notch")
         check(row("Round corners", "The top corners of the screen rounded off, like a MacBook's.", "Edges"),
               "island_corners", "Round the top corners")
-        check(row("Dock", "Your pinned and open apps along the bottom of the screen, growing as you point at them. "
-                          "Click to open or switch, right-click to pin.", "Dock"), "dock", "Show the dock")
+        check(row("Dock", "Your pinned and open apps along the bottom of the screen. Click to open or switch, "
+                          "right-click to pin.", "Dock"), "dock", "Show the dock")
+        combo(row("Look", "A taskbar hanging from the bottom of the screen, with the network, the volume, the time "
+                          "and the bell at its right, as NotchPixel's. Or a dock whose icons grow as you point at "
+                          "them, as a Mac's.", "Dock"), "dock_style", DOCK_STYLES)
         combo(row("Hiding", "Out of a window's way, or only when the pointer's at the bottom of the screen.", "Dock"),
               "dock_mode", DOCK_MODES)
         check(row("Taskbar", "Hides Windows' taskbar while the dock is on, and brings it back when the dock's off or "
@@ -2728,8 +2743,12 @@ class AssistantWindow:
 
     def _dock_changed(self):
         """Her dock (dock.py) started, stopped or set again as Settings has it now. Off, and her last run ended with
-        Windows' taskbar hidden, it's put back."""
+        Windows' taskbar hidden, it's put back. Its look changed (dock_style), it's made again in the new one."""
         want = bool(settings.get("dock"))
+        taskbar = settings.get("dock_style") != "dock"
+        if self.dock is not None and want and (type(self.dock).__name__ == "Taskbar") != taskbar:
+            self.dock.close()
+            self.dock = None
         if self.dock is not None and not want:
             self.dock.close()
             self.dock = None
@@ -2738,7 +2757,7 @@ class AssistantWindow:
         elif want:
             try:
                 import dock
-                self.dock = dock.Dock(self.root)
+                self.dock = dock.make(self.root)
             except Exception as exc:
                 print(f"  the dock didn't start: {exc!r}")
                 self.dock = None
@@ -2856,7 +2875,7 @@ class AssistantWindow:
         # one long list was hard to find things in and to scroll): (name, colour, icon, its rows by number below)
         parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14)),
                  ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23, 24)),
-                 ("Models", "green", "\ue99a", (1, 21, 22)), ("Speaking up", "amber", "\uea8f", (12, 13)),
+                 ("Models", "green", "\ue99a", (1,)), ("Speaking up", "amber", "\uea8f", (12, 13, 25)),
                  ("Phone", "rose", "\ue8ea", (16,)), ("Window", "slate", "\ue737", (4, 5, 6, 19)))
         cards, where, form = {}, {}, None
         for name, tint, icon, rows in parts:
@@ -3064,25 +3083,6 @@ class AssistantWindow:
         ttk.Checkbutton(form, text="Let her see you", variable=self.cues_var,
                         command=lambda: settings.put("cues", self.cues_var.get())).grid(row=40, column=1, rowspan=2,
                                                                                        sticky="e")
-        row(21, "Build herself", "Ask her for a feature (\u201cbuild yourself a way to...\u201d) and she codes it into "
-                                 "herself, runs her tests and restarts with it. The model she builds with, through "
-                                 "OpenCode: pick a strong one, like Claude Opus or Sonnet. Paid ones are billed to "
-                                 "your account with that provider. Same as answers until you pick one.")
-        builder = tk.Frame(form, bg=BG)
-        builder.grid(row=42, column=1, rowspan=2, sticky="e")
-        builder.grid_columnconfigure(0, weight=1)
-        self.builder_button = ttk.Button(builder, style="Pick.TButton", width=38, command=self.open_builder_picker)
-        self.builder_button.grid(row=0, column=0, sticky="ew")
-        self.builder_info = self._label(builder, "", self.f_small, MUTED, wraplength=self.px(330))
-        self.builder_info.grid(row=1, column=0, sticky="w", pady=(self.px(4), 0))
-        self._show_builder()
-        row(22, "Heal herself", "When something in her own code goes wrong, she builds a fix for it the same way, "
-                                "checks it with her tests and restarts with it, and tells you once it's in: up to "
-                                "4 a day. If she crashes, she starts again by herself.")
-        self.heal_var = tk.BooleanVar(value=settings.get("self_heal") is not False)
-        ttk.Checkbutton(form, text="Heal herself", variable=self.heal_var,
-                        command=lambda: settings.put("self_heal", self.heal_var.get())).grid(row=44, column=1,
-                                                                                           rowspan=2, sticky="e")
         row(23, "Her own browser", "Jobs on websites happen in a Chrome of her own, out of your way, never on your "
                                    "screen. Sign her in to the sites she should use: press Show it (or say “sign "
                                    "in to LinkedIn in your browser”), sign in, then say “hide your "
@@ -3107,6 +3107,15 @@ class AssistantWindow:
         self.job_profile_box.bind("<<ComboboxSelected>>",
                                   lambda e: settings.put("job_profile", self.job_profile_box.get()))
         self.job_profile_box.grid(row=48, column=1, rowspan=2, sticky="e")
+        row(25, "How chatty", "Like a close friend, she checks in while you're at the PC: how your plans went, a "
+                              "break, a bit of fun. Never in a call, at night or while you're away. Only when it "
+                              "matters, she just asks after what you told her you'd do. Or say \u201ctalk less\u201d "
+                              "or \u201ccheck in on me more\u201d.")
+        self.chatty_menu = ttk.Combobox(form, state="readonly", width=38, values=list(CHATTY.values()))
+        self.chatty_menu.set(CHATTY.get(settings.get("chattiness"), CHATTY["chatty"]))
+        self.chatty_menu.bind("<<ComboboxSelected>>", lambda e: settings.put(
+            "chattiness", next(k for k, v in CHATTY.items() if v == self.chatty_menu.get())))
+        self.chatty_menu.grid(row=50, column=1, rowspan=2, sticky="e")
         self.settings_note = self._label(page, "", self.f_small, MUTED, wraplength=self.px(660))
         self.settings_note.pack(fill="x", pady=(self.px(18), 0))
         self.models_loaded = False
@@ -3122,36 +3131,6 @@ class AssistantWindow:
             except Exception as exc:
                 print(f"  her browser: {exc!r}")
         threading.Thread(target=go, name="show-her-browser", daemon=True).start()
-
-    def open_builder_picker(self):
-        if self.picker is not None:
-            self.picker.top.lift()
-            return
-        self.picker = ModelPicker(self, pick=self.set_builder_model, title="Pick the model she builds herself with")
-        self.refresh_models()
-
-    def set_builder_model(self, value):
-        """Saves the model she builds herself with, and checks OpenCode has it."""
-        settings.put("builder_model", value)
-        self._show_builder()
-        self.builder_info.configure(text="Saved. Checking OpenCode has it\u2026", fg=MUTED)
-
-        def check():
-            model, env = selfwork.for_opencode(value)
-            offered = selfwork.offered(model, env) if model else False
-            self.events.put(("builder_check", "OpenCode has it." if offered else
-                             "OpenCode doesn\u2019t have this one, so a free model would build instead. Pick "
-                             "another." if offered is False else "Couldn\u2019t ask OpenCode, it\u2019ll be tried as "
-                             "she builds.", offered is False))
-        threading.Thread(target=check, daemon=True).start()
-
-    def _show_builder(self):
-        picked = settings.get("builder_model") or ""
-        p, current = providers.split(selfwork.builder_model())
-        self.builder_button.configure(text=(current if len(current) <= 36 else current[:35] + "\u2026") + "  \u25be")
-        cost = "Free" if opencode.is_free(selfwork.builder_model()) else f"Paid, billed to your {p.name} account"
-        self.builder_info.configure(text=SEP.join(([] if picked else ["Same as answers"]) + [p.name, cost]),
-                                    fg=MUTED)
 
     def _load_mics(self):
         names = win.input_devices()
@@ -3659,8 +3638,6 @@ class AssistantWindow:
                     self._tell(event[1], event[2])
                 elif event[0] == "model_check":
                     self.models_info.configure(text=event[1], fg=ERROR if event[2] else MUTED)
-                elif event[0] == "builder_check":
-                    self.builder_info.configure(text=event[1], fg=ERROR if event[2] else MUTED)
                 elif event[0] == "island_apps":
                     self._show_island_apps(event[1])
                 elif event[0] == "renamed":
@@ -3803,9 +3780,8 @@ def run_app():
     identity.moved_on()  # the first start as Harry: her notes say her name where they said Jev
     root = tk.Tk()
 
-    def callback_error(kind, exc, tb):  # a button or a timer of her window went wrong: in the log, and if it's a
-        traceback.print_exception(kind, exc, tb)  # fault of her own code, fixed by her (selfwork.fault)
-        selfwork.fault(exc, "her window")
+    def callback_error(kind, exc, tb):  # a button or a timer of her window went wrong: in the log
+        traceback.print_exception(kind, exc, tb)
     root.report_callback_exception = callback_error
     AssistantWindow(root)
     if "--startup" in sys.argv:  # started as you signed in: on the taskbar, she says hello and listens

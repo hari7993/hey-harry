@@ -983,7 +983,7 @@ class Capsule(unittest.TestCase):
         low = plugins.Activity("battery", "battery", {"percent": 18, "charging": False, "event": "low"})
         note = plugins.Activity("notifications", "notification", {"app": "WhatsApp", "app_id": "", "title": "Mum",
                                                                   "text": "Home by eight", "phone": False})
-        for scene, kind, hot in ((("live", song), "media", ["previous", "toggle", "next", "open"]),
+        for scene, kind, hot in ((("live", song), "media", ["previous", "toggle", "next", "open", "seek"]),
                                  (("live", timer), "timer", []), (("popup", low), "battery", []),
                                  (("popup", note), "notification", ["dismiss", "open"])):
             lay = isl._make(scene, now)
@@ -1266,12 +1266,13 @@ class LivePlugins(unittest.TestCase):
             self.assertEqual(self.posted(host), [], cls.id)
 
     def test_which_comes_first_when_several_are_on(self):
-        order = ["tasks", "agents", "guide", "meeting", "hands", "timers", "focus", "dream", "media", "break",
-                 "battery"]
+        order = ["tasks", "agents", "guide", "meeting", "calls", "hands", "timers", "focus", "dream", "media",
+                 "break", "battery"]  # a call (7 November 2026) under her notes of it
         self.assertEqual(sorted(order, key=plugins.priority, reverse=True), order)
         # popups and the panels, never kept on the island as what's live
         self.assertEqual({cls.id for cls in plugins.PLUGINS} - set(order),
-                         {"notifications", "clipboard", "levels", "devices", "hub"})
+                         {"notifications", "clipboard", "levels", "devices", "hub", "reminders",
+                          "game", "phone"})  # the game strip only over a game, on its own; a phone asks
 
     def test_a_timer_says_its_last_seconds_and_rings_when_it_goes_off(self):
         now = time.time()
@@ -2096,3 +2097,695 @@ class GlanceMore(unittest.TestCase):
         with mock.patch("devices.outputs", return_value=outs), mock.patch.object(plugins.win, "set_output") as put:
             p.command("output")
         put.assert_called_once_with("b")
+
+
+class NotchPixel(unittest.TestCase):
+    """7 November 2026, the owner's ask after notchpixel.com: its surfaces as themes, the panels opening as the pointer
+    rests on her eyes, their tabs thin with a dot under the open one, its music card and the music at rest as its
+    pixels; her eyes as they were."""
+
+    def capsule(self, **kw):
+        return fonted(self, **dict({"style": "capsule", "runner": SimpleNamespace(plugin=lambda pid: None)}, **kw))
+
+    def test_its_surfaces_are_themes_of_the_glass(self):
+        import edges
+        self.addCleanup(settings.put, "island_theme", None)
+        isl = bare()
+        for name in ("black", "graphite", "rose", "lavender", "peach", "sakura"):
+            settings.put("island_theme", name)
+            isl._read_settings()
+            self.assertEqual(isl.theme_name, name)
+            th = isl.theme()
+            self.assertIs(th, island.GLASS[name])
+            self.assertEqual(th["fill"], 1.0)  # solid, as NotchPixel's
+            self.assertTrue(th["glow"])  # her eyes white and glowing, as on any dark glass
+            self.assertLess(max(th["body"]), 0.3)  # dark: lavender's #271d40 the lightest
+            self.assertEqual(edges.glass()["body"], th["body"])  # the dock and the sliders in it too
+        isl.style = "pill"
+        self.assertIs(isl.theme(), island.THEMES["amoled"])  # the black pill is black in them
+
+    def test_whats_on_takes_the_themes_accent_else_its_own_colour(self):
+        self.assertEqual(island._accent_of(island.GLASS["rose"], island.BLUE), island.GLASS["rose"]["accent"])
+        self.assertEqual(island._accent_of(island.GLASS["black"], island.BLUE), island.BLUE)  # white: a little colour
+        self.assertEqual(island._accent_of(island.GLASS["paper"], island.RED), island.RED)
+
+    def test_resting_on_her_eyes_opens_the_panels(self):
+        isl = self.capsule()
+        isl.hub_page = None
+        idle = SimpleNamespace(kind="idle")
+        with mock.patch.object(island.plugins, "on", return_value=True), \
+                mock.patch.object(isl, "_agent_busy", return_value=False):
+            self.assertTrue(isl._hub_hover(idle))
+            self.assertFalse(isl._hub_hover(SimpleNamespace(kind="notification")))  # a popup opens its own card;
+            # what's playing opens them on Music (MusicTab, the owner's ask the same day)
+            self.assertFalse(isl._hub_hover(None))
+            isl.hub_page = "controls"
+            self.assertFalse(isl._hub_hover(idle))  # open already
+            isl.hub_page = None
+            with mock.patch.object(island.plugins, "get_options", return_value={"hover": False}):
+                self.assertFalse(isl._hub_hover(idle))  # a click on her eyes only, as before
+        with mock.patch.object(island.plugins, "on", return_value=True), \
+                mock.patch.object(isl, "_agent_busy", return_value=True):
+            self.assertFalse(isl._hub_hover(idle))  # her own pointer passing over her at a task
+        with mock.patch.object(island.plugins, "on", return_value=False):
+            self.assertFalse(isl._hub_hover(idle))  # the panels off
+        self.assertLess(island.HUB_LINGER, 0.5)  # and shut soon after the pointer leaves, as NotchPixel's do
+
+    def test_the_tabs_are_thin_and_close_with_a_dot_under_the_open_one(self):
+        isl = self.capsule(theme_name="rose")
+        isl.recent, isl.alerts_seen = [], 0.0
+        k = isl.k
+        draw, hot, expr = isl._hub_head(isl.HUB_W * k, isl.CARD_PAD * k, 26 * k, "calendar", {})
+        tabs = [h for h in hot if h[0].startswith("tab:")]
+        self.assertEqual([h[0] for h in tabs], [f"tab:{p}" for p in island.HUB_PAGES])
+        # on an even grid either side of her eyes (the owner's picture, the same day: "make them perfect spacing")
+        middles = [(t[1] + t[3]) / 2 for t in tabs]
+        steps = [b - a for a, b in zip(middles, middles[1:])]
+        half = len(island.HUB_PAGES) // 2
+        self.assertTrue(np.allclose(steps[:half - 1] + steps[half:], steps[0], atol=0.01))
+        col = np.zeros((int(70 * k), int(isl.HUB_W * k), 3), np.float32)
+        draw(face.Canvas(col), 0, 0, isl.HUB_W * k, 1.0, time.time())
+        at = island.HUB_PAGES.index("calendar")
+        cx, cy = (tabs[at][1] + tabs[at][3]) / 2, isl.CARD_PAD * k + 13 * k + 9 * k
+        self.assertTrue(np.allclose(col[int(round(cy)), int(round(cx))], island.GLASS["rose"]["accent"], atol=0.2))
+        cx = (tabs[at - 1][1] + tabs[at - 1][3]) / 2
+        self.assertLess(col[int(round(cy)), int(round(cx))].max(), 0.1)  # none under the others
+
+    def test_the_music_card_is_notchpixels(self):
+        now = time.time()
+        isl = self.capsule(hover=True)
+        song = plugins.Activity("media", "media", {"title": "Static Bloom", "artist": "Kavi Rao", "app": "Spotify",
+                                                   "playing": True, "position": 63.0, "duration": 214.0, "at": now,
+                                                   "art": np.ones((80, 80, 4), np.float32),
+                                                   "tint": (1.0, 0.45, 0.55)}, live=True)
+        lay = isl._make(("live", song), now)
+        hot = {h[0]: h[1:] for h in lay.hot}
+        self.assertEqual([h[0] for h in lay.hot], ["previous", "toggle", "next", "open", "seek"])  # and along the line
+        prev, toggle = hot["previous"], hot["toggle"]
+        self.assertAlmostEqual(prev[1] + prev[3], toggle[1] + toggle[3])  # in a row beside the song
+        self.assertGreater(toggle[2] - toggle[0], prev[2] - prev[0])  # play or pause the biggest
+        self.assertGreater(prev[0], lay.w / 2)  # at its right
+        isl.face_at = None
+        plain = drawn(lay)
+        self.assertAlmostEqual(isl.face_at[0], 2 + lay.w / 2, delta=2)  # her eyes in the middle of its top
+        isl.pointed = "toggle"
+        pointed = drawn(lay)
+        x0, y0, x1, y1 = (int(v) + 2 for v in toggle)
+        self.assertGreater(pointed[y0:y1, x0:x1].sum(), plain[y0:y1, x0:x1].sum())  # a soft square under it
+
+    def test_the_songs_line_waves_while_it_plays(self):
+        isl = self.capsule()
+
+        def line(playing):
+            col = np.zeros((40, 220, 3), np.float32)
+            isl._wave(face.Canvas(col), 10, 210, 20, 0.5, (1.0, 0.0, 0.0), (0.2, 0.2, 0.2), playing, isl.t0 + 0.3,
+                      1.0)
+            return col
+
+        def red_rows(col):
+            return np.nonzero(col[:, 20:100, 0].max(axis=1) - col[:, 20:100, 1].max(axis=1) > 0.5)[0]
+        on, off = line(True), line(False)
+        self.assertGreater(len(red_rows(on)), len(red_rows(off)) + 3)  # up and down while it plays; paused, flat
+        self.assertLess(abs(off[20, 160, 0] - off[20, 160, 1]), 0.05)  # the rest a grey track
+        self.assertGreater(off[20, 160].max(), 0.1)
+
+    def test_the_music_at_rest_is_its_pixels(self):
+        isl = self.capsule()
+
+        def lit_rows(playing):
+            col = np.zeros((40, 40, 3), np.float32)
+            isl._music_pixels(face.Canvas(col), 5, 20, (1.0, 1.0, 1.0), 1.0, playing, isl.t0 + 1.0, 1.0)
+            return np.nonzero(col[:, :, 0].max(axis=1) > 0.5)[0]
+        paused, playing = lit_rows(False), lit_rows(True)
+        self.assertGreater(len(paused), 0)
+        self.assertLess(paused.max() - paused.min(), 3 * isl.k + 2)  # one square each while it's paused
+        self.assertLess(playing.min(), paused.min() - 3 * isl.k)  # more while it plays
+
+
+class NotchPixelTabs(unittest.TestCase):
+    """7 November 2026, the owner's ask ("all they have that we don't"), the offline ones: night light and the power
+    mode in Controls, the Launcher, the Clipboard with its kinds and pins, the Widgets, the song's line in each of
+    NotchPixel's styles, a click along it and the wheel over the card, and the game strip."""
+
+    def capsule(self, **kw):
+        isl = fonted(self, **dict({"style": "capsule", "runner": mock.Mock(), "hover": True}, **kw))
+        isl.recent, isl.alerts_seen, isl.hub_month, isl.drag, isl.shelf_drag = [], 0.0, None, None, None
+        isl.dirty, isl._wake, isl.hub_data, isl.clips = False, lambda: None, {}, []
+        return isl
+
+    def hub(self, isl, page, data=None):
+        isl.hub_page, isl.hub_data = page, dict(data or {})
+        with mock.patch.object(island.win, "awake", return_value=False), \
+                mock.patch.object(island.plugins, "on", return_value=True):
+            lay = isl._hub(time.time())
+            col = np.zeros((int(lay.h) + 4, int(lay.w) + 4, 3), np.float32)
+            lay.draw(face.Canvas(col), 2, 2, lay.w, lay.h, 1.0, time.time())
+        self.assertGreater(col.max(), 0.3, page)
+        return lay
+
+    def test_the_tabs_go_either_side_of_her_eyes_when_there_are_more_than_fit(self):
+        isl = self.capsule()
+        lay = self.hub(isl, "controls")
+        tabs = [h for h in lay.hot if h[0].startswith("tab:")]
+        eyes = next(h for h in lay.hot if h[0] == "close")
+        self.assertEqual(len(tabs), len(island.HUB_PAGES))
+        left = [t for t in tabs if t[3] <= eyes[1]]
+        right = [t for t in tabs if t[1] >= eyes[3]]
+        self.assertEqual(len(left) + len(right), len(tabs))  # none under her eyes
+        self.assertGreater(len(right), 0)
+        self.assertLessEqual(abs(len(left) - len(right)), 1)
+
+    def test_controls_have_night_light_and_the_power_mode(self):
+        isl = self.capsule()
+        lay = self.hub(isl, "controls", {"night": False, "power": "efficiency", "volume": 50})
+        names = [h[0] for h in lay.hot]
+        self.assertIn("toggle:night", names)
+        self.assertIn("toggle:power", names)
+        night = next(h for h in lay.hot if h[0] == "toggle:night")
+        wifi = next(h for h in lay.hot if h[0] == "toggle:wifi")
+        self.assertGreater(night[2], wifi[4])  # a second row of three under the first
+        with mock.patch.object(isl, "_agent_busy", return_value=False):
+            isl._hub_press("toggle:power", False)  # on to the next mode
+            isl.runner.do.assert_called_with("hub", "power", "balanced")
+            isl._hub_press("toggle:night", False)
+            isl.runner.do.assert_called_with("hub", "night", True)
+            isl._hub_press("toggle:night", True)  # a right-click: its page in Settings
+            isl.runner.do.assert_called_with("hub", "page", "ms-settings:nightlight")
+
+    def test_the_launcher_shuts_the_panels_then_does_it(self):
+        isl = self.capsule()
+        lay = self.hub(isl, "launcher")
+        self.assertEqual([h[0] for h in lay.hot if h[0].startswith("launch:")],
+                         ["launch:shot", "launch:snip", "launch:record"])
+        with mock.patch.object(isl, "_agent_busy", return_value=False), mock.patch.object(isl, "_hub_want"):
+            isl._hub_press("launch:snip", False)
+        self.assertIsNone(isl.hub_page)
+        isl.runner.do.assert_called_with("hub", "launch", "snip")
+        self.assertEqual(plugins.LAUNCH_KEYS["shot"], ("cmd", "print_screen"))
+
+    def test_the_clipboard_by_its_kinds_and_its_pins(self):
+        self.addCleanup(settings.put, "island_clip_pins", None)
+        settings.put("island_clip_pins", ["Meet at six"])
+        isl = self.capsule()
+        now = time.time()
+        isl.clips = [{"kind": "link", "full": "https://a.example", "text": "https://a.example", "at": now, "key": 1},
+                     {"kind": "picture", "dib": b"dib", "thumb": np.ones((20, 20, 4), np.float32), "text": "Picture",
+                      "at": now - 5, "key": 2},
+                     {"kind": "text", "full": "Meet at six", "text": "Meet at six", "at": now - 9, "key": 3},
+                     {"kind": "files", "paths": ["C:\\a.txt"], "text": "a.txt", "at": now - 20, "key": 4}]
+        self.assertEqual([c["kind"] for c in isl._clip_rows(None)], ["link", "picture", "text", "files"])
+        self.assertEqual([c["kind"] for c in isl._clip_rows("picture")], ["picture"])
+        self.assertEqual([c["pinned"] for c in isl._clip_rows(None)], [False, False, True, False])
+        self.assertEqual([c["full"] for c in isl._clip_rows("pinned")], ["Meet at six"])
+        lay = self.hub(isl, "clipboard")
+        self.assertIn("cbview:picture", [h[0] for h in lay.hot])
+        with mock.patch.object(island.win, "set_clipboard_picture") as pic, \
+                mock.patch.object(island.win, "set_clipboard") as words:
+            isl._clip_press(1, False)  # the picture, copied again
+            pic.assert_called_once_with(b"dib")
+            isl._clip_press(0, True)  # the link pinned
+            self.assertEqual(settings.get("island_clip_pins"), ["https://a.example", "Meet at six"])
+            isl._clip_press(1, True)  # a picture can't be
+            self.assertEqual(settings.get("island_clip_pins"), ["https://a.example", "Meet at six"])
+            words.assert_not_called()
+        isl.cb_rows = isl._clip_rows("pinned")
+        isl._clip_press(1, True)  # unpinned from Pinned
+        self.assertEqual(settings.get("island_clip_pins"), ["https://a.example"])
+
+    def test_the_widgets_have_the_clock_the_world_and_the_pcs_stats(self):
+        isl = self.capsule()
+        with mock.patch.object(island.win, "zone_time", return_value=(8, 7, 0)):
+            lay = self.hub(isl, "widgets", {"cpu": 23, "ram": 61, "disk": 48, "battery": (88, True)})
+        self.assertGreater(lay.h, 150 * isl.k)
+
+    def test_the_songs_line_in_each_style(self):
+        self.addCleanup(settings.put, "island_bar", None)
+        isl = self.capsule()
+        for style in island.BAR_STYLES:
+            settings.put("island_bar", style)
+            col = np.zeros((40, 220, 3), np.float32)
+            isl._wave(face.Canvas(col), 10, 210, 20, 0.5, (1.0, 0.0, 0.0), (0.2, 0.2, 0.2), True, isl.t0 + 0.3, 1.0)
+            self.assertGreater(col[:, 15:100, 0].max(), 0.5, style)  # the part played in its colour
+            self.assertLess(col[:, 150:205, 0].max() - col[:, 150:205, 1].max(), 0.05, style)  # the rest not
+
+    def test_a_click_along_the_line_goes_there_and_the_wheel_is_the_volume(self):
+        now = time.time()
+        isl = self.capsule()
+        song = plugins.Activity("media", "media", {"title": "Song", "artist": "Band", "app": "Spotify",
+                                                   "playing": True, "position": 30.0, "duration": 200.0, "at": now,
+                                                   "art": None}, live=True)
+        isl.lives = {"media": song}
+        lay = isl._make(("live", song), now)
+        isl.layout, isl.origin, isl.island_rect = lay, SimpleNamespace(x=0, y=0), (100, 0, 100 + lay.w, lay.h)
+        x0, y0, x1, y1 = next(h for h in lay.hot if h[0] == "seek")[1:]
+        with mock.patch.object(island.win, "cursor_pos", return_value=(100 + x0 + (x1 - x0) * 0.25, (y0 + y1) / 2)):
+            isl._click(False)
+        what, name, seconds = isl.runner.do.call_args[0]
+        self.assertEqual((what, name), ("media", "seek"))
+        self.assertAlmostEqual(seconds, 50.0, delta=1.0)
+        isl.harry = None
+        with mock.patch.object(isl, "_agent_busy", return_value=False):
+            isl._wheel(-240)
+        isl.runner.do.assert_called_with("media", "volume", -2)
+
+    def test_the_game_strip_only_over_a_game(self):
+        isl = self.capsule(hover=False)
+        isl.enabled, isl.hide_full, isl.harry, isl.drag_over, isl.hub_page = True, True, None, None, None
+        isl.popups, isl.peek = [], None
+        strip = plugins.Activity("game", "strip", {"cpu": 30, "gpu": 70, "ram": 55}, live=True)
+        music = plugins.Activity("media", "media", {"title": "Song"}, live=True)
+        isl.lives, isl.busy = {"game": strip, "media": music}, True
+        self.assertEqual(isl._scene(time.time()), ("live", strip))
+        isl.busy = False
+        self.assertEqual(isl._scene(time.time()), ("live", music))  # never the strip but over a game
+        lay = isl._strip(strip)
+        self.assertEqual((lay.kind, lay.eyes, lay.hot), ("strip", None, []))
+        col = np.zeros((int(lay.h) + 4, int(lay.w) + 4, 3), np.float32)
+        lay.draw(face.Canvas(col), 2, 2, lay.w, lay.h, 1.0, time.time())
+        self.assertGreater(col.max(), 0.5)
+
+    def test_a_plugins_popups_taken_down(self):
+        isl = self.capsule()
+        a = plugins.Activity("reminders", "live", {"title": "Stretch"})
+        b = plugins.Activity("notifications", "notification", {"app": "Mail"})
+        isl.popups, isl.popup, isl.closed, isl.root = [a, b], a, False, mock.Mock()
+        a.until = time.time() + 30
+        isl.runner.take.return_value = [("gone", "reminders")]
+        isl._events()
+        self.assertEqual(isl.popups, [b])
+        self.assertEqual(a.until, 0.0)  # off the island now, the notification's next
+
+
+class NotchPixelPlugins(unittest.TestCase):
+    """The plugins behind them: the mute key and the calls, the reminders, the clipboard's pictures and files, and the
+    game strip; and the pieces they read Windows with, none of it touching this PC."""
+
+    def host(self, **kw):
+        host = mock.Mock()
+        for k, v in kw.items():
+            setattr(host, k, v)
+        return host
+
+    def posted(self, host):
+        return [c.args[0] for c in host.post.call_args_list]
+
+    def test_ctrl_alt_m_is_the_mute_key_and_altgr_still_nothing(self):
+        held = lambda keys: (lambda key: key in keys)  # noqa: E731
+        self.assertEqual(island.win.chord(0x4D, held({0x11, 0x12})), "mute")
+        self.assertIsNone(island.win.chord(0x4D, held({0x11, 0x12, 0x5B})))  # with Windows, not it
+        self.assertIsNone(island.win.chord(0x51, held({0x11, 0x12})))  # AltGr's other letters, as before
+        self.assertEqual(island.win.chord(0x56, held({0x11})), "paste")
+
+    def test_the_files_on_the_clipboard_by_their_paths(self):
+        names = "C:\\a.txt\0D:\\b c.png\0\0".encode("utf-16-le")
+        drop = (20).to_bytes(4, "little") + bytes(12) + (1).to_bytes(4, "little") + names  # as File Explorer's Copy
+        with mock.patch.object(island.win, "_clipboard_bytes", return_value=drop):
+            self.assertEqual(island.win.clipboard_files(), ["C:\\a.txt", "D:\\b c.png"])
+        with mock.patch.object(island.win, "_clipboard_bytes", return_value=None):
+            self.assertEqual(island.win.clipboard_files(), [])
+
+    def test_who_has_the_mic_her_own_listening_left_out(self):
+        class Key(dict):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        tree = Key({"5319275A.WhatsAppDesktop_cv1g1gvanyjgm": Key({"LastUsedTimeStart": 5, "LastUsedTimeStop": 0}),
+                    "NonPackaged": Key({"C:#Python314#pythonw.exe": Key({"LastUsedTimeStart": 9, "LastUsedTimeStop": 0}),
+                                        "C:#Zoom#bin#Zoom.exe": Key({"LastUsedTimeStart": 7, "LastUsedTimeStop": 0}),
+                                        "C:#Old#old.exe": Key({"LastUsedTimeStart": 3, "LastUsedTimeStop": 4})})})
+
+        def enum(key, i):
+            names = [n for n in key if isinstance(key[n], dict)]
+            if i >= len(names):
+                raise OSError
+            return names[i]
+
+        def value(key, name):
+            if name not in key:
+                raise OSError
+            return key[name], 4
+        with mock.patch.object(plugins.winreg, "EnumKey", side_effect=enum), \
+                mock.patch.object(plugins.winreg, "OpenKey", side_effect=lambda key, name: key[name]), \
+                mock.patch.object(plugins.winreg, "QueryValueEx", side_effect=value), \
+                mock.patch.object(plugins.win, "file_description", return_value=""):
+            self.assertEqual(plugins.mic_users(tree), ["Zoom", "WhatsApp"])  # newest first, no Python, none stopped
+
+    def test_the_mute_key_mutes_every_app_and_a_call_has_its_timer(self):
+        host = self.host()
+        calls = plugins.Calls(host)
+        with mock.patch.object(plugins, "mic_users", return_value=["Zoom"]), \
+                mock.patch.object(plugins.win, "mic_muted", return_value=False), \
+                mock.patch.object(plugins.win, "set_mic_muted") as mute:
+            calls.start()
+            self.addCleanup(calls.stop)
+            self.assertIn(calls._pressed, plugins.win.CHORDS)
+            calls._pressed("mute")
+            calls.poll(time.time())
+            mute.assert_called_once_with(True)
+        shown = [p[1] for p in self.posted(host) if p[0] == "show"]
+        self.assertEqual(shown[0].data["title"], "Muted")
+        live = [p[2] for p in self.posted(host) if p[0] == "live" and p[2] is not None][-1]
+        self.assertEqual((live.data["title"], live.data["label"]), ("In a call", "Zoom"))
+        self.assertIsNotNone(live.data["since"])
+        with mock.patch.object(plugins, "mic_users", return_value=[]), \
+                mock.patch.object(plugins.win, "mic_muted", return_value=True):
+            self.assertEqual(calls.data(time.time())["title"], "Your mic is muted")
+        with mock.patch.object(plugins, "mic_users", return_value=[]), \
+                mock.patch.object(plugins.win, "mic_muted", return_value=False):
+            self.assertIsNone(calls.data(time.time()))
+
+    def test_a_reminder_pops_up_with_snooze_and_done(self):
+        host = self.host()
+        rem = plugins.Reminders(host)
+        rem.start()
+        plugins.REMINDED.clear()  # siri's own tests fire reminders, which come here too
+        self.addCleanup(plugins.REMINDED.clear)
+        plugins.remind("stretch your legs")
+        rem.poll(time.time())
+        act = [p[1] for p in self.posted(host) if p[0] == "show"][0]
+        self.assertEqual(act.data["title"], "stretch your legs")
+        self.assertEqual([b["name"] for b in act.data["buttons"]], ["snooze", "done"])
+        with mock.patch("tasks.Store") as store:
+            rem.command("snooze", "stretch your legs")
+        args, kw = store.return_value.create.call_args
+        self.assertEqual((args[1], args[2]), ("reminder", {"text": "stretch your legs"}))
+        self.assertAlmostEqual(kw["due"], time.time() + rem.SNOOZE, delta=5)
+        self.assertEqual(self.posted(host)[-1], ("gone", "reminders"))
+
+    def test_the_clipboard_keeps_pictures_and_files_too(self):
+        host = self.host()
+        clip = plugins.Clipboard(host)
+        clip.clips = []
+        import struct
+        dib = struct.pack("<IiiHHIIiiII", 40, 2, 2, 1, 32, 0, 16, 0, 0, 0, 0) + bytes([0, 0, 255, 0] * 4)
+        with mock.patch.object(plugins.win, "clipboard_picture", return_value=dib):
+            clip._keep(time.time(), "picture")
+        with mock.patch.object(plugins.win, "clipboard_files", return_value=["C:\\a.txt", "C:\\b.txt"]):
+            clip._keep(time.time(), "files")
+        self.assertEqual([c["kind"] for c in clip.clips], ["files", "picture"])
+        self.assertEqual(clip.clips[0]["text"], "a.txt and 1 more")
+        self.assertEqual(clip.clips[1]["thumb"].shape, (56, 56, 4))
+        self.assertTrue(np.allclose(clip.clips[1]["thumb"][28, 28, :3], (1.0, 0.0, 0.0), atol=0.02))  # red, as copied
+        for i in range(plugins.Clipboard.PICTURES + 2):  # only the newest few pictures, which are big
+            with mock.patch.object(plugins.win, "clipboard_picture", return_value=dib + bytes([i])):
+                clip._keep(time.time(), "picture")
+        self.assertEqual(sum(c["kind"] == "picture" for c in clip.clips), plugins.Clipboard.PICTURES)
+
+    def test_the_game_strip_only_while_the_graphics_are_busy(self):
+        host = self.host(busy=False)
+        strip = plugins.GameStrip(host)
+        with mock.patch.object(plugins.win, "gpu_load", return_value=70):
+            strip.start()
+            now = time.time()
+            self.assertIsNone(strip.data(now))  # not full screen
+            host.busy = True
+            self.assertIsNone(strip.data(now))  # a moment yet: a game or not
+            self.assertEqual(strip.data(now + strip.GAME_FOR + 0.1)["gpu"], 70)
+        strip.shown = None
+        strip.busy_since = None
+        with mock.patch.object(plugins.win, "gpu_load", return_value=3):
+            self.assertIsNone(strip.data(now + 10))  # a full-screen video: nothing over it
+
+
+class NotchPixelOnline(unittest.TestCase):
+    """7 November 2026, the owner's "add them": lyrics that follow the song, the shelf's files to the phone by a QR code
+    or NectarLink, PC Deck, and the web drawer's tab; and the Phone plugin behind them. Nothing goes online here."""
+
+    def capsule(self, **kw):
+        isl = fonted(self, **dict({"style": "capsule", "runner": mock.Mock(), "hover": True}, **kw))
+        isl.recent, isl.alerts_seen, isl.hub_month, isl.drag, isl.shelf_drag = [], 0.0, None, None, None
+        isl.dirty, isl._wake, isl.hub_data, isl.clips = False, lambda: None, {}, []
+        return isl
+
+    def hub(self, isl, page):
+        isl.hub_page = page
+        with mock.patch.object(island.win, "awake", return_value=False), \
+                mock.patch.object(island.plugins, "on", return_value=True):
+            lay = isl._hub(time.time())
+            col = np.zeros((int(lay.h) + 4, int(lay.w) + 4, 3), np.float32)
+            lay.draw(face.Canvas(col), 2, 2, lay.w, lay.h, 1.0, time.time())
+        self.assertGreater(col.max(), 0.3, page)
+        return lay
+
+    def test_lyrics_from_their_times(self):
+        self.assertEqual(plugins.lrc_lines("[00:12.30] Hello\n[00:15.00][01:15.00] Again\nno time\n[00:20] Last"),
+                         [(12.3, "Hello"), (15.0, "Again"), (20.0, "Last"), (75.0, "Again")])
+
+    def test_the_music_card_has_the_line_being_sung(self):
+        now = time.time()
+        isl = self.capsule()
+        d = {"title": "Song", "artist": "Band", "app": "Spotify", "playing": True, "position": 16.0, "duration": 200.0,
+             "at": now, "art": None}
+        plain = isl._make(("live", plugins.Activity("media", "media", dict(d), live=True)), now)
+        sung = isl._make(("live", plugins.Activity("media", "media", dict(d, lyrics=[(12.0, "First line"),
+                                                                                       (15.0, "Second line")]),
+                                                   live=True)), now)
+        self.assertGreater(sung.h, plain.h)  # room for the two lines
+        self.assertNotEqual(sung.key, plain.key)
+        drawn(sung)
+
+    def test_lyrics_are_asked_for_once_a_song(self):
+        host = mock.Mock()
+        media = plugins.Media(host)
+        media.start()
+        got = mock.Mock(status_code=200)
+        got.json.return_value = {"syncedLyrics": "[00:01.00] La"}
+        with mock.patch("requests.get", return_value=got) as ask, \
+                mock.patch.object(plugins.threading, "Thread", side_effect=lambda target, **k: mock.Mock(
+                    start=target)):
+            self.assertIsNone(media._lyrics(("Song", "Band", "Spotify"), "Song", "Band", 200.0))
+            self.assertEqual(media._lyrics(("Song", "Band", "Spotify"), "Song", "Band", 200.0), [(1.0, "La")])
+        ask.assert_called_once()
+        self.assertEqual(ask.call_args.kwargs["params"], {"track_name": "Song", "artist_name": "Band",
+                                                          "duration": 200})
+
+    def test_the_shelf_to_your_phone_only_while_its_code_shows(self):
+        isl = self.capsule()
+        isl.phone_data = {"nectar": "Xiaomi 11 Lite NE"}
+        files = ["C:\\a.pdf", "C:\\b.zip"]
+        with mock.patch.object(isl, "shelf_items", return_value=files), mock.patch.object(isl, "_file_icon",
+                                                                                          return_value=None):
+            lay = self.hub(isl, "shelf")
+            self.assertIn("tophone", [h[0] for h in lay.hot])
+            with mock.patch.object(isl, "_agent_busy", return_value=False):
+                isl._hub_press("tophone", False)
+            isl.runner.do.assert_called_with("phone", "files", files)
+            self.assertTrue(isl.phone_view)
+            isl.phone_data = {"files": "http://10.0.0.5:5000/key/", "nectar": "Xiaomi 11 Lite NE"}
+            lay = self.hub(isl, "shelf")
+            self.assertEqual([h[0] for h in lay.hot if h[0].startswith("phone:")], ["phone:nectar", "phone:done"])
+            with mock.patch.object(isl, "_agent_busy", return_value=False):
+                isl._hub_press("phone:nectar", False)
+            self.assertEqual([c.args for c in isl.runner.do.call_args_list[-2:]],
+                             [("phone", "nectar_files", files), ("phone", "stop_files")])
+            self.assertFalse(isl.phone_view)
+            isl.phone_view = True
+            with mock.patch.object(isl, "_hub_want"):
+                isl._hub_close()  # the panels shut: the link's gone with the code
+            isl.runner.do.assert_called_with("phone", "stop_files")
+
+    def test_pc_deck_is_turned_on_only_from_its_tab(self):
+        isl = self.capsule()
+        isl.phone_data = {}
+        lay = self.hub(isl, "deck")
+        self.assertIn("deck:on", [h[0] for h in lay.hot])
+        with mock.patch.object(isl, "_agent_busy", return_value=False):
+            isl._hub_press("deck:on", False)
+        isl.runner.do.assert_called_with("phone", "deck_on")
+        isl.phone_data = {"deck": "http://10.0.0.5:5000/key/", "phones": 1}
+        lay = self.hub(isl, "deck")
+        self.assertIn("deck:off", [h[0] for h in lay.hot])
+
+    def test_the_launcher_has_nectarlinks_own_only_with_a_phone(self):
+        isl = self.capsule()
+        isl.phone_data = {}
+        names = [h[0] for h in self.hub(isl, "launcher").hot if h[0].startswith("launch:")]
+        self.assertEqual(names, ["launch:shot", "launch:snip", "launch:record"])
+        isl.phone_data = {"nectar": "Xiaomi 11 Lite NE"}
+        names = [h[0] for h in self.hub(isl, "launcher").hot if h[0].startswith("launch:")]
+        self.assertEqual(names[3:], ["launch:nectar_find", "launch:nectar_clipboard"])
+        with mock.patch.object(isl, "_agent_busy", return_value=False), mock.patch.object(isl, "_hub_want"):
+            isl._hub_press("launch:nectar_find", False)
+        isl.runner.do.assert_called_with("phone", "nectar_find")
+
+    def test_the_web_tab_pins_sites_and_opens_them_in_the_drawer(self):
+        self.addCleanup(settings.put, "island_sites", None)
+        settings.put("island_sites", ["youtube.com", "http://192.168.1.1", "web.whatsapp.com"])
+        isl = self.capsule()
+        self.assertEqual(isl._sites(), ["https://youtube.com", "https://web.whatsapp.com"])  # never the router's
+        lay = self.hub(isl, "web")
+        self.assertEqual([h[0] for h in lay.hot if h[0].startswith("site:")], ["site:0", "site:1", "site:pin"])
+        with mock.patch.object(isl, "ask") as ask:
+            isl._site_press("pin", False)
+        ask.assert_called_once_with(island.PIN_SITE, under=False)
+        isl._typed(island.PIN_SITE + "music.youtube.com")  # what was typed: pinned, never a turn of hers
+        self.assertEqual(settings.get("island_sites")[-1], "https://music.youtube.com")
+        isl._typed(island.PIN_SITE + "localhost:8080")
+        self.assertIn("Only a site on the internet", isl.web_note)
+        isl._site_press("0", True)  # a right-click unpins it
+        self.assertNotIn("https://youtube.com", [drawer_url for drawer_url in isl._sites()])
+        isl.origin, isl.island_rect, isl.s = SimpleNamespace(x=0, y=0), (500, 0, 700, 40), 1.0
+        isl.drawer = mock.Mock()
+        with mock.patch.object(island.threading, "Thread", side_effect=lambda target, **k: mock.Mock(start=target)):
+            isl._site_press("0", False)
+        url, box = isl.drawer.toggle.call_args[0]
+        self.assertEqual(url, isl._sites()[0])
+        self.assertEqual(box[1], 50)  # just under her
+        self.assertAlmostEqual(box[0] + box[2] / 2, 600, delta=1)  # her middle
+
+
+class PhonePlugin(unittest.TestCase):
+    def test_it_runs_the_servers_and_says_what_the_island_shows(self):
+        host = mock.Mock()
+        phone = plugins.Phone(host)
+        phone.start()
+        share, deck = mock.Mock(url="http://x/f/", until=time.time() + 60), mock.Mock(url="http://x/d/", used=time.time())
+        deck.allowed = {"p1"}
+        with mock.patch("phonelink.Share", return_value=share) as make_share, \
+                mock.patch("phonelink.Deck", return_value=deck), \
+                mock.patch("phonelink.nectar_phone", return_value="Xiaomi 11 Lite NE"), \
+                mock.patch("phonelink.nectar_send") as nectar, mock.patch("dock.pins", return_value=[]):
+            phone.command("files", ["C:\\a.pdf"])
+            make_share.assert_called_once_with(["C:\\a.pdf"])
+            phone.command("deck_on")
+            phone.poll(time.time())
+            state = [c.args[0][1] for c in host.post.call_args_list if c.args[0][0] == "phone"][-1]
+            self.assertEqual(state, {"files": "http://x/f/", "deck": "http://x/d/", "phones": 1,
+                                     "nectar": "Xiaomi 11 Lite NE", "error": None})
+            phone.command("allow", "p2")
+            deck.allow.assert_called_with("p2", True)
+            self.assertEqual(host.post.call_args[0][0], ("gone", "phone"))
+            phone.command("nectar_find")
+            nectar.assert_called_with(task="find-phone")
+            phone.command("stop_files")
+            share.stop.assert_called_once()
+            phone.command("deck_off")
+            deck.stop.assert_called_once()
+        with mock.patch("phonelink.Share", side_effect=RuntimeError("This PC isn't on a network a phone can reach")):
+            phone.command("files", ["C:\\a.pdf"])
+        self.assertEqual(phone.error, "This PC isn't on a network a phone can reach")
+
+    def test_a_phone_is_asked_about_with_a_careful_allow(self):
+        host = mock.Mock()
+        phone = plugins.Phone(host)
+        phone._ask("p1", "an Android phone")
+        act = host.post.call_args[0][0][1]
+        self.assertEqual(act.data["title"], "Let an Android phone control this PC?")
+        allow = next(b for b in act.data["buttons"] if b["name"] == "allow")
+        self.assertTrue(allow["careful"])  # the pointer has to rest on it: no stray or scripted click allows a phone
+
+
+class MusicTab(unittest.TestCase):
+    """7 November 2026, the owner: "while music plays, how do I change the side bar to see other options". Music is
+    the panels' first tab, as NotchPixel's island has it: resting on what's playing opens the panels there, the song
+    as its card has it, the other tabs along the top."""
+
+    def capsule(self, **kw):
+        isl = fonted(self, **dict({"style": "capsule", "runner": mock.Mock(), "hover": True}, **kw))
+        isl.recent, isl.alerts_seen, isl.hub_month, isl.drag, isl.shelf_drag = [], 0.0, None, None, None
+        isl.dirty, isl._wake, isl.hub_data, isl.clips, isl.hub_page = False, lambda: None, {}, [], None
+        return isl
+
+    def song(self, now, playing=True):
+        return plugins.Activity("media", "media", {"title": "Song", "artist": "Band", "app": "Chrome",
+                                                   "playing": playing, "position": 30.0, "duration": 200.0, "at": now,
+                                                   "art": None}, live=True)
+
+    def test_resting_on_whats_playing_opens_the_panels_on_music(self):
+        isl = self.capsule()
+        self.assertEqual(island.HUB_PAGES[0], "music")
+        with mock.patch.object(island.plugins, "on", return_value=True), \
+                mock.patch.object(isl, "_agent_busy", return_value=False):
+            self.assertTrue(isl._hub_hover(SimpleNamespace(kind="media")))
+            self.assertFalse(isl._hub_hover(SimpleNamespace(kind="notification")))  # a popup opens its own card
+            with mock.patch.object(isl, "_hub_want"):
+                isl._hub_open("music")
+        self.assertEqual(isl.hub_page, "music")
+
+    def test_music_has_the_song_its_buttons_and_the_other_tabs(self):
+        now = time.time()
+        isl = self.capsule()
+        isl.lives = {"media": self.song(now)}
+        isl.hub_page = "music"
+        with mock.patch.object(island.plugins, "on", return_value=True):
+            lay = isl._hub(now)
+        names = [h[0] for h in lay.hot]
+        self.assertEqual(sum(n.startswith("tab:") for n in names), len(island.HUB_PAGES))  # every tab a click away
+        for name in ("music:previous", "music:toggle", "music:next", "music:seek"):
+            self.assertIn(name, names)
+        self.assertEqual(lay.rate, 24)  # the song's line runs
+        drawn(lay)
+        with mock.patch.object(isl, "_agent_busy", return_value=False):
+            isl._hub_press("music:toggle", False)
+            isl.runner.do.assert_called_with("media", "toggle")
+            isl._hub_press("tab:controls", False)
+        self.assertEqual(isl.hub_page, "controls")
+        isl.layout, isl.origin, isl.island_rect = lay, SimpleNamespace(x=0, y=0), (100, 0, 100 + lay.w, lay.h)
+        x0, y0, x1, y1 = next(h for h in lay.hot if h[0] == "music:seek")[1:]
+        with mock.patch.object(island.win, "cursor_pos", return_value=(100 + x0 + (x1 - x0) / 2, (y0 + y1) / 2)):
+            isl._click(False)
+        what, name, seconds = isl.runner.do.call_args[0]
+        self.assertEqual((what, name), ("media", "seek"))
+        self.assertAlmostEqual(seconds, 100.0, delta=1.0)
+
+    def test_with_nothing_playing_it_says_so(self):
+        isl = self.capsule()
+        isl.lives, isl.hub_page = {}, "music"
+        with mock.patch.object(island.plugins, "on", return_value=True):
+            lay = isl._hub(time.time())
+        self.assertEqual(lay.rate, 1)
+        self.assertFalse([h for h in lay.hot if h[0].startswith("music:")])
+        drawn(lay)
+
+    def test_the_card_on_its_own_is_as_it_was(self):
+        now = time.time()
+        isl = self.capsule()
+        lay = isl._make(("live", self.song(now)), now)  # where the panels are off: its own card, as before
+        self.assertEqual([h[0] for h in lay.hot], ["previous", "toggle", "next", "open", "seek"])
+        self.assertEqual(lay.kind, "media")
+
+
+class TabGrid(unittest.TestCase):
+    """7 November 2026, the owner's picture of the tabs: "see how clumsy, make them perfect spacing structure". Six
+    either side of her eyes in equal slots from the card's edge, the halves mirroring each other, her eyes' room as
+    wide as they get with headphones on, so a glance never makes the gaps uneven, and nothing else on the row."""
+
+    def head(self, page, look):
+        isl = fonted(self, style="capsule", runner=mock.Mock())
+        isl.recent, isl.alerts_seen, isl.lives = [], 0.0, {}
+        isl.eye = ("headphones" if page == "music" else "open", 1.0, look, 0.0, False)
+        k = isl.k
+        W, pad = isl.HUB_W * k, isl.CARD_PAD * k
+        draw, hot, _ = isl._hub_head(W, pad, 26 * k, page, {"weather": {"temp": 20, "sky": "clear"},
+                                                             "battery": (50, False)})
+        return isl, W, pad, draw, hot
+
+    def test_the_halves_mirror_each_other_round_her_eyes(self):
+        isl, W, pad, draw, hot = self.head("music", 0.0)
+        middles = sorted((h[1] + h[3]) / 2 for h in hot if h[0].startswith("tab:"))
+        n = len(middles)
+        for a, b in zip(middles, reversed(middles)):
+            self.assertAlmostEqual(a + b, W, delta=0.01)  # each one's mirror the other side of her eyes
+        self.assertAlmostEqual(min(h[1] for h in hot if h[0].startswith("tab:")), pad, delta=0.01)  # from the edge
+        eyes = next(h for h in hot if h[0] == "close")
+        self.assertLess(middles[n // 2 - 1], eyes[1])
+        self.assertGreater(middles[n // 2], eyes[3])
+        zone = middles[n // 2] - middles[n // 2 - 1]
+        self.assertGreaterEqual(zone, 4.6 * isl.SMALL_EYES * isl.k)  # room for her headphones, glancing too
+
+    def test_nothing_else_on_the_row_and_a_glance_moves_no_tab(self):
+        still = self.head("music", 0.0)[4]
+        glance = self.head("music", 0.9)[4]
+        self.assertEqual(still, glance)
+        isl, W, pad, draw, hot = self.head("controls", 0.0)
+        col = np.zeros((int(60 * isl.k), int(W), 3), np.float32)
+        draw(face.Canvas(col), 0, 0, W, 1.0, time.time())
+        last = max(h[3] for h in hot if h[0].startswith("tab:"))
+        self.assertLess(col[:, int(last) + 2:].max(), 0.05)  # no time, weather or battery after the last tab
+
+    def test_the_tab_glyphs_are_all_drawn(self):
+        for page in island.HUB_PAGES:
+            self.assertIn(island.HUB_GLYPHS[page], face.GLYPHS, page)
+

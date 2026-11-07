@@ -471,11 +471,13 @@ class Worker(unittest.TestCase):
 
     def test_long_tasks_go_one_at_a_time_and_jobs_beside_them(self):
         """Rewritten on purpose on 27 October (it was test_long_tasks_still_go_one_at_a_time): the slow tasks still
-        go one at a time, and now jobs in the background (kind agent) run on a lane of their own beside them, two at
-        a time (siri.JOB_WORKERS), so a job asked for by voice doesn't wait 30 minutes behind an install."""
+        go one at a time, and now jobs in the background (kind agent) run on a lane of their own beside them,
+        siri.JOB_WORKERS at a time, so a job asked for by voice doesn't wait 30 minutes behind an install. That was
+        two at a time till 4 November 2026, five since (her agents, AGENT_STEPS): one job more waits its turn."""
         store = StopsWorker(os.path.join(tempfile.mkdtemp(prefix="heyharry-worker-"), "tasks.db"))
         said, release, started, running = queue.Queue(), threading.Event(), threading.Event(), []
-        overlap, jobs, two = [], [], threading.Event()
+        overlap, jobs, full = [], [], threading.Event()
+        goals = [f"job {n + 1}" for n in range(siri.JOB_WORKERS + 1)]
 
         def slow_install(payload, cancelled):
             running.append(payload["id"])
@@ -487,8 +489,8 @@ class Worker(unittest.TestCase):
 
         def job(task):  # a job in the background, waiting on its model while the install runs
             jobs.append(task["payload"]["goal"])
-            if len(jobs) == 2:
-                two.set()
+            if len(jobs) == siri.JOB_WORKERS:
+                full.set()
             release.wait(10)
             store.finish(task["id"], "done")
 
@@ -496,23 +498,23 @@ class Worker(unittest.TestCase):
                 mock.patch.object(installer, "install", slow_install), mock.patch.object(siri, "run_job", job):
             store.create("Install VLC", "install", {"id": "VLC", "approved": True})
             store.create("Install Git", "install", {"id": "Git", "approved": True})
-            for goal in ("job one", "job two", "job three"):
+            for goal in goals:
                 store.create(goal, "agent", {"goal": goal})
             worker = threading.Thread(target=siri.task_worker, daemon=True)
             worker.start()
             try:
                 self.assertTrue(started.wait(5))
-                self.assertTrue(two.wait(5))  # two jobs going while VLC installs
-                time.sleep(0.5)  # time enough for the worker to start Git or a third job too, if it would
+                self.assertTrue(full.wait(5))  # five jobs going while VLC installs
+                time.sleep(0.5)  # time enough for the worker to start Git or one job more too, if it would
                 self.assertEqual(running, ["VLC"])
-                self.assertEqual(jobs, ["job one", "job two"])
+                self.assertEqual(sorted(jobs), goals[:-1])
                 release.set()
                 self.assertEqual({said.get(timeout=5), said.get(timeout=5)}, {"VLC is installed.", "Git is installed."})
                 self.assertEqual(overlap, [1, 1])
                 end = time.time() + 5
-                while len(jobs) < 3 and time.time() < end:
+                while len(jobs) < len(goals) and time.time() < end:
                     time.sleep(0.05)
-                self.assertEqual(jobs, ["job one", "job two", "job three"])  # its turn came once one finished
+                self.assertEqual(sorted(jobs), goals)  # its turn came once one finished
             finally:
                 release.set()
                 store.stopped = True

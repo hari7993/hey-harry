@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import numpy as np
+
 from tests.support import siri  # noqa: F401  temp APPDATA and the tripwires, before anything else
 import dock
 import settings
@@ -158,6 +160,75 @@ class Taskbar(unittest.TestCase):
         self.assertEqual(args[0][3:], [str(os.getpid()), dock.FLAG])
         self.assertIn("ShowWindow(bar, 5)", args[0][2])
         compile(args[0][2], "watchdog", "exec")  # it's whole Python
+
+
+class NotchTaskbar(unittest.TestCase):
+    """7 November 2026, the owner's ask after NotchPixel's: a taskbar hanging from the bottom of the screen, its icons
+    not growing, with the network and the volume, the time and the bell at its right opening Windows' own."""
+
+    def test_its_cells_are_the_slots_then_the_tray(self):
+        cells, width = dock.bar_cells(KINDS, 60.0, 1.0)
+        self.assertEqual([c[0] for c in cells], list(range(len(KINDS))) + ["sep", "quick", "clock", "bell"])
+        self.assertEqual(cells[0][1], dock.BAR_PAD)
+        self.assertAlmostEqual(cells[1][1] - cells[0][1], dock.BAR_SLOT)  # evenly apart: nothing grows
+        self.assertAlmostEqual(cells[3][2] - cells[3][1], dock.BAR_GAP)  # the divider
+        self.assertAlmostEqual(cells[-2][2] - cells[-2][1], 80.0)  # the time and the date, and 20 more
+        self.assertAlmostEqual(width, cells[-1][2] + dock.BAR_PAD)
+        self.assertAlmostEqual(dock.bar_cells(KINDS, 90.0, 1.5)[1], 1.5 * width)
+
+    def test_it_hangs_from_the_bottom_its_shoulders_curving_into_it(self):
+        xs = np.arange(0, 200, dtype=np.float32) + 0.5
+        ys = (np.arange(0, 60, dtype=np.float32) + 0.5)[:, None]
+        sd = dock.bar_shape(xs, ys, 50, 150, 10, 56, 12, 10, True)
+        self.assertLess(sd[30, 100], 0)  # inside
+        self.assertLess(sd[55, 51], 0)  # square where it meets the edge
+        self.assertLess(sd[55, 45], 0)  # a shoulder, out past its side along the edge
+        self.assertGreater(sd[40, 45], 0)  # but not up its side
+        self.assertGreater(sd[11, 51], 0)  # its top corners round
+        self.assertGreater(sd[58, 100], 0)  # nothing below the bottom of the screen
+        floating = dock.bar_shape(xs, ys, 50, 150, 10, 56, 12, 10, False)
+        self.assertGreater(floating[55, 51], 0)  # floating, round all round
+        self.assertGreater(floating[55, 45], 0)
+
+    def test_the_tray_opens_windows_own(self):
+        self.assertEqual(dock.tray_keys("quick", 22631), (0x5B, 0x41))  # Windows+A, quick settings
+        self.assertEqual(dock.tray_keys("clock", 22631), (0x5B, 0x4E))  # Windows+N, notifications and the calendar
+        self.assertEqual(dock.tray_keys("bell", 22631), (0x5B, 0x4E))
+        self.assertEqual(dock.tray_keys("bell", 19045), (0x5B, 0x41))  # Windows 10's action centre
+
+    def test_the_taskbar_is_the_look_to_start_with(self):
+        self.addCleanup(settings.put, "dock_style", None)
+        self.assertEqual(settings.DEFAULTS["dock_style"], "taskbar")
+        with mock.patch.object(dock, "Taskbar", return_value="bar"), mock.patch.object(dock, "Dock", return_value="dock"):
+            self.assertEqual(dock.make(None), "bar")
+            settings.put("dock_style", "dock")
+            self.assertEqual(dock.make(None), "dock")
+
+    def test_whats_under_the_pointer(self):
+        bar = object.__new__(dock.Taskbar)
+        bar.slots = dock.slots([{"kind": k} for k in ("start", "search", "pin", "app")])  # three, a divider, one
+        bar.cells, bar.bar_w = dock.bar_cells([k for k, _ in bar.slots], 50.0, 1.0)
+
+        def at(what):
+            cell = next(c for c in bar.cells if c[0] == what)
+            bar.px = (cell[1] + cell[2]) / 2
+            return bar._cell()
+        self.assertEqual(at(2), 2)  # the pin
+        self.assertIsNone(at(3))  # the divider
+        self.assertEqual(at(4), 3)  # the open app, the fourth item
+        self.assertEqual(at("clock"), "clock")
+        self.assertIsNone(at("sep"))
+        bar.px = None
+        self.assertIsNone(bar._cell())
+        places, x0, x1 = bar.layout()
+        self.assertEqual(len(places), len(bar.slots))
+        self.assertEqual((x0, x1), (0.0, bar.bar_w))
+        self.assertEqual(bar._reach(), 0.0)  # a click just over it is the window's under it
+
+    def test_the_time_and_the_date_in_windows_own_words(self):
+        words = dock.clock_words()
+        self.assertEqual(len(words), 3)
+        self.assertTrue(all(words))
 
 
 if __name__ == "__main__":

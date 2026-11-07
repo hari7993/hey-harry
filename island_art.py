@@ -5,6 +5,7 @@ cover art. Windows' own GDI and GDI+ do the drawing and decoding, so there's no 
 import ctypes
 import os
 import re
+import struct
 import threading
 from ctypes import wintypes as wt
 from functools import lru_cache
@@ -401,6 +402,34 @@ def _from_bitmap(hbmp, size):
         xs = np.minimum((np.arange(int(w / f)) * f).astype(int), w - 1)
         out = out[ys][:, xs]
     return np.ascontiguousarray(out, dtype=np.float32)
+
+
+def dib_picture(dib, size):
+    """A picture copied to the clipboard (CF_DIB's bytes, winplatform.clipboard_picture) as a size x size picture of
+    its middle, for the island's Clipboard (7 November 2026), or None for a kind it doesn't read: only 24 and 32 bits,
+    as they are or with bit fields, which is what screenshots and browsers copy. Thinned out first, so a big
+    screenshot costs little."""
+    if not dib or len(dib) < 40:
+        return None
+    head, w, h, _, bits, comp = struct.unpack_from("<IiiHHI", dib, 0)
+    used = struct.unpack_from("<I", dib, 32)[0]
+    if bits not in (24, 32) or comp not in (0, 3) or w <= 0 or h == 0:
+        return None
+    start = head + (12 if comp == 3 and head == 40 else 0) + used * 4
+    stride, rows = (w * bits + 31) // 32 * 4, abs(h)
+    if len(dib) < start + stride * rows:
+        return None
+    px = np.frombuffer(dib, np.uint8, stride * rows, start).reshape(rows, stride)[:, :w * bits // 8]
+    px = px.reshape(rows, w, bits // 8)
+    if h > 0:  # stored bottom row first
+        px = px[::-1]
+    side = min(w, rows)  # its middle, square
+    px = px[(rows - side) // 2:(rows - side) // 2 + side, (w - side) // 2:(w - side) // 2 + side]
+    step = max(1, side // (size * 2))
+    px = px[::step, ::step]
+    pic = np.ones(px.shape[:2] + (4,), np.float32)
+    pic[..., :3] = px[..., 2::-1].astype(np.float32) / 255
+    return resample(pic, size, size)
 
 
 def rounded(rgba, radius):

@@ -47,6 +47,17 @@ def tripwire(name):
 
 requests.sessions.Session.request = tripwire("network")  # web, Fish, the model and YouTube all go through requests
 
+# The accessibility command can read and act on the real desktop. No unit test reaches it unless that test replaces
+# this tripwire with a fake command result first.
+import agentdesktop  # noqa: E402
+DESKTOP_ORIGINAL = agentdesktop._execute
+agentdesktop._execute = tripwire("agent-desktop")
+
+# The agents' cursors (cursors.py) draw real windows over the screen: what they'd show is kept, nothing's drawn
+import cursors  # noqa: E402
+CURSORS_WAKE = cursors._wake
+cursors._wake = lambda: None
+
 import backup  # noqa: E402
 import dictation  # noqa: E402
 import filesearch  # noqa: E402
@@ -79,9 +90,9 @@ WIN_ACTIONS = (
     # brightness, Wi-Fi, Bluetooth, the mic and the sound's output (device_step), changed or read on the real PC
     "set_brightness", "set_radio", "set_mic_muted", "set_output", "brightness", "radio_on", "mic_muted",
     "output_devices",
-    # UI Automation, for her procedures: it reads what's on the real screen and presses its controls
-    "uia", "find_ui", "find_all_ui", "ui_act", "ui_info", "ui_value", "ui_toggle", "ui_at", "ui_focused",
-    "ui_dialog_text", "ui_fields", "foreground", "browser_site", "window_at", "root_at", "owner_of", "window_exists",
+    # agent-desktop, for her procedures: it reads what's on the real screen and presses its controls
+    "find_ui", "find_all_ui", "ui_act", "ui_info", "ui_value", "ui_toggle", "ui_at", "ui_focused",
+    "ui_dialog_text", "ui_fields", "ui_rect", "ui_text", "ui_focus", "ui_is_focused", "ui_click_point", "foreground", "browser_site", "window_at", "root_at", "owner_of", "window_exists",
     "browser_windows", "close_site_tab",
     # and what she reads of the screen for a task in an app: its controls, or a picture of it
     "ui_snapshot", "screenshot",
@@ -92,7 +103,7 @@ WIN_ACTIONS = (
     "selected_files", "clipboard_text", "copied_files",  # and the files copied there (28 October)
     # and what a job in the background reads (27 October): its own window, where it is, and how long since you typed
     "window_of", "window_rect", "idle_seconds",
-    # and how it tells a control it may press with your window in front, and its own window's site, from UI Automation
+    # and how it tells a control it may press with your window in front, and its own window's site, from agent-desktop
     "ui_focus_free", "window_site",
 )
 WIN_ORIGINAL = {}  # the real ones, for a test of one that never lets it reach the PC (it patches what that calls)

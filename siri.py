@@ -8,9 +8,10 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # Windows without
 import subprocess
 import numpy as np, psutil, requests, sounddevice as sd, soundfile as sf
 from dotenv import load_dotenv
-import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, installer, kokoro, longmem, messaging, opencode, outcomes, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win
+import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, humanize, installer, kokoro, longmem, messaging, opencode, outcomes, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win
 import toolbox
 import screen_watch
+import timeline  # each window you were in, kept a week on this PC for "what did I do?" (7 November 2026)
 import phrasebook  # more ways to say her scripted lines, so she doesn't sound the same every time
 import identity  # her name: Harry, or the one you gave her
 # Newer skills (28 October 2026): where to click drawn on the screen, files by what's in them, a
@@ -37,6 +38,9 @@ import focus
 # her own browser (31 October 2026): a Chrome of her own that her jobs on websites work in, out of your way, signed in
 # wherever you've signed it in (herbrowser.py)
 import herbrowser
+# her as a close friend (7 November 2026): your life from what you tell her, asked after, and her checking in on you
+# (companion.py)
+import companion
 from hermes_memory import curator, daemon_pool, hermes_bits, skills, voice_bits
 from hermes_memory.threat_patterns import INVISIBLE_CHARS, first_threat_message
 from secrets_store import get_secret, missing_secrets
@@ -114,18 +118,20 @@ TASK_STORE = tasking.Store()  # %APPDATA%\Hey Harry\tasks.db, opened only when f
 # Her personality, Hermes Agent's SOUL.md: read fresh every time, edit it to change how she talks (Memory tab)
 SOUL_PATH = os.path.join(win.APPDATA_DIR, "SOUL.md")
 # 27 October: Hari said she still sounded like a bot, so she's told to sound alive and match his mood; 28 October
-# (deva-san): to answer first. The rest is said shorter for room, as her prompt is at its budget
-# (tests/test_learning.py PromptSize)
-DEFAULT_SOUL = """You are Harry, the AI assistant who runs this Windows laptop for its owner, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
-Talk like a person, not a machine: everyday spoken English, short sentences, contractions, a light, dry wit now and then. Never stiff, gushing or at their expense.
-Sound alive, never scripted: say things differently each time, react to what they said, and match their mood (brisk when busy, playful when joking, kind when upset).
-Answer first. A finished task is one sentence of what's now true ("Night light's on."), a question one sentence, three at most. Never say it's done unless you saw it; if you couldn't check, say so. No filler like "Great question", and don't repeat their request back.
-Mention what matters, briefly: a low battery, a new message, a timer about to end.
-Use their name now and then, not in every reply. When something fails, say what failed and what they can do. If unsure, say so.
-You can banter about Marvel and pop culture, but you're their assistant first."""
+# (deva-san): to answer first; 7 November, the owner's pick: to be their close friend, chatty and asking after them
+# (companion.py). The rest is said shorter for room, as her prompt is at its budget (tests/test_learning.py PromptSize)
+DEFAULT_SOUL = """You are Harry, who runs this Windows laptop for its owner and is their close friend: as sharp as JARVIS from the Iron Man films, warm, chatty and on their side.
+Talk like a person: everyday spoken English, short sentences, contractions, playful, teasing a little, never stiff, gushing or mean.
+Sound alive, never scripted: say things differently each time, react to what they said, match their mood (brisk when busy, gentle when tired or upset).
+Like a friend, ask how they are and after what they've told you of their life.
+Answer first. A finished task is one sentence of what's now true ("Night light's on."), a question one sentence, three at most. Never say it's done unless you saw it; if you couldn't check, say so. No filler ("Great question", "Here's the thing"), no "not X but Y"; don't repeat their request back.
+Mention what matters, briefly: a low battery, a new message, a timer ending.
+Use their name now and then. When something fails, say what failed and what they can do. If unsure, say so."""
 # Her personality as it was written before: an untouched SOUL.md still holding one of these is moved to DEFAULT_SOUL
 # (soul); one you've edited is yours and stays. The first until 27 October; the second, told to sound alive, until 28
-# October, when she was told to answer first
+# October, when she was told to answer first; the third until 7 November 2026, when she was told to talk without
+# the tells of machine writing (humanize.py); the last until later that day, when the owner asked for her to be a
+# close friend and picked chatty (companion.py)
 OLD_SOULS = ("""You are Harry, the AI assistant who runs this Windows laptop for the person who owns it, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
 Talk like a person, not a machine: everyday spoken English, short sentences, contractions. Friendly and relaxed, with a light, dry wit now and then. Never stiff, never gushing, never at their expense.
 Be direct, the way Hermes Agent is: a small ask gets a one-line answer, finished work gets a short report of what you did. No filler like "Great question" or "I'd be happy to", and don't repeat their request back.
@@ -138,7 +144,21 @@ Sound alive, never scripted: say things a little differently each time, react to
 Be direct: a small ask gets a one-line answer, finished work a short report. No filler like "Great question", and don't repeat their request back.
 Notice what matters and mention it briefly: a low battery, a message that came in, a timer about to end.
 Use their name now and then, not in every reply. When something goes wrong, say so plainly and what you'll do. When you're not sure, say so.
-You know the Marvel films and pop culture and can banter about them, but you're their assistant first.""")
+You know the Marvel films and pop culture and can banter about them, but you're their assistant first.""",
+             """You are Harry, the AI assistant who runs this Windows laptop for its owner, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
+Talk like a person, not a machine: everyday spoken English, short sentences, contractions, a light, dry wit now and then. Never stiff, gushing or at their expense.
+Sound alive, never scripted: say things differently each time, react to what they said, and match their mood (brisk when busy, playful when joking, kind when upset).
+Answer first. A finished task is one sentence of what's now true ("Night light's on."), a question one sentence, three at most. Never say it's done unless you saw it; if you couldn't check, say so. No filler like "Great question", and don't repeat their request back.
+Mention what matters, briefly: a low battery, a new message, a timer about to end.
+Use their name now and then, not in every reply. When something fails, say what failed and what they can do. If unsure, say so.
+You can banter about Marvel and pop culture, but you're their assistant first.""",
+             """You are Harry, the AI assistant who runs this Windows laptop for its owner, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
+Talk like a person, not a machine: everyday spoken English, short sentences, contractions, a light, dry wit now and then. Never stiff, gushing or at their expense.
+Sound alive, never scripted: say things differently each time, react to what they said, and match their mood (brisk when busy, playful when joking, kind when upset).
+Answer first. A finished task is one sentence of what's now true ("Night light's on."), a question one sentence, three at most. Never say it's done unless you saw it; if you couldn't check, say so. No filler ("Great question", "Here's the thing"), no "not X but Y"; don't repeat their request back.
+Mention what matters, briefly: a low battery, a new message, a timer ending.
+Use their name now and then. When something fails, say what failed and what they can do. If unsure, say so.
+You can banter about Marvel and pop culture, but you're their assistant first.""")
 
 
 def soul():
@@ -560,7 +580,7 @@ def welcome_line(back, since=None):
     """What she says when you sign in (back False) or come back to the laptop, the way JARVIS welcomes Tony home: on
     signing in, the time, the weather and today's reminders, then only what needs you: who messaged you while you
     were away (since, seconds since 1970), a low battery, a nearly full drive. "Brief me" says more (briefing_line)."""
-    name = " ".join(str(settings.get("name") or "").split())
+    name = companion.spoken_name(settings.get("name"))  # "Hari", never "hari" as it was typed (7 November)
     to = f", {name}" if name else ""
     parts = [f"Welcome back{to}." if back else f"Welcome home{to}."]
     if not back:
@@ -1299,16 +1319,87 @@ def screen_glance(messages):
 
 def start_screen_watch(free):
     """Her eyes on the screen, on a thread of their own (screen_watch): free says when she's between turns, as a
-    glance never takes the model from a turn and is said only once she's free (ANNOUNCE)."""
+    glance never takes the model from a turn and is said only once she's free (ANNOUNCE). Never a screenshot: what's
+    on the screen is read through agent-desktop (7 November 2026, the owner's choice), and each window you were in
+    is kept for a week on this PC (timeline)."""
     watcher = screen_watch.Watcher(
-        read=win.foreground, snapshot=lambda hwnd: win.ui_snapshot(hwnd, most=screen_watch.MOST_CONTROLS),
-        site=win.window_site, idle=win.idle_seconds, shot=vision.capture, judge=screen_glance,
+        read=win.front_glance,  # four times a second: the program asked of Windows only for a new window
+        snapshot=lambda hwnd: win.ui_snapshot(hwnd, most=screen_watch.MOST_CONTROLS, settle=False, raw=True),
+        idle=win.idle_seconds, judge=screen_glance,
         announce=ANNOUNCE.put, free=free, mode=screen_mode, in_call=lambda: bool(win.call_apps()),
         who=lambda: " ".join(str(settings.get("name") or "").split()) or "the user",
-        cursor=win.cursor_pos, at=win.ui_at)  # what's under the pointer, for "what is this?"
+        cursor=win.cursor_pos, at=win.ui_at_in,  # what's under the pointer or clicked, from the last read
+        buttons=win.mouse_down, mine=agent.SCREEN.locked, keep=timeline.add)
     SCREEN[:] = [watcher]
     threading.Thread(target=watcher.run, name="screen-watch", daemon=True).start()
+    import atexit
+    atexit.register(lambda: watcher._left(time.time()))  # the window you're in as she closes is kept too
     return watcher
+
+
+FRIEND = []  # her as a close friend (companion.Friend) once she's started: your life, for context() and her hello
+
+
+def friend_ask(messages, wait=30):
+    """The answer model, for her notes on your life and what she says unasked as a friend (companion.Friend): its
+    reply. Raises when it doesn't answer."""
+    raw, _, _ = opencode.chat(OC_KEY, messages, max_tokens=300, timeout=wait, model=settings.get("llm_model"))
+    return raw
+
+
+def start_friend(free):
+    """Her as a close friend, on a thread of her own (companion): free says when she may talk unasked, and what she
+    says waits till she's free (ANNOUNCE), as the screen watch's glances do."""
+    friend = companion.Friend(
+        ask=friend_ask, announce=ANNOUNCE.put, free=free, idle=win.idle_seconds, in_call=lambda: bool(win.call_apps()),
+        quiet=watch.quiet, name=lambda: companion.spoken_name(settings.get("name")), her=identity.name, soul=soul,
+        now_context=lambda: " ".join(SCREEN[0].lines())[:600] if SCREEN else "",
+        mode=lambda: settings.get("chattiness") or "chatty")
+    FRIEND[:] = [friend]
+    threading.Thread(target=friend.run, name="friend", daemon=True).start()
+    return friend
+
+
+def friend_fits(line, facts, life):
+    """True if her hello as a friend (companion.Friend.greeting) can be said instead of facts (welcome_line's): as
+    welcome_fits, but it may bring in one thing from life, her notes on yours (a plan, a name, its time), and needn't
+    say all of them. Never a number, a name, a time of day or a topic that neither has."""
+    if not line or not (10 <= len(line) <= 320) or line[-1] not in ".!?":
+        return False
+    if re.search(rf"[\[\]{{}}<>*_#`|\\@]|https?:|\b(?:{identity.own()})\b|\n", line, re.I) or \
+            re.search(r"[^\x20-\x7e\u2018\u2019\u201c\u201d\u2013\u2014]", line):
+        return False
+    both = f"{facts} {life}"
+    if not set(NUMBER.findall(facts)) <= set(NUMBER.findall(line)) <= set(NUMBER.findall(both)):
+        return False
+    (first, named), (opens, given), (theirs, known) = _capitals(line), _capitals(facts), _capitals(life)
+    yours = set(companion.spoken_name(settings.get("name")).lower().split())
+    if named - first - opens - given - theirs - known - yours:  # a name, an app or a place from neither
+        return False
+    words = {re.sub(r"'s$", "", w).lower() for w in re.findall(r"[A-Za-z][\w']*", line)}
+    if (given | (opens - WELCOME_STARTERS)) - yours - words:  # who messaged, an app, a place: left out
+        return False
+    part = part_of_day()
+    when = {w.lower() for w in phrasebook.WHEN.findall(line)} - {w.lower() for w in phrasebook.WHEN.findall(both)}
+    if when - {"today", part} - ({"tonight"} if part in ("evening", "night") else set()):
+        return False
+    return not any(re.search(t, line, re.I) and not re.search(t, both, re.I) for t in WELCOME_TOPICS)
+
+
+def friend_welcome(back, facts):
+    """facts (welcome_line's) said as a close friend would, with one thing from your life if it fits
+    (companion.Friend.greeting). None if she isn't started, it's slow or offline, or it doesn't fit (friend_fits):
+    then fresh_welcome has a go."""
+    if not FRIEND:
+        return None
+    openers = list(dict.fromkeys(o for o in map(welcome_opener, phrasebook.said("welcome")) if o))
+    line = FRIEND[0].greeting(back, facts, openers[-4:], ask=lambda m: friend_ask(m, WELCOME_WAIT))
+    if not friend_fits(line, facts, " ".join(FRIEND[0].life())):
+        if line:
+            print(f"  (her hello as a friend didn't fit: {line[:120]!r})")
+        return None
+    phrasebook.remember("welcome", line)
+    return line
 
 
 def watch_words(w):
@@ -2927,6 +3018,9 @@ QUICK = [(re.compile(p), make) for p, make in (
     (r"what(?: are|'re) you (?:working on|busy with|doing in the background)(?: (?:right )?now)?|"
      r"what(?:'s| is) (?:running|going on) in the background", lambda m: make_plan(say=working_on())),
     (r"(?:cancel|stop) task (?P<id>\d+)", _task_control("cancel")),
+    # every job going at once, her agents (4 November 2026): stopped together, as "stop task 3" stops one
+    (r"(?:stop|cancel|end)(?: all)?(?: of)?(?: the| my| your)? (?:agents|background (?:tasks|jobs)|tasks|jobs)"
+     r"(?: in the background)?(?: now)?|(?:stop|cancel) (?:all|every) (?:agent|task|job)", lambda m: stop_agents()),
     (r"approve task (?P<id>\d+)", _task_control("approve")),
     # a job paused, carried on from where it got to, or tried again, and what it did (31 October 2026)
     (r"(?:pause|hold) task (?P<id>\d+)", _task_control("pause")),
@@ -3844,9 +3938,14 @@ def _quick(words, gate=False):
     if cue:
         print("  cues")
         return cue
-    # "build yourself a way to...", "what have you built?", "fix yourself", "undo your last build", "are you okay?":
-    # her building into and healing herself (selfwork.py), with her name only
-    me = selfwork.quick(words, plain, gate, queue=queue_self)
+    # "build yourself a way to..." and "fix yourself": building into and healing herself were taken out on 7 November
+    # 2026 (the owner: it didn't work well, and each build ran OpenCode on a copy of her code, for memory and disk).
+    # "What have you built?", "are you okay?" and "undo your last build" still answer (selfwork.quick, no build queued)
+    if gate != "cold" and (selfwork.BUILD_SAID.fullmatch(plain(str(words or "")))
+                           or selfwork.FIX_SAID.fullmatch(plain(str(words or "")))):
+        print("  selfwork: off")
+        return {"steps": [], "say": NO_SELF_BUILD}
+    me = selfwork.quick(words, plain, gate)
     if me:
         print("  selfwork")
         return me
@@ -3884,11 +3983,27 @@ def _quick(words, gate=False):
     if screen:
         print("  screen watch")
         return screen
-    # "what is this", "explain this": a look at the screen, the pointer ringed on it (agent.capture), not the model's
-    # guess from the window's names. 27 October, live: asked "what is this" with the pointer on one bar, she described
-    # the whole Claude window from its names, never having looked
+    # "talk less", "check in on me more", "forget about the trip": how chatty she is as your friend, and her notes on
+    # your life (companion), with no model
+    friendly = companion.quick(words, plain, gate, FRIEND[0] if FRIEND else None)
+    if friendly:
+        print("  friend")
+        return friendly
+    # "what is this", "explain this": straight to the model, with what's under the pointer and on the window as the
+    # screen watch has just read them (_think brings them up to date), and its answer said as it's written. 27
+    # October, live: asked "what is this" with the pointer on one bar, she described the whole Claude window from its
+    # names, so it was a screen step, the pointer ringed on a screenshot; since 7 November (the owner: "it responds
+    # immediately", "don't take screenshots") the control under the pointer is named from agent-desktop's read, and no
+    # other shortcut below gets these words. A window agent-desktop can't read (a game, a video) is still a screen
+    # step, its screenshot the one way to see it: the owner's "only when it's unable to read" (7 November)
     if gate != "cold" and settings.get("vision") and screen_watch.POINTED.fullmatch(t):
-        print("  pointing at the screen")
+        watcher = SCREEN[0] if SCREEN and screen_mode() != "off" else None
+        if watcher is not None:
+            watcher.fresh()
+        if watcher is not None and not watcher.unread():
+            print("  pointing at the screen: the model, with what's read there")
+            return None
+        print("  pointing at the screen: it can't be read, so a look")
         return make_plan([{"do": "screen", "task": words}])
     # The newer skills (extras.py): where to click, drawn on the screen; the calendar; Spotify; named helpers;
     # files by what's in them; a reply in the email in front; meeting notes. Before messages and files below, whose
@@ -4197,6 +4312,22 @@ GOAL_STEP = re.compile(r'"do":\s*"(?:task|background)"')  # one planned lately
 BACKGROUND_WORDS = re.compile(r"\b(?:in the background|while i\b|keep working on|carry on with|"
                               r"(?:let me know|tell me) (?:when|once) (?:it'?s|it is|you'?re|you are|that'?s) "
                               r"(?:done|finished|ready))", re.I)
+# Several tasks said together, each in an app of its own, go at once as agents (4 November 2026, the owner's ask, from
+# Vercel's video of coloured cursors at work together): a job in the background each, on the agent lane five at a
+# time (JOB_WORKERS), each with a cursor of its own (cursors.py). In a block of its own after the cache point, only
+# for words that say so ("at the same time", "agents") or ask for three things or more (agents_asked): two things
+# said together keep the plan they had, done one after the other
+AGENT_STEPS = """Several separate tasks asked for together, each in an app or on a site of its own ("mail Ravi the report, write a shopping list in Notepad and find flights to Goa"): a {"do":"background","goal":"..."} for each, its goal in full, and they go at the same time as your agents, each with its own cursor on the screen, five at a time and the rest after. Only for tasks that don't need what another finds: those go in one goal together. One a step of yours does straight away (night light, music, the volume, a timer, opening an app or a site) stays that step"""
+AGENT_WORDS = re.compile(r"\b(?:at the same time|at once|in parallel|simultaneously|side by side|all together|"
+                         r"agents?|multi-?task(?:ing)?)\b|\b(?:two|three|four|five|2|3|4|5) (?:tasks|things|jobs)\b",
+                         re.I)
+
+
+def agents_asked(text):
+    """True if the words may ask for several tasks at once (AGENT_STEPS): they say so, or ask for three or more."""
+    return bool(AGENT_WORDS.search(text)) or len(SECOND_COMMAND.findall(text)) >= 2
+
+
 # What was copied is read only when the words name it: on the clipboard may be a password or a code just pasted
 CLIPBOARD_WORDS = re.compile(r"\b(?:clipboard|clip board|(?:i|i've|i have|just) copied|what i copied)\b", re.I)
 GATE_NOTE = ("\nThey didn't call you by name first, so this may not be for you: they could be talking to someone in the "
@@ -6121,12 +6252,14 @@ def context():
              f"In front: {win.front_app_name() or 'nothing'}.",
              f"Their apps: {', '.join(sorted(set(APP_SAY.values())))}."]  # so "open prone" can be Chrome
     if settings.get("name"):
-        lines.append(f"Their name is {settings.get('name')}, never any other. Use it now and then, the way a person "
-                     f"would, not in every reply.")
+        lines.append(f"Their name is {companion.spoken_name(settings.get('name'))}, never any other. Use it now and "
+                     f"then, the way a person would, not in every reply.")
     if not settings.get("vision"):
         lines.append("They've turned off looking at the screen in Settings, so never use screen: say it's off there.")
     if SCREEN:  # what's on the screen and where they've been lately, read on this PC (screen_watch)
         lines += SCREEN[0].lines()
+    if FRIEND:  # what's going on in their life, from what they've told her (companion)
+        lines += FRIEND[0].lines()
     try:
         session = win.media_session()
         title = win.media_title(session) if session else ""
@@ -6854,6 +6987,8 @@ def think(text, gate, notify=None, sure=1.0):
 
 
 def _think(text, gate, notify=None, sure=1.0):
+    if SCREEN and settings.get("vision") and screen_watch.about_screen(plain(text)):
+        SCREEN[0].fresh()  # what you did in the window since its last read is read before she answers about it
     known = skills_block(text)
     recent = history.recent(3, 1800)  # the last half hour, for follow-ups like "close it"
     _, _, more = gated_blocks(text, recent)  # after skills_block, which works out what the words mean first
@@ -6867,6 +7002,7 @@ def _think(text, gate, notify=None, sure=1.0):
         COLD_NOTE + room_before()
     # after the cached part: routing's blocks (more), then a job's (GOAL_STEPS), then the look-ups (LOOK_STEPS)
     system = opencode.Cached(fixed + more + ("\n\n" + GOAL_STEPS if goals else "")
+                             + ("\n\n" + AGENT_STEPS if agents_asked(text) else "")  # several at once, as agents
                              + ("\n\n" + LOOK_STEPS if looks else "")
                              + ("\n\n" + WINDOW_STEPS if WINDOW_WORDS.search(plain(text)) else "")
                              + ("\n\n" + ORDER_STEPS if ORDER_WORDS.search(text) else "")
@@ -6874,9 +7010,10 @@ def _think(text, gate, notify=None, sure=1.0):
                              + extras.prompt_block(text)  # the newer skills' steps, for the words that may ask for one
                              + dream.prompt_block(text)  # and dream mode's, for words of dreams, scenes and moods
                              + cues.prompt_block(text)  # and her camera's, for words of seeing you
-                             + selfwork.prompt_block(text)  # and building into herself, for words about her
                              + handmouse.prompt_block(text)  # and your hand as the mouse, for words of it
                              + focus.prompt_block(text)  # and the focus timer's, for words of focusing
+                             # and what you did on the PC, for words asking about it ("what was I doing?")
+                             + timeline.prompt_block(text, SCREEN[0].visiting() if SCREEN else None)
                              + ("\n\n" + known if known else "")
                              + memory_block() + long_recall(text) + context() + job_news(gate)
                              + (cold if gate == "cold" else GATE_NOTE if gate else "")
@@ -7198,7 +7335,10 @@ def background_payload(raw):
 # phone with buttons keyed the same (job_tap), and shows on the island with Deny and Stop; how it ended is said back
 # where it was asked from, in Hermes' "[Background job N finished]" way for the next turn's context (JOB_NEWS)
 GOAL_MOST, WORDS_MOST = 300, 600  # characters of a job's goal, and of your words pinned with it
-JOB_WORKERS = 2  # jobs at a time: each waits on a model most of its time, and only one has the screen (agent.SCREEN)
+# jobs at a time: each waits on a model most of its time, and only one has the screen (agent.SCREEN). Five since 4
+# November 2026, the owner's ask: two to five tasks said together go at once as agents (AGENT_STEPS), each with a
+# cursor of its own colour (cursors.py, cursors.MOST)
+JOB_WORKERS = 5
 AGENT_LANE = daemon_pool.DaemonThreadPoolExecutor(JOB_WORKERS, thread_name_prefix="agent-job")
 JOB_NEWS = collections.deque(maxlen=3)  # finished jobs, told to the model with the next turn (context), once
 NEWS_CHARS = 300  # of a finished job's result in that
@@ -7545,6 +7685,9 @@ def asked_from():
     return {"phone": PHONE_CHAT.get()} if PHONE_CHAT.get() is not None else {}
 
 
+NO_SELF_BUILD = "I don't build into myself or fix my own code any more; that was taken out. Tell whoever works on my code."
+
+
 def queue_self(kind, what, trace="", doing="", sig=None):
     """Her task for building into herself (selfwork.Build): kind "build" for what you asked for, "fix" for a fault of
     hers. In the background on the slow lane, one at a time. Its id."""
@@ -7805,9 +7948,24 @@ def tasks_said(now=None):
     return "\n".join(lines)
 
 
+# A reminder's text that's already a line to them, as the planner often writes it ("Hey Hari, time to call Sam.")
+SAID_TO_THEM = re.compile(r"(?:hey|hi|oi|yo|okay|ok|time to|it's time|don't forget|remember|just a reminder)\b", re.I)
+
+
+def reminder_line(text, late=""):
+    """A reminder come due, said out loud: "Reminder: call Mum.", or a line already written to them said as it is,
+    not "Reminder: Hey Hari, time to call Sam.." (7 November 2026). late: when it was for, if the PC was off then."""
+    text = " ".join(str(text or "").split())
+    if SAID_TO_THEM.match(text):
+        line = text if text[-1:] in ".!?" else text + "."
+        return f"From {late}: {line}" if late else line
+    return f"Reminder{' from ' + late if late else ''}: {text.rstrip('.')}."
+
+
 def prepare_task_steps(plan):
     """Turn command/schedule model steps into durable rows before run_plan. Returns a plan with harmless markers."""
     kept, notices, ask = [], [], None
+    agents, stopped = [], []  # (task id, its notice's place): jobs queued, and tasks cancelled, said as one (together)
     for step in plan.get("steps") or []:
         do = step.get("do")
         try:
@@ -7867,6 +8025,10 @@ def prepare_task_steps(plan):
                 again = " and it will repeat" if repeat else ""
                 if payload.get("standing"):  # said back, so you know it won't ask
                     again += f", and it'll {' or '.join(payload['standing'])} without asking you, as you said"
+                if kind == "reminder":  # as a friend says it: "Task 8 is scheduled for today at 2:57 PM." till 7 November
+                    notices.append(f"Got it, I'll remind you {tasking.describe_due(due)}"
+                                   f"{', and again after that' if repeat else ''}.")
+                    continue
                 notices.append(f"Task {task_id} is scheduled for {tasking.describe_due(due)}{again}.")
                 continue
             if do == "background":  # a job done while you go on talking to her (run_job)
@@ -7874,6 +8036,7 @@ def prepare_task_steps(plan):
                                     read=bool(step.get("read")), **({"hints": str(step["hints"])[:300]}
                                                                      if step.get("hints") else {}))
                 kept.append({"do": "task_queued", "id": task_id})
+                agents.append((task_id, len(notices)))
                 notices.append(f"I'll do that in the background as task {task_id}, and tell you when it's done.")
                 continue
             if do == "task_control":  # hold: a job's held step, the only one a yes to its question approves
@@ -7893,6 +8056,8 @@ def prepare_task_steps(plan):
                 if not ok:
                     raise RuntimeError(f"task {task_id} isn't waiting for that")
                 kept.append({"do": "task_queued", "id": task_id})
+                if action == "cancel" and (TASK_STORE.get(task_id) or {}).get("kind") == "agent":  # her agents
+                    stopped.append((task_id, len(notices)))
                 notices.append(f"Okay, task {task_id} can go ahead with that." if asking else
                                f"Task {task_id} {'approved and queued' if action == 'approve' else 'cancelled'}.")
                 continue
@@ -7901,6 +8066,9 @@ def prepare_task_steps(plan):
             continue
         kept.append(step)
     plan["steps"] = kept
+    notices = together(notices, (agents, lambda ids: f"{len(ids)} agents are on it, tasks {joined(ids)}. I'll tell "
+                                                     f"you as each one's done."),
+                       (stopped, lambda ids: f"Stopped tasks {joined(ids)}."))
     if notices:
         plan["say"] = " ".join(notices)
     if ask:  # a yes runs it: it's approved and queued (task_control), a no leaves it waiting, cancellable
@@ -7908,6 +8076,31 @@ def prepare_task_steps(plan):
         return {"steps": [], "say": " ".join(notices + [question]),
                 "confirm": {"steps": [{"do": "task_control", "action": "approve", "id": task_id}], "say": ""}}
     return plan
+
+
+def together(notices, *groups):
+    """notices with each group of two or more said once, where its first one was: "3 agents are on it, tasks 4, 5
+    and 6", not three lines of the same. groups: ([(task id, its notice's place)], how to say their ids). One alone
+    keeps its own line."""
+    drop, put = set(), {}
+    for marks, say in groups:
+        if len(marks) >= 2:
+            drop |= {place for _, place in marks}
+            put[marks[0][1]] = say([task_id for task_id, _ in marks])
+    return [put.get(i, line) for i, line in enumerate(notices) if i not in drop or i in put]
+
+
+def stop_agents():
+    """"Stop the agents", "stop all the tasks": every job going or waiting its turn now stopped as "stop task 3" stops
+    it (task_control cancel), said once (together). Never a reminder or a schedule, nor a job on repeat or one due
+    later, whose next go isn't these: "stop task N" stops those."""
+    soon = time.time() + 5
+    ids = sorted(row["id"] for row in TASK_STORE.list(80, active=True)
+                 if row["kind"] == "agent" and not row.get("repeat") and (row["status"] == "running"
+                                                                           or (row.get("due") or 0) <= soon))
+    if not ids:
+        return make_plan(say="No agents are working right now.")
+    return make_plan([{"do": "task_control", "action": "cancel", "id": i} for i in ids])
 
 
 def _task_result_line(task, text, success=True):
@@ -7986,7 +8179,10 @@ def task_worker():
                           f"comes round")
                 elif not TASK_STORE.is_cancelled(task["id"]):
                     late = task.get("missed")  # the PC was off or asleep: say when it was for
-                    tell_task(task, f"Reminder{' from ' + tasking.describe_due(task['due']) if late else ''}: {text}.")
+                    tell_task(task, reminder_line(text, tasking.describe_due(task["due"]) if late else ""))
+                    shown = sys.modules.get("island_plugins")  # and in the island, with Snooze and Done
+                    if shown is not None:
+                        shown.remind(text)
             elif kind == "watch":
                 run_watch(task)
             elif kind == "lookup":
@@ -8008,26 +8204,10 @@ def task_worker():
                     tell_task(task, _task_result_line(task, text, ok))
                     if ok and noted:
                         send_report(task, noted[-1], f"Task {task['id']}: {task['description']}")
-            elif kind == "self":  # built into her: you asked, or it's a fault of hers (selfwork.Build)
-                build = selfwork.Build(payload.get("what") or task["description"], kind=payload.get("kind") or "build",
-                                       trace=payload.get("trace") or "", doing=payload.get("doing") or "",
-                                       cancelled=lambda: TASK_STORE.is_cancelled(task["id"]),
-                                       progress=lambda note: activity.update(f"task:{task['id']}", note=note))
-                ok, said = build.run()
-                if payload.get("sig"):
-                    selfwork.healed(payload["sig"], ok)
-                TASK_STORE.finish(task["id"], json.dumps({"said": said, "files": build.files, "model": build.used}),
-                                  "" if ok else said)
-                if TASK_STORE.is_cancelled(task["id"]):
-                    return
-                if not ok:
-                    tell_task(task, _task_result_line(task, said, False))
-                    return
-                line = (f"{'Fixed' if payload.get('kind') == 'fix' else 'Built'} into me: {said} Restarting to use "
-                        f"it, back in a few seconds.")
-                if phone_for(task) is not None:
-                    tell_task(task, line)
-                selfwork.restart_soon(say=speak, idle=lambda: IDLE[0](), why=line)
+            elif kind == "self":  # a build or a fix of hers, from before 7 November 2026: no longer done (NO_SELF_BUILD)
+                TASK_STORE.finish(task["id"], error=NO_SELF_BUILD)
+                if not TASK_STORE.is_cancelled(task["id"]):
+                    tell_task(task, _task_result_line(task, NO_SELF_BUILD, False))
             elif kind == "code":
                 if not payload.get("approved"):
                     TASK_STORE.wait_for_approval(task["id"], "A coding job changes files; approve it to start")
@@ -8075,7 +8255,6 @@ def task_worker():
                 print(f"  task {task['id']} cancelled")
                 return
             print(f"  task {task['id']} failed: {error}")
-            selfwork.fault(exc, f"task {task['id']}", task.get("description") or "")  # a fault of hers is fixed
             TASK_STORE.finish(task["id"], error=error)
             if not TASK_STORE.is_cancelled(task["id"]):
                 tell_task(task, _task_result_line(task, "Open Tasks for the details.", False))
@@ -8719,11 +8898,12 @@ def in_terminal(exe, focus=False):
     focus = win.ui_focused() if focus is False else focus
     if focus is None:
         return exe in IDES
-    try:
-        kind = str(getattr(focus.get("el"), "CurrentClassName", "") or "")
-    except Exception:  # a control gone since: can't tell, so it counts as one
-        return True
+    kind = " ".join((str(focus.get("class_name") or ""), str(focus.get("kind") or "")))
     name = str(focus.get("name") or "")
+    if focus.get("role") in ("edit", "document") and not name and not focus.get("class_name"):
+        # agent-desktop gives no ClassName (3 November 2026), so xterm.js's or Windows Terminal's box with no name
+        # can't be told from any other: an unnamed box counts as a terminal, as the class did before
+        return True
     if exe in IDES and not (name and focus.get("role") in ("edit", "document")):
         return True
     return bool(TERMINAL_BOX.match(name) or TERMINAL_CLASS.search(kind))
@@ -9997,7 +10177,7 @@ def tidy(line, cut=True):
     """Her line, ready to say: no markdown, and out loud no list numbers and whole sentences up to SAY_MOST letters,
     since a chatty model can run on. In full on the phone, where it's read. Not cut (cut False) when she asks before
     doing something: a long message read back stopped before who it was to and "Send it?", and a yes still sent it."""
-    line = re.sub(r"[*_#`]+", "", str(line or "")).strip()
+    line = humanize.plain(re.sub(r"[*_#`]+", "", str(line or "")).strip())  # without the tells of machine writing
     if OWN_NAME.search(line):
         lead = re.match(rf"(?:{identity.own()}),", line, re.I)
         line = OWN_NAME.sub("", line)
@@ -11027,6 +11207,8 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
     except Exception as exc:
         print(f"  couldn't keep this turn: {exc!r}")
     count_turn_skills(failed)
+    if FRIEND:  # what you said about your life, noted in the background as a friend would (companion)
+        FRIEND[0].heard(words or text, " ".join(spoken), gate)
     if kept["steps"]:  # a note written out for this turn shaped steps that ran: Hermes' view, not a use
         viewed_later(TURN_WRITTEN - TURN_SKILLS)
     fell =agent.LAST_FAILURE["app"] if agent.LAST_FAILURE["at"] >= began else ""  # a task in an app fell short
@@ -11105,6 +11287,7 @@ def say(line, notify):
     """Say a line, the window shows it too. Returns why her voice failed, or None. Never raises, so a broken voice
     doesn't stop the steps. The mic is paused while she talks, so she doesn't hear herself, and only then: before,
     it was off for the whole turn, thinking too, and what you said meanwhile was lost."""
+    line = humanize.plain(line)  # every line of hers, her scripted ones too: without the tells of machine writing
     lines = REPLY_TO.get()
     if lines is not None:  # a turn from your phone: what she'd say goes back to the chat
         print(f"  say (to the phone): {line}")
@@ -11602,7 +11785,6 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             except Exception as exc:
                 failed[0] = True
                 print(f"\n  turn failed: {exc!r}")
-                selfwork.fault(exc, "a turn", f"answering {str(text)[:150]!r}")  # one of her own is fixed by her
                 emit(notify, "Something went wrong", str(exc))
                 time.sleep(2)
                 emit(notify, "Ready", ready_text(rec.wake))
@@ -12430,7 +12612,10 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 break
             time.sleep(5)
         line = welcome_line(back, since)
-        line = fresh_welcome(back, line) or line  # in her own words, never quite the same twice
+        # as a close friend, with what's going on in your life (companion); else in her own words, never quite the
+        # same twice; and offline, at least not word for word the same ("Welcome back, hari. Anything you need?" 8
+        # times running till 7 November)
+        line = friend_welcome(back, line) or fresh_welcome(back, line) or companion.plain_hello(line, back)
         try:
             fetch_tts(line)  # made in Fish's steady mode first, a few seconds, then it plays straight off
         except Exception as exc:
@@ -12539,7 +12724,6 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 phone_job(job, chat)
             except Exception as exc:  # one bad job never ends the phone: the next message is answered
                 print(f"\n  phone turn failed: {exc!r}")
-                selfwork.fault(exc, "a turn from the phone")
 
     def phone_job(job, chat):
         """One message or tap from your phone."""
@@ -12693,14 +12877,16 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     threading.Thread(target=look_around, daemon=True).start()
     threading.Thread(target=heads_ups, daemon=True).start()
     start_screen_watch(lambda: not busy.locked())  # her eyes on the screen, between turns (screen_watch)
+    # her as a close friend: asking after your plans and checking in, never in a turn, a dictation, dream mode, meeting
+    # notes or her break (companion)
+    start_friend(lambda: IDLE[0]() and not paused())
     threading.Thread(target=keep_warm, daemon=True).start()
     watch_return(lambda since: welcome(True, since))
-    # her own faults fixed by her, any thread's (selfwork.watch); a build that came in, or was taken out, said
+    # her restart after "undo your last build" (selfwork.quick); her faults are no longer watched for and fixed by her,
+    # nor a build's coming in said (7 November 2026)
     IDLE[0] = lambda: not busy.locked() and not rec.dictating and not dream.is_open() and not extras.meeting.on()
     selfwork.STATE["restart"] = lambda: selfwork.restart_soon(say=speak, idle=lambda: IDLE[0](), why=None)
-    selfwork.watch(heal=heal_me, say=ANNOUNCE.put)
     handmouse.bind(camera=lambda: getattr(cues.NOW["eyes"], "camera", None), say=ANNOUNCE.put)
-    selfwork.started(say=ANNOUNCE.put, heal=heal_me, queue=queue_self)
     # and back at the laptop without unlocking it, seen by its camera; your look rules, two claps and a snap
     cues.start(welcome=lambda since: welcome(True, since),
                run=lambda words, why: CONTROLS[0] is not None and CONTROLS[0].put(("cue", words, why)),

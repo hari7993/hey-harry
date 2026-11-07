@@ -30,6 +30,20 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
 & .venv\Scripts\python.exe -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) { Write-Host "Installing packages failed, see above."; exit 1 }
 
+# agent-desktop (Vercel Labs, Apache-2.0): how she reads and presses the controls of the window in front. From npm,
+# with its native Windows program inside, so nothing is built here
+& .venv\Scripts\python.exe -c "import agentdesktop, sys; sys.exit(0 if agentdesktop.available() else 1)"
+if ($LASTEXITCODE -ne 0) {
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        Write-Host "agent-desktop needs Node.js for npm. Install it with:  winget install OpenJS.NodeJS.LTS  then run this again."
+        exit 1
+    }
+    Write-Host "Installing agent-desktop"
+    npm install -g agent-desktop
+    & .venv\Scripts\python.exe -c "import agentdesktop, sys; sys.exit(0 if agentdesktop.available() else 1)"
+    if ($LASTEXITCODE -ne 0) { Write-Host "Installing agent-desktop failed, see above."; exit 1 }
+}
+
 $shell = New-Object -ComObject WScript.Shell
 $targets = @([Environment]::GetFolderPath("Programs"), [Environment]::GetFolderPath("Desktop"))
 foreach ($dir in $targets) {

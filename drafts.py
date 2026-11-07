@@ -3,7 +3,7 @@
 tell him I'll send the deck tomorrow".
 
 Your own words go in as you said them. Anything else she writes from the email that's open, read off the screen (a
-picture of the window, and its text by UI Automation, numbers of 4 digits or more masked as a task in an app does),
+picture of the window, and its text through agent-desktop, numbers of 4 digits or more masked as a task in an app does),
 in your voice, with a [ ] where it needs something only you know. She opens the reply box (its Reply button) when it
 isn't open yet, puts the reply in at the cursor and leaves it: you read it and press Send yourself. Gmail, Outlook
 on the web and on Windows (classic and new), Yahoo, Zoho, Proton and Thunderbird."""
@@ -75,19 +75,11 @@ def literal(words):
 
 
 def _page_text(snap, most=6000):
-    """What the window says, by UI Automation's text pattern on its biggest page or document: the open email with
-    the rest of the window, numbers of 4 digits or more masked (agent._masked)."""
+    """What the window says below its biggest page or document, with long numbers masked."""
     docs = sorted((it for it in (snap or {}).get("items") or [] if it.get("role") == "document"),
                   key=lambda it: -((it["rect"][2] - it["rect"][0]) * (it["rect"][3] - it["rect"][1])))
     for it in docs[:2]:
-        pattern = win._pattern(it["el"], 10014, "IUIAutomationTextPattern")
-        if pattern is None:
-            continue
-        try:
-            text = pattern.DocumentRange.GetText(most)
-        except Exception:
-            continue
-        text = " ".join(str(text or "").split())
+        text = " ".join(win.ui_text(it.get("el"), most).split())
         if len(text) > 40:
             return agent._masked(text)[:most]
     return ""

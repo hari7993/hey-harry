@@ -34,7 +34,7 @@ class Control:
 
     def __init__(self, name, role="button", value=None, state=None, password=False, on=None, kind=""):
         self.name, self.role, self.value, self.state, self.password, self.on = name, role, value, state, password, on
-        self.CurrentItemType = kind
+        self.item_type, self.class_name = kind, ""
 
 
 class Window:
@@ -102,7 +102,8 @@ class FakeApp:
             return None
         items = [{"id": n + 1, "role": c.role, "name": winplatform.clean_name(c.name)[:60],
                   "value": None if c.password else c.value, "state": c.state, "password": c.password,
-                  "focus": c is self.focus, "aid": "", "el": c} for n, c in enumerate(self.front.controls[:most])]
+                  "focus": c is self.focus, "aid": "", "item_type": c.item_type,
+                  "class_name": c.class_name, "el": c} for n, c in enumerate(self.front.controls[:most])]
         focus = self.focus if self.focus in self.front.controls else None
         return {"hwnd": self.front.hwnd, "title": self.front.title, "exe": self.front.exe, "site": self.browser_site(),
                 "focus": next((it["id"] for it in items if it["focus"]), None), "items": items,
@@ -118,7 +119,8 @@ class FakeApp:
     def ui_info(self, el):
         if el not in self.front.controls:
             raise RuntimeError("element not available")  # UI Automation on a control that's gone
-        return {"name": winplatform.clean_name(el.name), "role": el.role, "aid": "", "password": el.password, "el": el}
+        return {"name": winplatform.clean_name(el.name), "role": el.role, "aid": "", "password": el.password,
+                "item_type": el.item_type, "class_name": el.class_name, "el": el}
 
     def find_all_ui(self, name=None, role=None, aid=None, hwnd=None):
         want = winplatform.clean_name(name).lower()
@@ -365,8 +367,8 @@ class Learning(Live):
     def test_night_light_is_learned_by_name_and_done_again_with_no_model(self):
         script = self.night_light()
         self.assertEqual(self.said, [f"Okay: {NIGHT}.", "Night light's on, and I've learned how."])  # said first
-        # with Vision on she sees the screen each round, as OpenLive's agent does; the switch is still learned by name
-        self.assertEqual((len(self.shots), len(script.sent), script.picture(0), script.picture(1)), (2, 2, True, True))
+        # done by agent-desktop's controls alone (4 November): Settings shows enough, so no screenshot is taken
+        self.assertEqual((len(self.shots), len(script.sent), script.picture(0), script.picture(1)), (0, 2, False, False))
         (name, proc), = self.learned().items()
         self.assertEqual(name, NIGHT_NAME)
         self.assertEqual(proc["steps"], [
@@ -1016,7 +1018,7 @@ class Repair(Live):
         self.assertEqual(self.said[-1], "Done, and I've updated how I do it.")
         self.assertIn("didn't work: the Display button, it isn't on screen", script.text(0))
         self.assertTrue(script.picture(0))  # stuck: it looks at a screenshot
-        self.assertEqual(len(self.shots), 2)  # and with Vision on, at one each round it works it out live
+        self.assertEqual(len(self.shots), 1)  # only that one: once it's found the way, the controls are enough
         proc = self.learned()["turn-on-night-light"]
         self.assertEqual([s.get("name") or s.get("app") or s.get("has") for s in proc["steps"]],
                          ["Settings", "Screen", "Night light", "Night light"])  # steps[:1] kept, then what worked
@@ -1473,7 +1475,6 @@ class Safety(Live):
         for exe in ("pycharm64.exe", "zed.exe"):
             w = self.app.window(exe, exe, "hey-harry – app.py")
             window = Control("hey-harry – app.py", "", value="")
-            window.CurrentClassName = "SunAwtFrame"
             w.controls = [window, Control("Search")]
             self.app.focus = window
             self.app.show(exe)
@@ -1877,138 +1878,110 @@ class Stopping(unittest.TestCase):
 
 
 class Snapshot(unittest.TestCase):
-    """winplatform.ui_snapshot on a fake UI Automation: one cached read, capped, a password never read, a slow window
-    left to a screenshot for a while."""
+    """winplatform.ui_snapshot over synthetic agent-desktop trees."""
 
     @classmethod
     def setUpClass(cls):
         cls.win = untripped_winplatform()
+        from tests import desktopfakes
+        cls.df = desktopfakes
 
-    def element(self, name, ctype=50000, value=None, password=False, toggle=None, focus=False, rect=(0, 0, 10, 10)):
-        props = {30045: value if value is not None else object(), 30041: toggle is not None, 30086: toggle}
-        return SimpleNamespace(CachedName=name, CachedControlType=ctype, CachedAutomationId="", CachedIsOffscreen=False,
-                               CachedIsEnabled=True, CachedIsPassword=password, CachedHasKeyboardFocus=focus,
-                               CachedBoundingRectangle=SimpleNamespace(left=rect[0], top=rect[1], right=rect[2],
-                                                                      bottom=rect[3]),
-                               GetCachedPropertyValue=props.get)
+    def snap(self, *looks, exe="systemsettings.exe", fail=False, took=0.0):
+        values = [look if hasattr(look, "elements") else self.df.snapshot(look, app=exe) for look in looks]
+        clock = [0.0]
 
-    def snap(self, *looks, exe="systemsettings.exe", fail=False, took=0.0, focus=None, parents=None):
-        """ui_snapshot of a window whose controls are looks[0], then looks[1] at its next read, each read taking took
-        seconds; focus: the control with the focus, inside parents' chain ({control: its parent})."""
-        looks, clock = list(looks), [0.0]
-
-        def find_all(scope, cond, cache):
-            if fail:
-                raise OSError("UIA_E_TIMEOUT")
+        def read(hwnd=None, **_):
             clock[0] += took
-            els = looks.pop(0) if len(looks) > 1 else looks[0]
-            return SimpleNamespace(Length=len(els), GetElement=els.__getitem__)
-        up = parents or {}
-        fake = SimpleNamespace(ElementFromHandle=lambda h: SimpleNamespace(FindAllBuildCache=find_all),
-                               CreateCacheRequest=lambda: SimpleNamespace(AddProperty=lambda p: None),
-                               CreatePropertyCondition=lambda *a: a, CreateOrCondition=lambda *a: a,
-                               CreateAndCondition=lambda *a: a, GetFocusedElement=lambda: focus,
-                               ControlViewWalker=SimpleNamespace(GetParentElement=lambda e: up.get(id(e))))
-        with mock.patch.object(self.win, "uia", lambda: fake), mock.patch.object(self.win, "_clock", lambda: clock[0]), \
-                mock.patch.object(self.win, "_sleep", lambda s: clock.__setitem__(0, clock[0] + s)), \
-                mock.patch.object(self.win, "window_exe", lambda h: rf"C:\{exe}"), \
-                mock.patch.object(self.win, "window_title", lambda h: "Settings"):
+            if fail:
+                raise self.win._desktop.DesktopError("too slow", "TIMEOUT")
+            return values.pop(0) if len(values) > 1 else values[0]
+        with mock.patch.object(self.win, "_desktop_snapshot", read), \
+                mock.patch.object(self.win, "_clock", lambda: clock[0]), \
+                mock.patch.object(self.win, "_sleep", lambda secs: clock.__setitem__(0, clock[0] + secs)), \
+                mock.patch.object(self.win, "window_exe", lambda hwnd: rf"C:\\{exe}"), \
+                mock.patch.object(self.win, "window_title", lambda hwnd: "Settings"):
             return self.win.ui_snapshot(7)
 
-    def test_controls_read_once_capped_and_a_password_never_read(self):
-        mails = [self.element(f"Mail {n}", 50007) for n in range(20)]
-        got = self.snap([self.element("Night light", 50002, toggle=1), self.element("Password", 50004, value="hunter2",
-                                                                                      password=True, focus=True),
-                         self.element("", 50000), self.element("x" * 80, 50000)] + mails)
+    def test_controls_are_capped_and_a_password_is_never_read(self):
+        mails = [self.df.node(f"Mail {number}", "listitem") for number in range(20)]
+        got = self.snap([self.df.node("Night light", "checkbox", state="on"),
+                         self.df.node("Password", "edit", value="hunter2", password=True, focus=True),
+                         self.df.node("", "button"), self.df.node("x" * 80, "button"), *mails])
         items = got["items"]
         self.assertEqual(items[0]["state"], "on")
-        self.assertIsNone(items[1]["value"])  # never read
+        self.assertIsNone(items[1]["value"])
         self.assertEqual(got["focus"], 2)
-        self.assertEqual(len(items[2]["name"]), self.win.SNAP_NAME)  # the nameless button left out, a long name cut
-        self.assertEqual(sum(it["role"] == "listitem" for it in items), self.win.SNAP_LISTS)
-        self.assertTrue(got["cut"])  # list items left out: a name once in items may be twice in the window
-        self.assertFalse(self.snap([self.element("Night light", 50002, toggle=1)])["cut"])
+        self.assertEqual(len(items[2]["name"]), self.win.SNAP_NAME)
+        self.assertEqual(sum(item["role"] == "listitem" for item in items), self.win.SNAP_LISTS)
+        self.assertTrue(got["cut"])
+        self.assertFalse(self.snap([self.df.node("Night light", "checkbox", state="on")])["cut"])
 
     def test_what_a_send_would_send_is_read_from_its_dialog_in_full(self):
-        """Gmail's new mail, a dialog in its page: all of it, however many chips its To has (past SNAP_LISTS), and
-        nothing of the inbox around it. None when it can't be read, never a mail to nobody."""
-        chips = [self.element(f"friend{n}@gmail.com", 50007) for n in range(20)]
-        found = [self.element("To recipients", 50003, value="")] + chips + \
-            [self.element("Message Body", 50004, value="hi"), self.element("Send", 50000)]
-        dialog = SimpleNamespace(CurrentControlType=50033, CurrentAriaRole="dialog",
-                                 FindAllBuildCache=lambda scope, cond, cache: SimpleNamespace(
-                                     Length=len(found), GetElement=found.__getitem__))
-        send = SimpleNamespace(CurrentControlType=50000, CurrentAriaRole="")
-        fake = SimpleNamespace(ElementFromHandle=lambda h: self.fail("the whole window was read"),
-                               CreateCacheRequest=lambda: SimpleNamespace(AddProperty=lambda p: None),
-                               CreatePropertyCondition=lambda *a: a, CreateOrCondition=lambda *a: a,
-                               CreateAndCondition=lambda *a: a, GetFocusedElement=lambda: None,
-                               ControlViewWalker=SimpleNamespace(GetParentElement=lambda e: dialog if e is send
-                                                                 else None))
-        with mock.patch.object(self.win, "uia", lambda: fake), \
-                mock.patch.object(self.win.user32, "GetForegroundWindow", lambda: 7), \
-                mock.patch.object(self.win, "window_exe", lambda h: r"C:\chrome.exe"):
+        chips = [self.df.node(f"friend{number}@gmail.com", "listitem") for number in range(20)]
+        children = [self.df.node("To recipients", "combobox", value=""), *chips,
+                    self.df.node("Message Body", "edit", value="hi"), self.df.node("Send", "button")]
+        old = self.df.snapshot([self.df.node("New message", raw_role="dialog", actions=[], children=children,
+                                                  rect=(500, 400, 1000, 900), ref=False)], app="chrome.exe")
+        send = next(el for el in old.elements if el.name == "Send")
+        fresh = self.df.snapshot([self.df.node("New message", raw_role="dialog", actions=[], children=children,
+                                                    rect=(500, 400, 1000, 900), ref=False)], app="chrome.exe")
+        with mock.patch.object(self.win, "_desktop_snapshot", return_value=fresh):
             got = self.win.ui_fields(send)
-            self.assertEqual(len(got), 23)
-            self.assertIn(("listitem", "friend19@gmail.com", None), got)
-            self.assertIn(("edit", "Message Body", "hi"), got)
-            dialog.FindAllBuildCache = lambda *a: (_ for _ in ()).throw(OSError("UIA_E_TIMEOUT"))
+        self.assertEqual(len(got), 23)
+        self.assertIn(("listitem", "friend19@gmail.com", ""), got)
+        self.assertIn(("edit", "Message Body", "hi"), got)
+        with mock.patch.object(self.win, "_desktop_snapshot", side_effect=RuntimeError("timeout")):
             self.assertIsNone(self.win.ui_fields(send))
 
     def test_what_a_point_is_in_says_if_it_climbed_to_it(self):
-        """A button around the label clicked on is the button, but one she climbed to: a mail's row around an icon
-        is no button, and isn't held for a yes (agent.gate_vision)."""
-        label = SimpleNamespace(CurrentName="Send", CurrentControlType=50020, CurrentAutomationId="",
-                                CurrentIsPassword=False, GetCurrentPropertyValue={30031: False, 30041: False}.get)
-        button = SimpleNamespace(CurrentName="Send", CurrentControlType=50000, CurrentAutomationId="",
-                                 CurrentIsPassword=False, GetCurrentPropertyValue={}.get)
-        fake = SimpleNamespace(ElementFromPoint=lambda point: label,
-                               ControlViewWalker=SimpleNamespace(GetParentElement=lambda el: button))
-        with mock.patch.object(self.win, "uia", lambda: fake), \
-                mock.patch.object(self.win, "_real_pixels", contextlib.nullcontext):
+        label = self.df.node("Send", raw_role="statictext", rect=(2, 2, 8, 8), actions=[], ref=False)
+        snap = self.df.snapshot([self.df.node("Send", "button", rect=(0, 0, 10, 10), children=[label])])
+        with mock.patch.object(self.win, "_desktop_snapshot", return_value=snap), \
+                mock.patch.object(self.win.user32, "GetForegroundWindow", return_value=7):
             got = self.win.ui_at(5, 5)
         self.assertEqual((got["name"], got["role"], got["climbed"]), ("Send", "button", True))
 
     def test_a_window_too_slow_is_left_to_a_screenshot_for_a_while(self):
         self.win._slow.clear()
         self.assertIsNone(self.snap([], fail=True))
-        self.assertIsNone(self.snap([self.element("OK")]))  # still left alone
+        self.assertIsNone(self.snap([self.df.node("OK")]))
         self.win._slow.clear()
 
     def test_chrome_is_read_again_when_its_page_has_hardly_anything(self):
-        page = self.element("Inbox", 50030, rect=(0, 100, 1000, 900))
-        first = [page, self.element("Back", rect=(0, 0, 20, 20))]
-        later = first + [self.element(f"Link {n}", 50005, rect=(10, 200 + n, 50, 210 + n)) for n in range(6)]
+        page = self.df.node("Inbox", "document", rect=(0, 100, 1000, 900))
+        first = [page, self.df.node("Back", rect=(0, 0, 20, 20))]
+        later = first + [self.df.node(f"Link {number}", "link", rect=(10, 200 + number, 50, 210 + number))
+                         for number in range(6)]
         got = self.snap(first, later, exe="chrome.exe")
         self.assertEqual(len(got["items"]), 8)
 
     def test_a_page_read_twice_isnt_slow_for_the_half_second_between(self):
         self.win._slow.clear()
-        page = [self.element("Inbox", 50030, rect=(0, 100, 1000, 900))]  # hardly anything yet: read again
+        page = [self.df.node("Inbox", "document", rect=(0, 100, 1000, 900))]
         self.assertIsNotNone(self.snap(page, page, exe="chrome.exe", took=0.56))
-        self.assertNotIn(7, self.win._slow)  # each read was quick enough: Chrome isn't left to screenshots
+        self.assertNotIn(7, self.win._slow)
         self.win._slow.clear()
 
     def test_the_new_mail_the_focus_is_in_comes_first_when_there_are_too_many_to_keep(self):
-        """Chrome's own buttons and tabs, then 70 of the inbox's links, then Gmail's new mail last on the page, with
-        the cursor in its To: the mail's boxes and Send are kept, the address bar too, other tabs' titles never."""
-        page = self.element("Inbox - Gmail", 50030, rect=(0, 100, 1000, 900))
-        tabs = [self.element(f"My bank {n}", 50019, rect=(20 * n, 0, 20 * n + 20, 30)) for n in range(3)]
-        omnibox = self.element(self.win.OMNIBOX, 50004, value="mail.google.com/mail/u/0/#inbox", rect=(0, 40, 900, 70))
-        links = [self.element(f"Link {n}", 50005, rect=(10, 200 + n, 50, 210 + n)) for n in range(70)]
-        mail = [self.element(name, ctype, value="", rect=(600, 500 + 20 * n, 990, 515 + 20 * n), focus=name == "To")
-                for n, (name, ctype) in enumerate((("To", 50004), ("Subject", 50004), ("Message Body", 50004),
-                                                    ("Send", 50000)))]
-        dialog = SimpleNamespace(CurrentControlType=50033, CurrentAriaRole="dialog",
-                                 CurrentBoundingRectangle=SimpleNamespace(left=590, top=480, right=1000, bottom=900))
-        focus = SimpleNamespace(CurrentControlType=50004, CurrentName="To", CurrentIsPassword=False,
-                                CurrentAriaRole="", GetCurrentPropertyValue={30045: "ravi@"}.get)
-        got = self.snap(tabs + [omnibox, page] + links + mail, exe="chrome.exe", focus=focus,
-                        parents={id(focus): dialog})
-        names = [it["name"] for it in got["items"]]
+        tabs = [self.df.node(f"My bank {number}", "tab", rect=(20 * number, 0, 20 * number + 20, 30))
+                for number in range(3)]
+        omnibox = self.df.node(self.win.OMNIBOX, "edit", value="mail.google.com/mail/u/0/#inbox",
+                               rect=(0, 40, 900, 70))
+        links = [self.df.node(f"Link {number}", "link", rect=(10, 200 + number, 50, 210 + number))
+                 for number in range(70)]
+        mail = [self.df.node(name, role, value="ravi@" if name == "To" else "",
+                             rect=(600, 500 + 20 * number, 990, 515 + 20 * number), focus=name == "To")
+                for number, (name, role) in enumerate((("To", "edit"), ("Subject", "edit"),
+                                                        ("Message Body", "edit"), ("Send", "button")))]
+        dialog = self.df.node("New message", raw_role="dialog", actions=[], rect=(590, 480, 1000, 900),
+                              children=mail, ref=False)
+        page = self.df.node("Inbox - Gmail", "document", rect=(0, 100, 1000, 900),
+                            children=[*links, dialog])
+        got = self.snap([*tabs, omnibox, page], exe="chrome.exe")
+        names = [item["name"] for item in got["items"]]
         self.assertEqual(len(names), 60)
         self.assertEqual(names[:5], [self.win.OMNIBOX, "To", "Subject", "Message Body", "Send"])
-        self.assertEqual([it["id"] for it in got["items"]], list(range(1, 61)))
+        self.assertEqual([item["id"] for item in got["items"]], list(range(1, 61)))
         self.assertEqual(got["site"], "mail.google.com")
         self.assertFalse(any(name.startswith("My bank") for name in names))
         self.assertEqual((got["total"], got["focused"]), (2 + 70 + 4, ("edit", "To", "ravi@")))
