@@ -61,6 +61,9 @@ DEFAULTS = {
     "screen_watch": True,
     "screen_commentary": True,
     "heads_ups": True,  # she mentions what needs you: messages, a low battery, a nearly full drive, see watch.py
+    # her as a close friend (companion.py, 7 November 2026, the owner's pick: chatty): how often she checks in while
+    # you're at the PC, "chatty" (every half hour at most), "sometimes" or "quiet" (only plans you told her about)
+    "chattiness": "chatty",
     "notifications": True,  # she may read Windows' notifications, for heads-ups and "any new messages?"
     # a background task's progress on your phone (siri.progress_to): "asked", only for those asked from the phone, or
     # "all", every one while you're paired, as one message each that's edited as it goes

@@ -44,6 +44,7 @@ HINTS = {"ptt": "Hold right Alt to talk", "wake": "Say \u201cHey Harry\u201d, \u
                                                  "then what you want. Right after she answers, just keep talking. "
                                                  "Holding right Alt works too."}
 WAITS = {"patient": "Patient (lets you pause)", "even": "Even", "quick": "Quick (can cut you off)"}  # speech.Listener
+CHATTY = {"chatty": "Chatty (every half hour or so)", "sometimes": "Now and then", "quiet": "Only when it matters"}
 EARS_USES = {"all": "For commands and dictation", "dictation": "For dictation only"}  # a provider's ears, hearing.py
 SEP = "  \u00b7  "  # between a model's ID and what's known of it in the model list: "gpt-5.2  ·  400k"
 MODES = ("ptt", "wake")
@@ -2855,7 +2856,7 @@ class AssistantWindow:
         # one long list was hard to find things in and to scroll): (name, colour, icon, its rows by number below)
         parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14)),
                  ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23, 24)),
-                 ("Models", "green", "\ue99a", (1,)), ("Speaking up", "amber", "\uea8f", (12, 13)),
+                 ("Models", "green", "\ue99a", (1,)), ("Speaking up", "amber", "\uea8f", (12, 13, 25)),
                  ("Phone", "rose", "\ue8ea", (16,)), ("Window", "slate", "\ue737", (4, 5, 6, 19)))
         cards, where, form = {}, {}, None
         for name, tint, icon, rows in parts:
@@ -3087,6 +3088,15 @@ class AssistantWindow:
         self.job_profile_box.bind("<<ComboboxSelected>>",
                                   lambda e: settings.put("job_profile", self.job_profile_box.get()))
         self.job_profile_box.grid(row=48, column=1, rowspan=2, sticky="e")
+        row(25, "How chatty", "Like a close friend, she checks in while you're at the PC: how your plans went, a "
+                              "break, a bit of fun. Never in a call, at night or while you're away. Only when it "
+                              "matters, she just asks after what you told her you'd do. Or say \u201ctalk less\u201d "
+                              "or \u201ccheck in on me more\u201d.")
+        self.chatty_menu = ttk.Combobox(form, state="readonly", width=38, values=list(CHATTY.values()))
+        self.chatty_menu.set(CHATTY.get(settings.get("chattiness"), CHATTY["chatty"]))
+        self.chatty_menu.bind("<<ComboboxSelected>>", lambda e: settings.put(
+            "chattiness", next(k for k, v in CHATTY.items() if v == self.chatty_menu.get())))
+        self.chatty_menu.grid(row=50, column=1, rowspan=2, sticky="e")
         self.settings_note = self._label(page, "", self.f_small, MUTED, wraplength=self.px(660))
         self.settings_note.pack(fill="x", pady=(self.px(18), 0))
         self.models_loaded = False
