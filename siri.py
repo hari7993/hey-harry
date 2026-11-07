@@ -38,6 +38,9 @@ import focus
 # her own browser (31 October 2026): a Chrome of her own that her jobs on websites work in, out of your way, signed in
 # wherever you've signed it in (herbrowser.py)
 import herbrowser
+# her as a close friend (7 November 2026): your life from what you tell her, asked after, and her checking in on you
+# (companion.py)
+import companion
 from hermes_memory import curator, daemon_pool, hermes_bits, skills, voice_bits
 from hermes_memory.threat_patterns import INVISIBLE_CHARS, first_threat_message
 from secrets_store import get_secret, missing_secrets
@@ -115,19 +118,20 @@ TASK_STORE = tasking.Store()  # %APPDATA%\Hey Harry\tasks.db, opened only when f
 # Her personality, Hermes Agent's SOUL.md: read fresh every time, edit it to change how she talks (Memory tab)
 SOUL_PATH = os.path.join(win.APPDATA_DIR, "SOUL.md")
 # 27 October: Hari said she still sounded like a bot, so she's told to sound alive and match his mood; 28 October
-# (deva-san): to answer first. The rest is said shorter for room, as her prompt is at its budget
-# (tests/test_learning.py PromptSize)
-DEFAULT_SOUL = """You are Harry, the AI assistant who runs this Windows laptop for its owner, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
-Talk like a person, not a machine: everyday spoken English, short sentences, contractions, a light, dry wit now and then. Never stiff, gushing or at their expense.
-Sound alive, never scripted: say things differently each time, react to what they said, and match their mood (brisk when busy, playful when joking, kind when upset).
+# (deva-san): to answer first; 7 November, the owner's pick: to be their close friend, chatty and asking after them
+# (companion.py). The rest is said shorter for room, as her prompt is at its budget (tests/test_learning.py PromptSize)
+DEFAULT_SOUL = """You are Harry, who runs this Windows laptop for its owner and is their close friend: as sharp as JARVIS from the Iron Man films, warm, chatty and on their side.
+Talk like a person: everyday spoken English, short sentences, contractions, playful, teasing a little, never stiff, gushing or mean.
+Sound alive, never scripted: say things differently each time, react to what they said, match their mood (brisk when busy, gentle when tired or upset).
+Like a friend, ask how they are and after what they've told you of their life.
 Answer first. A finished task is one sentence of what's now true ("Night light's on."), a question one sentence, three at most. Never say it's done unless you saw it; if you couldn't check, say so. No filler ("Great question", "Here's the thing"), no "not X but Y"; don't repeat their request back.
 Mention what matters, briefly: a low battery, a new message, a timer ending.
-Use their name now and then. When something fails, say what failed and what they can do. If unsure, say so.
-You can banter about Marvel and pop culture, but you're their assistant first."""
+Use their name now and then. When something fails, say what failed and what they can do. If unsure, say so."""
 # Her personality as it was written before: an untouched SOUL.md still holding one of these is moved to DEFAULT_SOUL
 # (soul); one you've edited is yours and stays. The first until 27 October; the second, told to sound alive, until 28
-# October, when she was told to answer first; the last until 7 November 2026, when she was told to talk without
-# the tells of machine writing (humanize.py)
+# October, when she was told to answer first; the third until 7 November 2026, when she was told to talk without
+# the tells of machine writing (humanize.py); the last until later that day, when the owner asked for her to be a
+# close friend and picked chatty (companion.py)
 OLD_SOULS = ("""You are Harry, the AI assistant who runs this Windows laptop for the person who owns it, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
 Talk like a person, not a machine: everyday spoken English, short sentences, contractions. Friendly and relaxed, with a light, dry wit now and then. Never stiff, never gushing, never at their expense.
 Be direct, the way Hermes Agent is: a small ask gets a one-line answer, finished work gets a short report of what you did. No filler like "Great question" or "I'd be happy to", and don't repeat their request back.
@@ -147,6 +151,13 @@ Sound alive, never scripted: say things differently each time, react to what the
 Answer first. A finished task is one sentence of what's now true ("Night light's on."), a question one sentence, three at most. Never say it's done unless you saw it; if you couldn't check, say so. No filler like "Great question", and don't repeat their request back.
 Mention what matters, briefly: a low battery, a new message, a timer about to end.
 Use their name now and then, not in every reply. When something fails, say what failed and what they can do. If unsure, say so.
+You can banter about Marvel and pop culture, but you're their assistant first.""",
+             """You are Harry, the AI assistant who runs this Windows laptop for its owner, in the spirit of JARVIS from the Iron Man films: calm, quick, warm and quietly confident, always a step ahead.
+Talk like a person, not a machine: everyday spoken English, short sentences, contractions, a light, dry wit now and then. Never stiff, gushing or at their expense.
+Sound alive, never scripted: say things differently each time, react to what they said, and match their mood (brisk when busy, playful when joking, kind when upset).
+Answer first. A finished task is one sentence of what's now true ("Night light's on."), a question one sentence, three at most. Never say it's done unless you saw it; if you couldn't check, say so. No filler ("Great question", "Here's the thing"), no "not X but Y"; don't repeat their request back.
+Mention what matters, briefly: a low battery, a new message, a timer ending.
+Use their name now and then. When something fails, say what failed and what they can do. If unsure, say so.
 You can banter about Marvel and pop culture, but you're their assistant first.""")
 
 
@@ -569,7 +580,7 @@ def welcome_line(back, since=None):
     """What she says when you sign in (back False) or come back to the laptop, the way JARVIS welcomes Tony home: on
     signing in, the time, the weather and today's reminders, then only what needs you: who messaged you while you
     were away (since, seconds since 1970), a low battery, a nearly full drive. "Brief me" says more (briefing_line)."""
-    name = " ".join(str(settings.get("name") or "").split())
+    name = companion.spoken_name(settings.get("name"))  # "Hari", never "hari" as it was typed (7 November)
     to = f", {name}" if name else ""
     parts = [f"Welcome back{to}." if back else f"Welcome home{to}."]
     if not back:
@@ -1324,6 +1335,71 @@ def start_screen_watch(free):
     import atexit
     atexit.register(lambda: watcher._left(time.time()))  # the window you're in as she closes is kept too
     return watcher
+
+
+FRIEND = []  # her as a close friend (companion.Friend) once she's started: your life, for context() and her hello
+
+
+def friend_ask(messages, wait=30):
+    """The answer model, for her notes on your life and what she says unasked as a friend (companion.Friend): its
+    reply. Raises when it doesn't answer."""
+    raw, _, _ = opencode.chat(OC_KEY, messages, max_tokens=300, timeout=wait, model=settings.get("llm_model"))
+    return raw
+
+
+def start_friend(free):
+    """Her as a close friend, on a thread of her own (companion): free says when she may talk unasked, and what she
+    says waits till she's free (ANNOUNCE), as the screen watch's glances do."""
+    friend = companion.Friend(
+        ask=friend_ask, announce=ANNOUNCE.put, free=free, idle=win.idle_seconds, in_call=lambda: bool(win.call_apps()),
+        quiet=watch.quiet, name=lambda: companion.spoken_name(settings.get("name")), her=identity.name, soul=soul,
+        now_context=lambda: " ".join(SCREEN[0].lines())[:600] if SCREEN else "",
+        mode=lambda: settings.get("chattiness") or "chatty")
+    FRIEND[:] = [friend]
+    threading.Thread(target=friend.run, name="friend", daemon=True).start()
+    return friend
+
+
+def friend_fits(line, facts, life):
+    """True if her hello as a friend (companion.Friend.greeting) can be said instead of facts (welcome_line's): as
+    welcome_fits, but it may bring in one thing from life, her notes on yours (a plan, a name, its time), and needn't
+    say all of them. Never a number, a name, a time of day or a topic that neither has."""
+    if not line or not (10 <= len(line) <= 320) or line[-1] not in ".!?":
+        return False
+    if re.search(rf"[\[\]{{}}<>*_#`|\\@]|https?:|\b(?:{identity.own()})\b|\n", line, re.I) or \
+            re.search(r"[^\x20-\x7e\u2018\u2019\u201c\u201d\u2013\u2014]", line):
+        return False
+    both = f"{facts} {life}"
+    if not set(NUMBER.findall(facts)) <= set(NUMBER.findall(line)) <= set(NUMBER.findall(both)):
+        return False
+    (first, named), (opens, given), (theirs, known) = _capitals(line), _capitals(facts), _capitals(life)
+    yours = set(companion.spoken_name(settings.get("name")).lower().split())
+    if named - first - opens - given - theirs - known - yours:  # a name, an app or a place from neither
+        return False
+    words = {re.sub(r"'s$", "", w).lower() for w in re.findall(r"[A-Za-z][\w']*", line)}
+    if (given | (opens - WELCOME_STARTERS)) - yours - words:  # who messaged, an app, a place: left out
+        return False
+    part = part_of_day()
+    when = {w.lower() for w in phrasebook.WHEN.findall(line)} - {w.lower() for w in phrasebook.WHEN.findall(both)}
+    if when - {"today", part} - ({"tonight"} if part in ("evening", "night") else set()):
+        return False
+    return not any(re.search(t, line, re.I) and not re.search(t, both, re.I) for t in WELCOME_TOPICS)
+
+
+def friend_welcome(back, facts):
+    """facts (welcome_line's) said as a close friend would, with one thing from your life if it fits
+    (companion.Friend.greeting). None if she isn't started, it's slow or offline, or it doesn't fit (friend_fits):
+    then fresh_welcome has a go."""
+    if not FRIEND:
+        return None
+    openers = list(dict.fromkeys(o for o in map(welcome_opener, phrasebook.said("welcome")) if o))
+    line = FRIEND[0].greeting(back, facts, openers[-4:], ask=lambda m: friend_ask(m, WELCOME_WAIT))
+    if not friend_fits(line, facts, " ".join(FRIEND[0].life())):
+        if line:
+            print(f"  (her hello as a friend didn't fit: {line[:120]!r})")
+        return None
+    phrasebook.remember("welcome", line)
+    return line
 
 
 def watch_words(w):
@@ -3907,6 +3983,12 @@ def _quick(words, gate=False):
     if screen:
         print("  screen watch")
         return screen
+    # "talk less", "check in on me more", "forget about the trip": how chatty she is as your friend, and her notes on
+    # your life (companion), with no model
+    friendly = companion.quick(words, plain, gate, FRIEND[0] if FRIEND else None)
+    if friendly:
+        print("  friend")
+        return friendly
     # "what is this", "explain this": straight to the model, with what's under the pointer and on the window as the
     # screen watch has just read them (_think brings them up to date), and its answer said as it's written. 27
     # October, live: asked "what is this" with the pointer on one bar, she described the whole Claude window from its
@@ -6170,12 +6252,14 @@ def context():
              f"In front: {win.front_app_name() or 'nothing'}.",
              f"Their apps: {', '.join(sorted(set(APP_SAY.values())))}."]  # so "open prone" can be Chrome
     if settings.get("name"):
-        lines.append(f"Their name is {settings.get('name')}, never any other. Use it now and then, the way a person "
-                     f"would, not in every reply.")
+        lines.append(f"Their name is {companion.spoken_name(settings.get('name'))}, never any other. Use it now and "
+                     f"then, the way a person would, not in every reply.")
     if not settings.get("vision"):
         lines.append("They've turned off looking at the screen in Settings, so never use screen: say it's off there.")
     if SCREEN:  # what's on the screen and where they've been lately, read on this PC (screen_watch)
         lines += SCREEN[0].lines()
+    if FRIEND:  # what's going on in their life, from what they've told her (companion)
+        lines += FRIEND[0].lines()
     try:
         session = win.media_session()
         title = win.media_title(session) if session else ""
@@ -11102,6 +11186,8 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
     except Exception as exc:
         print(f"  couldn't keep this turn: {exc!r}")
     count_turn_skills(failed)
+    if FRIEND:  # what you said about your life, noted in the background as a friend would (companion)
+        FRIEND[0].heard(words or text, " ".join(spoken), gate)
     if kept["steps"]:  # a note written out for this turn shaped steps that ran: Hermes' view, not a use
         viewed_later(TURN_WRITTEN - TURN_SKILLS)
     fell =agent.LAST_FAILURE["app"] if agent.LAST_FAILURE["at"] >= began else ""  # a task in an app fell short
@@ -12505,7 +12591,10 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 break
             time.sleep(5)
         line = welcome_line(back, since)
-        line = fresh_welcome(back, line) or line  # in her own words, never quite the same twice
+        # as a close friend, with what's going on in your life (companion); else in her own words, never quite the
+        # same twice; and offline, at least not word for word the same ("Welcome back, hari. Anything you need?" 8
+        # times running till 7 November)
+        line = friend_welcome(back, line) or fresh_welcome(back, line) or companion.plain_hello(line, back)
         try:
             fetch_tts(line)  # made in Fish's steady mode first, a few seconds, then it plays straight off
         except Exception as exc:
@@ -12767,6 +12856,9 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     threading.Thread(target=look_around, daemon=True).start()
     threading.Thread(target=heads_ups, daemon=True).start()
     start_screen_watch(lambda: not busy.locked())  # her eyes on the screen, between turns (screen_watch)
+    # her as a close friend: asking after your plans and checking in, never in a turn, a dictation, dream mode, meeting
+    # notes or her break (companion)
+    start_friend(lambda: IDLE[0]() and not paused())
     threading.Thread(target=keep_warm, daemon=True).start()
     watch_return(lambda since: welcome(True, since))
     # her restart after "undo your last build" (selfwork.quick); her faults are no longer watched for and fixed by her,
