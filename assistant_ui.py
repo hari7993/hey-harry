@@ -26,7 +26,6 @@ import messaging
 import onboarding
 import opencode
 import providers
-import selfwork
 import settings
 import tasks as tasking
 import todo
@@ -491,7 +490,7 @@ class ModelPicker:
     COLUMNS = (("model", "Model", 330), ("provider", "Provider", 140), ("price", "Price", 80), ("ctx", "Context", 70))
 
     def __init__(self, app, pick=None, title="Pick a model"):
-        """pick(model): what's done with the model picked: the answer model's set_model, or Settings > Build herself's."""
+        """pick(model): what's done with the model picked: the answer model's set_model."""
         self.app, px = app, app.px
         self.pick = pick or app.set_model
         top = self.top = tk.Toplevel(app.root, bg=BG)
@@ -2856,7 +2855,7 @@ class AssistantWindow:
         # one long list was hard to find things in and to scroll): (name, colour, icon, its rows by number below)
         parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14)),
                  ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23, 24)),
-                 ("Models", "green", "\ue99a", (1, 21, 22)), ("Speaking up", "amber", "\uea8f", (12, 13)),
+                 ("Models", "green", "\ue99a", (1,)), ("Speaking up", "amber", "\uea8f", (12, 13)),
                  ("Phone", "rose", "\ue8ea", (16,)), ("Window", "slate", "\ue737", (4, 5, 6, 19)))
         cards, where, form = {}, {}, None
         for name, tint, icon, rows in parts:
@@ -3064,25 +3063,6 @@ class AssistantWindow:
         ttk.Checkbutton(form, text="Let her see you", variable=self.cues_var,
                         command=lambda: settings.put("cues", self.cues_var.get())).grid(row=40, column=1, rowspan=2,
                                                                                        sticky="e")
-        row(21, "Build herself", "Ask her for a feature (\u201cbuild yourself a way to...\u201d) and she codes it into "
-                                 "herself, runs her tests and restarts with it. The model she builds with, through "
-                                 "OpenCode: pick a strong one, like Claude Opus or Sonnet. Paid ones are billed to "
-                                 "your account with that provider. Same as answers until you pick one.")
-        builder = tk.Frame(form, bg=BG)
-        builder.grid(row=42, column=1, rowspan=2, sticky="e")
-        builder.grid_columnconfigure(0, weight=1)
-        self.builder_button = ttk.Button(builder, style="Pick.TButton", width=38, command=self.open_builder_picker)
-        self.builder_button.grid(row=0, column=0, sticky="ew")
-        self.builder_info = self._label(builder, "", self.f_small, MUTED, wraplength=self.px(330))
-        self.builder_info.grid(row=1, column=0, sticky="w", pady=(self.px(4), 0))
-        self._show_builder()
-        row(22, "Heal herself", "When something in her own code goes wrong, she builds a fix for it the same way, "
-                                "checks it with her tests and restarts with it, and tells you once it's in: up to "
-                                "4 a day. If she crashes, she starts again by herself.")
-        self.heal_var = tk.BooleanVar(value=settings.get("self_heal") is not False)
-        ttk.Checkbutton(form, text="Heal herself", variable=self.heal_var,
-                        command=lambda: settings.put("self_heal", self.heal_var.get())).grid(row=44, column=1,
-                                                                                           rowspan=2, sticky="e")
         row(23, "Her own browser", "Jobs on websites happen in a Chrome of her own, out of your way, never on your "
                                    "screen. Sign her in to the sites she should use: press Show it (or say “sign "
                                    "in to LinkedIn in your browser”), sign in, then say “hide your "
@@ -3122,36 +3102,6 @@ class AssistantWindow:
             except Exception as exc:
                 print(f"  her browser: {exc!r}")
         threading.Thread(target=go, name="show-her-browser", daemon=True).start()
-
-    def open_builder_picker(self):
-        if self.picker is not None:
-            self.picker.top.lift()
-            return
-        self.picker = ModelPicker(self, pick=self.set_builder_model, title="Pick the model she builds herself with")
-        self.refresh_models()
-
-    def set_builder_model(self, value):
-        """Saves the model she builds herself with, and checks OpenCode has it."""
-        settings.put("builder_model", value)
-        self._show_builder()
-        self.builder_info.configure(text="Saved. Checking OpenCode has it\u2026", fg=MUTED)
-
-        def check():
-            model, env = selfwork.for_opencode(value)
-            offered = selfwork.offered(model, env) if model else False
-            self.events.put(("builder_check", "OpenCode has it." if offered else
-                             "OpenCode doesn\u2019t have this one, so a free model would build instead. Pick "
-                             "another." if offered is False else "Couldn\u2019t ask OpenCode, it\u2019ll be tried as "
-                             "she builds.", offered is False))
-        threading.Thread(target=check, daemon=True).start()
-
-    def _show_builder(self):
-        picked = settings.get("builder_model") or ""
-        p, current = providers.split(selfwork.builder_model())
-        self.builder_button.configure(text=(current if len(current) <= 36 else current[:35] + "\u2026") + "  \u25be")
-        cost = "Free" if opencode.is_free(selfwork.builder_model()) else f"Paid, billed to your {p.name} account"
-        self.builder_info.configure(text=SEP.join(([] if picked else ["Same as answers"]) + [p.name, cost]),
-                                    fg=MUTED)
 
     def _load_mics(self):
         names = win.input_devices()
@@ -3659,8 +3609,6 @@ class AssistantWindow:
                     self._tell(event[1], event[2])
                 elif event[0] == "model_check":
                     self.models_info.configure(text=event[1], fg=ERROR if event[2] else MUTED)
-                elif event[0] == "builder_check":
-                    self.builder_info.configure(text=event[1], fg=ERROR if event[2] else MUTED)
                 elif event[0] == "island_apps":
                     self._show_island_apps(event[1])
                 elif event[0] == "renamed":
@@ -3803,9 +3751,8 @@ def run_app():
     identity.moved_on()  # the first start as Harry: her notes say her name where they said Jev
     root = tk.Tk()
 
-    def callback_error(kind, exc, tb):  # a button or a timer of her window went wrong: in the log, and if it's a
-        traceback.print_exception(kind, exc, tb)  # fault of her own code, fixed by her (selfwork.fault)
-        selfwork.fault(exc, "her window")
+    def callback_error(kind, exc, tb):  # a button or a timer of her window went wrong: in the log
+        traceback.print_exception(kind, exc, tb)
     root.report_callback_exception = callback_error
     AssistantWindow(root)
     if "--startup" in sys.argv:  # started as you signed in: on the taskbar, she says hello and listens

@@ -55,10 +55,6 @@ DEFAULTS = {
     # welcomes you back when she sees you, and does what your rules say ("when I clap, start work mode"). Off till
     # you turn it on, in Settings > Let her see you or by saying "turn on your camera"
     "cues": False,
-    # building into herself and healing herself (selfwork.py, 29 October 2026): the model she builds with, as
-    # "anthropic/claude-opus-5-5" ("" for the answer model's), and whether she fixes her own faults by herself
-    "builder_model": "",
-    "self_heal": True,
     # her eyes on the screen all the time (screen_watch, 27 October 2026, the owner's ask): she reads the window in
     # front on this PC so your questions come with what's on it, and with commentary on, glances at it now and then
     # and speaks up when something there needs you. Never password or payment pages, or private windows

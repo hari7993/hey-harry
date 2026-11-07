@@ -3856,9 +3856,14 @@ def _quick(words, gate=False):
     if cue:
         print("  cues")
         return cue
-    # "build yourself a way to...", "what have you built?", "fix yourself", "undo your last build", "are you okay?":
-    # her building into and healing herself (selfwork.py), with her name only
-    me = selfwork.quick(words, plain, gate, queue=queue_self)
+    # "build yourself a way to..." and "fix yourself": building into and healing herself were taken out on 7 November
+    # 2026 (the owner: it didn't work well, and each build ran OpenCode on a copy of her code, for memory and disk).
+    # "What have you built?", "are you okay?" and "undo your last build" still answer (selfwork.quick, no build queued)
+    if gate != "cold" and (selfwork.BUILD_SAID.fullmatch(plain(str(words or "")))
+                           or selfwork.FIX_SAID.fullmatch(plain(str(words or "")))):
+        print("  selfwork: off")
+        return {"steps": [], "say": NO_SELF_BUILD}
+    me = selfwork.quick(words, plain, gate)
     if me:
         print("  selfwork")
         return me
@@ -6903,7 +6908,6 @@ def _think(text, gate, notify=None, sure=1.0):
                              + extras.prompt_block(text)  # the newer skills' steps, for the words that may ask for one
                              + dream.prompt_block(text)  # and dream mode's, for words of dreams, scenes and moods
                              + cues.prompt_block(text)  # and her camera's, for words of seeing you
-                             + selfwork.prompt_block(text)  # and building into herself, for words about her
                              + handmouse.prompt_block(text)  # and your hand as the mouse, for words of it
                              + focus.prompt_block(text)  # and the focus timer's, for words of focusing
                              + ("\n\n" + known if known else "")
@@ -7577,6 +7581,9 @@ def asked_from():
     return {"phone": PHONE_CHAT.get()} if PHONE_CHAT.get() is not None else {}
 
 
+NO_SELF_BUILD = "I don't build into myself or fix my own code any more; that was taken out. Tell whoever works on my code."
+
+
 def queue_self(kind, what, trace="", doing="", sig=None):
     """Her task for building into herself (selfwork.Build): kind "build" for what you asked for, "fix" for a fault of
     hers. In the background on the slow lane, one at a time. Its id."""
@@ -8072,26 +8079,10 @@ def task_worker():
                     tell_task(task, _task_result_line(task, text, ok))
                     if ok and noted:
                         send_report(task, noted[-1], f"Task {task['id']}: {task['description']}")
-            elif kind == "self":  # built into her: you asked, or it's a fault of hers (selfwork.Build)
-                build = selfwork.Build(payload.get("what") or task["description"], kind=payload.get("kind") or "build",
-                                       trace=payload.get("trace") or "", doing=payload.get("doing") or "",
-                                       cancelled=lambda: TASK_STORE.is_cancelled(task["id"]),
-                                       progress=lambda note: activity.update(f"task:{task['id']}", note=note))
-                ok, said = build.run()
-                if payload.get("sig"):
-                    selfwork.healed(payload["sig"], ok)
-                TASK_STORE.finish(task["id"], json.dumps({"said": said, "files": build.files, "model": build.used}),
-                                  "" if ok else said)
-                if TASK_STORE.is_cancelled(task["id"]):
-                    return
-                if not ok:
-                    tell_task(task, _task_result_line(task, said, False))
-                    return
-                line = (f"{'Fixed' if payload.get('kind') == 'fix' else 'Built'} into me: {said} Restarting to use "
-                        f"it, back in a few seconds.")
-                if phone_for(task) is not None:
-                    tell_task(task, line)
-                selfwork.restart_soon(say=speak, idle=lambda: IDLE[0](), why=line)
+            elif kind == "self":  # a build or a fix of hers, from before 7 November 2026: no longer done (NO_SELF_BUILD)
+                TASK_STORE.finish(task["id"], error=NO_SELF_BUILD)
+                if not TASK_STORE.is_cancelled(task["id"]):
+                    tell_task(task, _task_result_line(task, NO_SELF_BUILD, False))
             elif kind == "code":
                 if not payload.get("approved"):
                     TASK_STORE.wait_for_approval(task["id"], "A coding job changes files; approve it to start")
@@ -8139,7 +8130,6 @@ def task_worker():
                 print(f"  task {task['id']} cancelled")
                 return
             print(f"  task {task['id']} failed: {error}")
-            selfwork.fault(exc, f"task {task['id']}", task.get("description") or "")  # a fault of hers is fixed
             TASK_STORE.finish(task["id"], error=error)
             if not TASK_STORE.is_cancelled(task["id"]):
                 tell_task(task, _task_result_line(task, "Open Tasks for the details.", False))
@@ -11160,7 +11150,6 @@ def island_answer(yes, ask, notify=None):
         handle("yes" if yes else "no", None, None, notify)
     finally:
         TAPPED.reset(tap)
-    line = humanize.plain(line)  # every line of hers, her scripted ones too: without the tells of machine writing
     return True
 
 
@@ -11171,6 +11160,7 @@ def say(line, notify):
     """Say a line, the window shows it too. Returns why her voice failed, or None. Never raises, so a broken voice
     doesn't stop the steps. The mic is paused while she talks, so she doesn't hear herself, and only then: before,
     it was off for the whole turn, thinking too, and what you said meanwhile was lost."""
+    line = humanize.plain(line)  # every line of hers, her scripted ones too: without the tells of machine writing
     lines = REPLY_TO.get()
     if lines is not None:  # a turn from your phone: what she'd say goes back to the chat
         print(f"  say (to the phone): {line}")
@@ -11668,7 +11658,6 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             except Exception as exc:
                 failed[0] = True
                 print(f"\n  turn failed: {exc!r}")
-                selfwork.fault(exc, "a turn", f"answering {str(text)[:150]!r}")  # one of her own is fixed by her
                 emit(notify, "Something went wrong", str(exc))
                 time.sleep(2)
                 emit(notify, "Ready", ready_text(rec.wake))
@@ -12605,7 +12594,6 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 phone_job(job, chat)
             except Exception as exc:  # one bad job never ends the phone: the next message is answered
                 print(f"\n  phone turn failed: {exc!r}")
-                selfwork.fault(exc, "a turn from the phone")
 
     def phone_job(job, chat):
         """One message or tap from your phone."""
@@ -12761,12 +12749,11 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
     start_screen_watch(lambda: not busy.locked())  # her eyes on the screen, between turns (screen_watch)
     threading.Thread(target=keep_warm, daemon=True).start()
     watch_return(lambda since: welcome(True, since))
-    # her own faults fixed by her, any thread's (selfwork.watch); a build that came in, or was taken out, said
+    # her restart after "undo your last build" (selfwork.quick); her faults are no longer watched for and fixed by her,
+    # nor a build's coming in said (7 November 2026)
     IDLE[0] = lambda: not busy.locked() and not rec.dictating and not dream.is_open() and not extras.meeting.on()
     selfwork.STATE["restart"] = lambda: selfwork.restart_soon(say=speak, idle=lambda: IDLE[0](), why=None)
-    selfwork.watch(heal=heal_me, say=ANNOUNCE.put)
     handmouse.bind(camera=lambda: getattr(cues.NOW["eyes"], "camera", None), say=ANNOUNCE.put)
-    selfwork.started(say=ANNOUNCE.put, heal=heal_me, queue=queue_self)
     # and back at the laptop without unlocking it, seen by its camera; your look rules, two claps and a snap
     cues.start(welcome=lambda since: welcome(True, since),
                run=lambda words, why: CONTROLS[0] is not None and CONTROLS[0].put(("cue", words, why)),

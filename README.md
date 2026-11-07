@@ -28,7 +28,7 @@ Needs Windows 10 or 11, Python 3.10 or newer, a free [Fish Audio](https://fish.a
 - **Background helpers.** Give a helper a name and a job, talk to it while it works, and watch it in a live mini view.
 - **Meeting notes.** Notes, answers and a recap in any call app. The audio never leaves your PC.
 - **Remembers you.** Say "remember…" and she knows it from then on. Teach her a phrase once and it becomes a routine.
-- **Builds into herself.** "Build yourself a way to..." and she codes it, tests it and restarts with it, on the model you pick. An error of her own she fixes the same way, and a crash she starts again from.
+- **Keeps herself running.** A crash and she starts again by herself, under her keeper. (She built features into herself and fixed her own faults from 29 October to 7 November 2026; that's been taken out, see below.)
 - **Your PC from your phone.** Your own Telegram bot: text or voice notes, with Yes and No buttons for anything risky.
 - **Dictation.** "Hey Harry, transcribe" types your words where your cursor is, with the "um"s taken out.
 - **Free models, or Claude.** Runs on free models with no billing, or on Claude Haiku 5.5 with your own Anthropic key.
@@ -683,6 +683,8 @@ Your hand is found by MediaPipe's palm finder and its 21 points (`hands.py`), ru
 
 ### Building into herself, and healing herself
 
+**Taken out on 7 November 2026**, the owner's call: it didn't work well (fixes were built for faults that weren't hers, like a crash from a change someone else had just made), and every build ran the OpenCode agent on a copy of her code, which cost memory while it ran and disk while the copy stayed. "Build yourself a way to..." and "fix yourself" now get "I don't build into myself or fix my own code any more". What stays: her keeper (a crash and she starts again), "what have you built?", "are you okay?" and "undo your last build". The code is in `selfwork.py` still, and nothing calls it to build. How it worked, for the record:
+
 Added 29 October 2026. Ask for a feature and she builds it into herself: "Hey Harry, build yourself a way to read my battery out every hour", "add a feature to close WhatsApp when I say focus", "improve yourself so you answer faster", "give yourself the ability to read PDFs aloud". She says what she'll build, does it in the background while you carry on, and tells you when it's in. She also knows herself: ask "what can you do?", "how do you see me?", "what have you built for yourself?" or "any errors lately?" and she answers from her own code, never from memory, so the answer is always up to date (`selfwork.py`).
 
 How a build goes:
@@ -849,7 +851,7 @@ With Claude Haiku as the answer model, what it reads and writes is billed per re
 - `providers.py` the providers in Settings > Answer model, their keys, and their live model lists
 - `todo.py` the to-do list, `filesearch.py` finding your files in Windows Search's index and opening one safely, `filecontents.py` the same index asked for the words inside them
 - `extras.py` the newer skills joined to her turns: their quick commands, their steps and prompt lines, and the yes before a calendar change. `showme.py` where to click, `overlay.py` what she draws on the screen and the thread her Win32 windows live on, `agenda.py` the calendar and iCal feeds, `spotify.py` Spotify, `helpers.py` named helpers, `jobview.py` and `cards.py` the live view in the corner, `drafts.py` a reply in the email in front, `meeting.py` and `loopback.py` meeting notes and what the PC plays
-- `selfwork.py` how she knows herself (her parts, steps, settings and builds, read from her code), builds what you ask into herself in a copy of her code, tested and put in, fixes her own faults, and keeps her running (her keeper, which `app.py` runs). `AGENTS.md` is how she's put together and the rules, for the agent that builds her
+- `selfwork.py` how she knows herself (her parts, steps, settings and builds, read from her code) and keeps her running (her keeper, which `app.py` runs); its building into herself and fixing her own faults was taken out on 7 November 2026, so nothing calls that. `AGENTS.md` is how she's put together and the rules, for the agent that builds her
 - `cues.py` what she sees or hears that starts something: the rules, taught and forgotten by voice, and done when what they need is so. `camera.py` the laptop's camera and whether you're in front of it, `claps.py` claps and snaps in the mic's sound, `hands.py` your hand in front of the camera, for a snap seen, `handmouse.py` your hand as the mouse
 - `voices.py` her voice from ElevenLabs, Sarvam or Deepgram: their voices, a line asked of each, and kept. `hearing.py` what you say heard by Sarvam, ElevenLabs, AssemblyAI or Deepgram, once it's plainly hers, in time or not at all
 - `dream.py` dream mode: its scenes by name, the song's words from LRCLIB, the page's server, its window, and what's said for it. `dream\index.html` the page, the words in time with the song, and `dream\scenes.js` the six scenes, drawn in code
