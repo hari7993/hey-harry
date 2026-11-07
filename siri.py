@@ -11160,6 +11160,7 @@ def island_answer(yes, ask, notify=None):
         handle("yes" if yes else "no", None, None, notify)
     finally:
         TAPPED.reset(tap)
+    line = humanize.plain(line)  # every line of hers, her scripted ones too: without the tells of machine writing
     return True
 
 

@@ -14,7 +14,7 @@ START = r"(?:^|(?<=[.!?] ))"
 # the run-up before the point, the staged candour and the chatbot's hello: dropped at the start of a sentence, with
 # the mark after it. "Look" and "Honestly" only with their comma: "Look at the screen" is an order
 LEADS = re.compile(START + r"(?:Of course|Certainly|Absolutely|Great question|Good question|Excellent question|"
-                   r"No problem|Happy to help|I'd be happy to help|Real talk|Let's be honest|Let's dive in|"
+                   r"I'd be happy to help|Real talk|Let's be honest|Let's dive in|"
                    r"Let's break (?:this|it) down|Let's explore|Here's the thing|The thing is|"
                    r"Here's what you need to know|To be clear|Don't get me wrong|Without further ado|Quick note|"
                    r"It's worth noting that|It's important to note that|It is important to note that|Note that|"
@@ -49,6 +49,22 @@ PHRASES = ((re.compile(r"\bdelve into\b", re.I), "look into"), (re.compile(r"\bd
            (re.compile(r"\b(?:a|is a|stands as a) testament to\b", re.I), "is a sign of"),
            (re.compile(r"\bplays? a (?:key|crucial|pivotal|vital|critical) role in\b", re.I), "matters for"),
            (re.compile(r"\bin the realm of\b", re.I), "in"), (re.compile(r"\bin order to\b", re.I), "to"))
+# the chatbot's way of saying it can't: "I'm unable to", "I don't have the ability to", "with the tools I have here",
+# "as an AI". A person says "I can't"
+REFUSALS = ((re.compile(r"\b(?:I am|I'm) (?:unable|not able) to\b", re.I), "I can't"),
+            (re.compile(r"\bI (?:do not|don't) have the (?:ability|capability) to\b", re.I), "I can't"),
+            (re.compile(r"\bI lack the ability to\b", re.I), "I can't"),
+            (re.compile(r",? ?\bwith the tools (?:I have|available to me)(?: here)?\b", re.I), ""),
+            (re.compile(r"\b(?:as|being) (?:an|just an) AI(?: assistant| model)?,?\s*", re.I), ""),
+            (re.compile(r"\bI'm just an AI(?: assistant)?,?\s*", re.I), ""))
+# a sign-off that offers nothing in particular, a sentence of its own after what she's said: "Want me to do anything
+# here?", "What are you trying to get done?". Gone only then: an offer that names a thing ("Want me to set a timer?")
+# stays, so does a hello's "what can I do for you?", and so does a welcome's question, which lets you answer her
+# without her name (siri.welcome)
+SIGN_OFFS = re.compile(r"(?<=[.!?]) (?:Want me to (?:do|help with) anything(?: else| here| with (?:that|this|it))?|"
+                       r"Want me to pull up any of (?:those|them)|Want me to do anything (?:else )?(?:here|with it)|"
+                       r"What are you trying to (?:get done|do)|Is there anything (?:else )?(?:I can|you'd like|"
+                       r"you need|you want)[^?]*)\?$", re.I)
 # "not just fast, but accurate" weighs the second half against a first nobody claimed: both, plainly. Never when
 # the first half starts with a verb turned round ("not only did it rain"), which "and" would garble
 AUX = r"(?!(?:did|does|do|is|was|were|are|has|have|had|can|could|will|would|should)\b)"
@@ -78,8 +94,9 @@ def plain(text):
     out = PADDING.sub("", out)
     for pattern, swap in QUALIFIERS:
         out = pattern.sub(swap, out)
-    for pattern, swap in PHRASES:
+    for pattern, swap in PHRASES + REFUSALS:
         out = pattern.sub(lambda m, s=swap: _case(m.group(0), s), out)
+    out = SIGN_OFFS.sub("", out)
     out = WORD.sub(lambda m: _case(m.group(1), WORDS[m.group(1).lower()]), out)
     out = NOT_JUST.sub(lambda m: f"{m.group(1)} and {m.group(2)}", out)
     out = ITS_NOT.sub(lambda m: _case(m.group(1), m.group(1).lower() + " "), out)

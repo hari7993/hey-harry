@@ -22,7 +22,9 @@ class Plain(unittest.TestCase):
                     ("It's 26 degrees. Let me know if you need anything else.", "It's 26 degrees."),
                     ("Done. Is there anything else I can help you with?", "Done."),
                     ("Of course, I'd be happy to help. Opening Notepad now.", "Opening Notepad now."),
-                    ("Sure, one sec.", "Sure, one sec.")))  # hers, and human
+                    ("Sure, one sec.", "Sure, one sec."),  # hers, and human
+                    ("No problem, I'll leave it.", "No problem, I'll leave it."),
+                    ("Hey, I'm Harry, what can I do for you?", "Hey, I'm Harry, what can I do for you?")))
 
     def test_the_run_up_and_the_padding_go(self):
         self.check((("Here's the thing: your battery is at 9 percent.", "Your battery is at 9 percent."),
@@ -47,6 +49,17 @@ class Plain(unittest.TestCase):
                     ("It's not a phone, it's a camera with a SIM.", "It's a camera with a SIM."),
                     ("The point is not speed but safety.", "The point is not speed but safety.")))  # plain not X but Y: left
 
+    def test_chatbot_refusals_and_empty_sign_offs(self):
+        self.check((("I'm unable to switch the camera on myself with the tools I have here.",
+                     "I can't switch the camera on myself."),
+                    ("As an AI, I don't have the ability to see you.", "I can't see you."),
+                    ("We're on the Profile tab now. Want me to do anything here?", "We're on the Profile tab now."),
+                    ("Three left on your list. Want me to pull up any of those?", "Three left on your list."),
+                    ("I'm here, Hari. What are you trying to get done?", "I'm here, Hari."),
+                    ("What do you need?", "What do you need?"),  # all she says: it stays
+                    ("It's five. Want me to set a timer?", "It's five. Want me to set a timer?"),  # a real offer
+                    ("Welcome back, Hari. Anything you need?", "Welcome back, Hari. Anything you need?")))
+
     def test_dashes_and_cases_and_what_stays(self):
         self.check((("Two things — the mic and the camera.", "Two things, the mic and the camera."),
                     ("It's five. Want me to set a timer?", "It's five. Want me to set a timer?"),  # her own offer
@@ -61,6 +74,15 @@ class InHerLines(unittest.TestCase):
                          "It's five o'clock.")
         self.assertEqual(siri.tidy("Here's the thing: should I send it to Ravi?", cut=False),
                          "Should I send it to Ravi?")
+
+    def test_every_line_she_says_goes_through_it_scripted_ones_too(self):
+        lines = []
+        token = siri.REPLY_TO.set(lines)
+        try:
+            siri.say("Certainly! I'm unable to do that with the tools I have here.", None)
+        finally:
+            siri.REPLY_TO.reset(token)
+        self.assertEqual(lines, ["I can't do that."])
 
     def test_her_default_personality_says_so_too(self):
         self.assertIn("not X but Y", siri.DEFAULT_SOUL)
