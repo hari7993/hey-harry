@@ -192,9 +192,9 @@ CORAL, SKY, ROSE = (1.0, 0.5, 0.38), (0.35, 0.72, 1.0), (0.98, 0.36, 0.55)
 # Music first, as NotchPixel's island has it (7 November 2026): while music plays, resting on her opens it there
 HUB_PAGES = ("music", "controls", "calendar", "today", "widgets", "alerts", "devices", "shelf", "clipboard",
              "launcher", "deck", "web")
-HUB_GLYPHS = {"music": "note", "controls": "controls", "calendar": "calendar", "today": "weather",
-              "widgets": "widgets", "alerts": "bell", "devices": "headphones", "shelf": "tray", "clipboard": "clipboard",
-              "launcher": "launcher", "deck": "phone", "web": "globe"}
+HUB_GLYPHS = {"music": "note", "controls": "controls", "calendar": "calendar", "today": "sky",
+              "widgets": "widgets", "alerts": "bell_line", "devices": "speaker", "shelf": "tray",
+              "clipboard": "clipboard", "launcher": "launcher", "deck": "phone", "web": "globe"}
 HUB_TINTS = {"music": ROSE, "controls": BLUE, "calendar": RED, "today": CYAN, "widgets": INDIGO, "alerts": ORANGE,
              "devices": TEAL, "shelf": VIOLET, "clipboard": PINK, "launcher": GREEN, "deck": CORAL, "web": SKY}
 PIN_SITE = "Pin a site to the island: "  # the typing box's words for the Web tab's Pin a site (_typed)
@@ -3003,26 +3003,40 @@ class DynamicIsland:
     def _hub_head(self, W, pad, head_h, page, d):
         """The panels' top: (draw(cv, ox, oy, Wn, a, now), its places to click, how her eyes look)."""
         k, th = self.k, self.theme()
-        # NotchPixel's tabs (7 November 2026, the owner's ask): thin glyphs 22 px apart, the open one in the words'
-        # colour with a dot under it, the rest faint. Till then each was on a round of its colour when open
-        r, small = (10 if len(HUB_PAGES) > 11 else 11) * k, self.f_label  # 20 px apart with twelve: the time fits
+        # NotchPixel's tabs (7 November 2026, the owner's ask): thin glyphs, the open one in the words' colour with a
+        # dot under it, the rest faint. Till then each was on a round of its colour when open
+        r, small = 11 * k, self.f_label
         song = self._playing() if page == "music" else None
         me = self._face("headphones" if song is not None and song.data.get("playing") else "open", HUB_TINTS[page])
         ew = me[0]
-        # all at the left while they fit there; more, as since NotchPixel's tabs came, half either side of her eyes,
-        # as a phone's camera sits in the middle of its strip, and what's beside them at the right only as far as
-        # there's room
         n = len(HUB_PAGES)
         left = n if pad + n * 2 * r <= W / 2 - ew / 2 - 8 * k else (n + 1) // 2
         tabs, hot = [], []
-        x = pad if left == n else W / 2 - ew / 2 - 5 * k - left * 2 * r
-        for i, p in enumerate(HUB_PAGES):
-            if i == left:
-                x = W / 2 + ew / 2 + 5 * k
-            tabs.append((p, x + r))
-            hot.append((f"tab:{p}", x, pad - 2 * k, x + 2 * r, pad + head_h + 2 * k))
-            x += 2 * r
-        room = (x if left < n else W / 2 + ew / 2) + 4 * k  # the status goes no further left than this
+        if left == n:  # all at the left while they fit there, 22 px apart, what's beside her eyes at the right
+            for i, p in enumerate(HUB_PAGES):
+                tabs.append((p, pad + r + i * 2 * r))
+                hot.append((f"tab:{p}", pad + i * 2 * r, pad - 2 * k, pad + (i + 1) * 2 * r, pad + head_h + 2 * k))
+            room = pad + n * 2 * r + 4 * k  # the status goes no further left than this
+        else:
+            # more, half either side of her eyes, as a phone's camera sits in the middle of its strip, on an even grid
+            # (7 November 2026, the owner's picture: "see how clumsy, make them perfect spacing"): each half from the
+            # card's edge to her eyes in equal slots, a glyph in the middle of each, the two halves mirroring each
+            # other; her eyes' room as wide as they get, with headphones on and glancing, so the gaps either side of
+            # them stay even; and nothing else on the row, the time having pushed the right half off its mirror
+            zone = max(ew, 4.6 * self.SMALL_EYES * k)
+            right = n - left
+            span = W / 2 - zone / 2 - pad
+            for i, p in enumerate(HUB_PAGES):
+                if i < left:
+                    x0 = pad + span * i / left
+                    x1 = pad + span * (i + 1) / left
+                else:
+                    j = i - left
+                    x0 = W / 2 + zone / 2 + span * j / right
+                    x1 = W / 2 + zone / 2 + span * (j + 1) / right
+                tabs.append((p, (x0 + x1) / 2))
+                hot.append((f"tab:{p}", x0, pad - 2 * k, x1, pad + head_h + 2 * k))
+            room = W + 1  # no time or weather beside them
         hot.append(("close", W / 2 - ew / 2, pad - 2 * k, W / 2 + ew / 2, pad + head_h + 2 * k))
         weather = d.get("weather") if plugins.get_options("hub").get("weather", True) else None
         battery = d.get("battery")
@@ -3032,13 +3046,13 @@ class DynamicIsland:
             cy = oy + pad + head_h / 2
             for p, cx in tabs:
                 on = p == page
-                face.GLYPHS[HUB_GLYPHS[p]](cv, ox + cx, cy - 1.5 * k, 15 * k, th["text"], a if on else 0.4 * a)
+                face.GLYPHS[HUB_GLYPHS[p]](cv, ox + cx, cy - 2 * k, 16 * k, th["text"], a if on else 0.45 * a)
                 if on:  # its dot, in the theme's accent, else the panel's own colour (the owner: "more colour")
                     dx, dy, dr = ox + cx, cy + 9 * k, 1.6 * k
                     cv.shape(lambda xs, ys, dx=dx, dy=dy: face.circle(xs, ys, dx, dy, dr),
                              (dx - dr - 1, dy - dr - 1, dx + dr + 1, dy + dr + 1), _accent_of(th, HUB_TINTS[p]), a)
                 if p == "alerts" and unseen and not on:
-                    dx, dy, dr = ox + cx + r * 0.6, cy - r * 0.6, 3.2 * k
+                    dx, dy, dr = ox + cx + 6 * k, cy - 8 * k, 2.6 * k  # on the bell's shoulder
                     cv.shape(lambda xs, ys, dx=dx, dy=dy: face.circle(xs, ys, dx, dy, dr),
                              (dx - dr - 1, dy - dr - 1, dx + dr + 1, dy + dr + 1), ORANGE, a)
             me[1](cv, ox + Wn / 2 - ew / 2, cy, a, now)

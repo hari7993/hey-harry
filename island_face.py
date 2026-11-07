@@ -1037,8 +1037,8 @@ def clipboard_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
 
 
 def launcher_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
-    """The launcher: six dots in two rows, as NotchPixel's grip."""
-    q = s * 0.075
+    """The launcher: six dots in two rows, as NotchPixel's grip, as heavy as the other tabs' lines."""
+    q = s * 0.095
     dots = [(cx + dx * s * 0.24, cy + dy * s * 0.14) for dx in (-1, 0, 1) for dy in (-1, 1)]
 
     def sd(xs, ys):
@@ -1103,6 +1103,37 @@ def phone_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
              (cx - s * 0.35, cy - s * 0.5, cx + s * 0.35, cy + s * 0.5), colour, a)
 
 
+def bell_line_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """The bell in outline, for the panels' tabs, where every glyph is drawn in lines of one weight (7 November 2026,
+    the owner: the solid ones looked clumsy beside the rest): its dome, its rim and its clapper."""
+    w = max(1.0, s * 0.09)
+
+    def sd(xs, ys):
+        dome = np.minimum(circle(xs, ys, cx, cy - s * 0.08, s * 0.22), rbox(xs, ys, cx, cy + s * 0.06, s * 0.22,
+                                                                            s * 0.12, s * 0.02))
+        rim = segment(xs, ys, cx - s * 0.33, cy + s * 0.19, cx + s * 0.33, cy + s * 0.19, w)
+        clapper = segment(xs, ys, cx - s * 0.07, cy + s * 0.32, cx + s * 0.07, cy + s * 0.32, w)
+        return np.minimum(np.minimum(np.abs(dome) - w / 2, rim), clapper)
+    cv.shape(sd, (cx - s * 0.42, cy - s * 0.42, cx + s * 0.42, cy + s * 0.46), colour, a)
+
+
+def sky_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Today's tab: a cloud in outline, the sun's rim peeping over it, in lines of one weight as the other tabs."""
+    w = max(1.0, s * 0.09)
+    ox, oy = cx + s * 0.02, cy + s * 0.08
+
+    def cloud(xs, ys):
+        return np.minimum(np.minimum(circle(xs, ys, ox - s * 0.17, oy + s * 0.04, s * 0.15),
+                                     circle(xs, ys, ox + s * 0.05, oy - s * 0.07, s * 0.21)),
+                          rbox(xs, ys, ox, oy + s * 0.1, s * 0.32, s * 0.09, s * 0.09))
+
+    def sd(xs, ys):
+        c = cloud(xs, ys)
+        sun = np.maximum(np.abs(circle(xs, ys, cx - s * 0.16, cy - s * 0.16, s * 0.15)) - w / 2, -c + w)
+        return np.minimum(np.abs(c) - w / 2, sun)
+    cv.shape(sd, (cx - s * 0.5, cy - s * 0.45, cx + s * 0.5, cy + s * 0.45), colour, a)
+
+
 def note_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
     """Music, the panels' first tab: two notes joined by a beam."""
     w = max(1.0, s * 0.09)
@@ -1133,6 +1164,7 @@ GLYPHS.update({"wifi": wifi_glyph, "bluetooth": bluetooth_glyph, "dnd": dnd_glyp
                "clipboard": clipboard_glyph, "launcher": launcher_glyph, "widgets": widgets_glyph, "mic": mic_glyph,
                "mic_off": lambda cv, cx, cy, s, colour, a=1.0, t=None: mic_glyph(cv, cx, cy, s, colour, a, muted=True),
                "chip": chip_glyph, "phone": phone_glyph, "globe": globe_glyph, "note": note_glyph,
+               "bell_line": bell_line_glyph, "sky": sky_glyph,
                "weather": lambda cv, cx, cy, s, colour, a=1.0, t=None: cloud_glyph(cv, cx, cy, s, colour, a,
                                                                                    "partly cloudy"),
                **DEVICE_GLYPHS})

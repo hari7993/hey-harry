@@ -2158,8 +2158,11 @@ class NotchPixel(unittest.TestCase):
         draw, hot, expr = isl._hub_head(isl.HUB_W * k, isl.CARD_PAD * k, 26 * k, "calendar", {})
         tabs = [h for h in hot if h[0].startswith("tab:")]
         self.assertEqual([h[0] for h in tabs], [f"tab:{p}" for p in island.HUB_PAGES])
-        # 22 px apart, as NotchPixel's; 20 once there are twelve, so the time still fits beside them
-        self.assertAlmostEqual(tabs[1][1] - tabs[0][1], (20 if len(island.HUB_PAGES) > 11 else 22) * k)
+        # on an even grid either side of her eyes (the owner's picture, the same day: "make them perfect spacing")
+        middles = [(t[1] + t[3]) / 2 for t in tabs]
+        steps = [b - a for a, b in zip(middles, middles[1:])]
+        half = len(island.HUB_PAGES) // 2
+        self.assertTrue(np.allclose(steps[:half - 1] + steps[half:], steps[0], atol=0.01))
         col = np.zeros((int(70 * k), int(isl.HUB_W * k), 3), np.float32)
         draw(face.Canvas(col), 0, 0, isl.HUB_W * k, 1.0, time.time())
         at = island.HUB_PAGES.index("calendar")
@@ -2742,4 +2745,47 @@ class MusicTab(unittest.TestCase):
         lay = isl._make(("live", self.song(now)), now)  # where the panels are off: its own card, as before
         self.assertEqual([h[0] for h in lay.hot], ["previous", "toggle", "next", "open", "seek"])
         self.assertEqual(lay.kind, "media")
+
+
+class TabGrid(unittest.TestCase):
+    """7 November 2026, the owner's picture of the tabs: "see how clumsy, make them perfect spacing structure". Six
+    either side of her eyes in equal slots from the card's edge, the halves mirroring each other, her eyes' room as
+    wide as they get with headphones on, so a glance never makes the gaps uneven, and nothing else on the row."""
+
+    def head(self, page, look):
+        isl = fonted(self, style="capsule", runner=mock.Mock())
+        isl.recent, isl.alerts_seen, isl.lives = [], 0.0, {}
+        isl.eye = ("headphones" if page == "music" else "open", 1.0, look, 0.0, False)
+        k = isl.k
+        W, pad = isl.HUB_W * k, isl.CARD_PAD * k
+        draw, hot, _ = isl._hub_head(W, pad, 26 * k, page, {"weather": {"temp": 20, "sky": "clear"},
+                                                             "battery": (50, False)})
+        return isl, W, pad, draw, hot
+
+    def test_the_halves_mirror_each_other_round_her_eyes(self):
+        isl, W, pad, draw, hot = self.head("music", 0.0)
+        middles = sorted((h[1] + h[3]) / 2 for h in hot if h[0].startswith("tab:"))
+        n = len(middles)
+        for a, b in zip(middles, reversed(middles)):
+            self.assertAlmostEqual(a + b, W, delta=0.01)  # each one's mirror the other side of her eyes
+        self.assertAlmostEqual(min(h[1] for h in hot if h[0].startswith("tab:")), pad, delta=0.01)  # from the edge
+        eyes = next(h for h in hot if h[0] == "close")
+        self.assertLess(middles[n // 2 - 1], eyes[1])
+        self.assertGreater(middles[n // 2], eyes[3])
+        zone = middles[n // 2] - middles[n // 2 - 1]
+        self.assertGreaterEqual(zone, 4.6 * isl.SMALL_EYES * isl.k)  # room for her headphones, glancing too
+
+    def test_nothing_else_on_the_row_and_a_glance_moves_no_tab(self):
+        still = self.head("music", 0.0)[4]
+        glance = self.head("music", 0.9)[4]
+        self.assertEqual(still, glance)
+        isl, W, pad, draw, hot = self.head("controls", 0.0)
+        col = np.zeros((int(60 * isl.k), int(W), 3), np.float32)
+        draw(face.Canvas(col), 0, 0, W, 1.0, time.time())
+        last = max(h[3] for h in hot if h[0].startswith("tab:"))
+        self.assertLess(col[:, int(last) + 2:].max(), 0.05)  # no time, weather or battery after the last tab
+
+    def test_the_tab_glyphs_are_all_drawn(self):
+        for page in island.HUB_PAGES:
+            self.assertIn(island.HUB_GLYPHS[page], face.GLYPHS, page)
 
