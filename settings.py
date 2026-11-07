@@ -60,9 +60,6 @@ DEFAULTS = {
     # and speaks up when something there needs you. Never password or payment pages, or private windows
     "screen_watch": True,
     "screen_commentary": True,
-    # days before today that what you did on the PC is kept, window by window, for "what did I do?" (timeline.py, 7
-    # November 2026: a week, the owner's choice). On this PC only, and never a screenshot
-    "timeline_days": 7,
     "heads_ups": True,  # she mentions what needs you: messages, a low battery, a nearly full drive, see watch.py
     "notifications": True,  # she may read Windows' notifications, for heads-ups and "any new messages?"
     # a background task's progress on your phone (siri.progress_to): "asked", only for those asked from the phone, or
