@@ -410,6 +410,16 @@ class InSiri(Now):
         self.assertNotIn("Task", plan["say"])
         self.assertEqual(store.list(active=True)[0]["kind"], "reminder")
 
+    def test_a_reminder_come_due_said_to_them(self):
+        """7 November, live: "Reminder: Hey Hari, time to call Sam.." for the planner's own line to them."""
+        self.assertEqual(siri.reminder_line("Hey Hari, time to call Sam."), "Hey Hari, time to call Sam.")
+        self.assertEqual(siri.reminder_line("time to drink some water"), "time to drink some water.")
+        self.assertEqual(siri.reminder_line("call Mum."), "Reminder: call Mum.")  # never two stops
+        self.assertEqual(siri.reminder_line("stretch"), "Reminder: stretch.")
+        self.assertEqual(siri.reminder_line("call Ravi", "today at 9:35 AM"), "Reminder from today at 9:35 AM: call Ravi.")
+        self.assertEqual(siri.reminder_line("Hey Hari, time to call Sam.", "today at 2:57 PM"),
+                         "From today at 2:57 PM: Hey Hari, time to call Sam.")
+
     def test_her_welcome_says_their_name_with_a_capital(self):
         with mock.patch.object(siri, "pc_warnings", lambda: []):
             self.assertEqual(siri.welcome_line(True), "Welcome back, Hari. Anything you need?")

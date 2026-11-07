@@ -7948,6 +7948,20 @@ def tasks_said(now=None):
     return "\n".join(lines)
 
 
+# A reminder's text that's already a line to them, as the planner often writes it ("Hey Hari, time to call Sam.")
+SAID_TO_THEM = re.compile(r"(?:hey|hi|oi|yo|okay|ok|time to|it's time|don't forget|remember|just a reminder)\b", re.I)
+
+
+def reminder_line(text, late=""):
+    """A reminder come due, said out loud: "Reminder: call Mum.", or a line already written to them said as it is,
+    not "Reminder: Hey Hari, time to call Sam.." (7 November 2026). late: when it was for, if the PC was off then."""
+    text = " ".join(str(text or "").split())
+    if SAID_TO_THEM.match(text):
+        line = text if text[-1:] in ".!?" else text + "."
+        return f"From {late}: {line}" if late else line
+    return f"Reminder{' from ' + late if late else ''}: {text.rstrip('.')}."
+
+
 def prepare_task_steps(plan):
     """Turn command/schedule model steps into durable rows before run_plan. Returns a plan with harmless markers."""
     kept, notices, ask = [], [], None
@@ -8165,7 +8179,7 @@ def task_worker():
                           f"comes round")
                 elif not TASK_STORE.is_cancelled(task["id"]):
                     late = task.get("missed")  # the PC was off or asleep: say when it was for
-                    tell_task(task, f"Reminder{' from ' + tasking.describe_due(task['due']) if late else ''}: {text}.")
+                    tell_task(task, reminder_line(text, tasking.describe_due(task["due"]) if late else ""))
                     shown = sys.modules.get("island_plugins")  # and in the island, with Snooze and Done
                     if shown is not None:
                         shown.remind(text)
