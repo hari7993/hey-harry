@@ -190,6 +190,12 @@ PRIVACY = (
      "Settings: the sites she opens see her browser, signed in wherever you signed it in, and her page goes to the "
      "answer model as a task's screen does. Its sign-ins stay in its own profile on this PC, and she never types a "
      "password. It's driven over a pipe only she holds, never a network port, and opens public sites only."),
+    ("Watching your screen  \u00b7  words, never a picture", "With watching on in Settings > Vision, she reads the "
+     "window in front on this PC through agent-desktop: its app, title, site and words, and what you click, never "
+     "what you type and never a screenshot. Password, payment and private windows are never read. It goes to the "
+     "answer model only with what you ask her, and in a glance at most 12 times an hour. Each window you were in is "
+     "kept for a week in %LOCALAPPDATA%\\Hey Harry\\timeline, for \u201cwhat did I do?\u201d, and goes to the answer "
+     "model only when you ask that."),
     ("Speech to text by a provider  \u00b7  your voice", "Only if you pick Sarvam, ElevenLabs, AssemblyAI or Deepgram "
      "in Settings > Speech to text: the audio of what you say to her, once she's taken it as hers (with her name, right "
      "Alt, just after she answers, or dictating), with her name and yours as words to listen for. This PC hears "

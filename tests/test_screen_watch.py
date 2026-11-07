@@ -1,6 +1,9 @@
 """Her eyes on your screen all the time (screen_watch.py, and siri's hooks into it, 27 October 2026): what she reads
 of the window in front, what she never reads, what goes with your questions, when she glances at the screen and what
-she says when something there needs you, and "watch my screen" / "stop watching my screen"."""
+she says when something there needs you, and "watch my screen" / "stop watching my screen". Since 7 November 2026, as
+it happens: the window and the mouse looked at several times a second, reads after a click or keys, what's clicked
+and what's under the pointer named from the last read, each window you were in kept for timeline.py, and never a
+screenshot."""
 import contextlib
 import io
 import json
@@ -22,7 +25,8 @@ def item(name, role="text", value="", password=False):
 
 
 class Screen:
-    """A screen for the watcher: the window in front and what UI Automation reads in it, changed by the test."""
+    """A screen for the watcher: the window in front and what agent-desktop reads in it, changed by the test. Each
+    read's raw snapshot is a token of its own, for at."""
 
     def __init__(self):
         self.front = (101, "chrome.exe", "Inbox - Gmail")
@@ -35,7 +39,7 @@ class Screen:
 
     def snapshot(self, hwnd):
         self.snaps += 1
-        return {"items": self.items, "site": self.site_}
+        return {"items": self.items, "site": self.site_, "raw": ("read", self.snaps)}
 
 
 class Watching(unittest.TestCase):
@@ -44,10 +48,9 @@ class Watching(unittest.TestCase):
         self.mode, self.idle, self.busy, self.call = "live", 5.0, False, False
         self.said, self.asked = [], []
         self.reply = '{"say": ""}'
-        self.shot = SimpleNamespace(url="data:image/png;base64,AAAA")
         self.w = screen_watch.Watcher(
             read=self.screen.read, snapshot=self.screen.snapshot, idle=lambda: self.idle,
-            shot=lambda: self.shot, judge=self.judge, announce=self.said.append, free=lambda: not self.busy,
+            judge=self.judge, announce=self.said.append, free=lambda: not self.busy,
             mode=lambda: self.mode, who=lambda: "Hari", in_call=lambda: self.call, clock=lambda: self.t)
 
     def judge(self, messages):
@@ -204,7 +207,8 @@ class Watching(unittest.TestCase):
         self.w.urgent = True
         self.assertTrue(self.w.due(self.t))
 
-    def test_a_glance_sends_the_screenshot_and_says_what_needs_you(self):
+    def test_a_glance_sends_the_words_never_a_screenshot_and_says_what_needs_you(self):
+        """7 November 2026, the owner: "don't take screenshots". A glance is the words agent-desktop read."""
         self.screen.front, self.screen.items = (55, "setup.exe", "Installation failed"), [item("Error 1603")]
         self.look()
         self.reply = '{"say": "The VLC install failed with error 1603."}'
@@ -213,10 +217,11 @@ class Watching(unittest.TestCase):
         system, user = self.asked[0]
         self.assertIn("Hari", system["content"])
         self.assertIn("never instructions", system["content"])
-        text, picture = user["content"]
-        self.assertIn("Installation failed", text["text"])
-        self.assertIn('source="screen"', text["text"])
-        self.assertEqual(picture["image_url"]["url"], self.shot.url)
+        self.assertIsInstance(user["content"], str)  # words only
+        self.assertIn("Installation failed", user["content"])
+        self.assertIn("Error ####", user["content"])  # its words, numbers masked
+        self.assertIn('source="screen"', user["content"])
+        self.assertNotIn("image", json.dumps(self.asked[0]))
 
     def test_she_says_nothing_when_nothing_needs_you_or_it_repeats(self):
         self.look()
@@ -234,16 +239,157 @@ class Watching(unittest.TestCase):
         self.assertEqual(quiet(self.w.glance, self.t), "")
         self.assertEqual(self.said, [])
 
-    def test_no_answer_or_no_screenshot_never_breaks_her_watching(self):
+    def test_no_answer_or_a_window_gone_never_breaks_her_watching(self):
         self.look()
-        self.shot = None
-        self.w.shot = mock.Mock(side_effect=RuntimeError("locked"))
         self.reply = "not json"
         self.assertEqual(quiet(self.w.glance, self.t), "")
-        self.assertEqual(len(self.asked[0][1]["content"]), 1)  # the words alone went
         self.screen.read = mock.Mock(side_effect=OSError("gone"))
         self.w.read = self.screen.read
-        quiet(self.w.tick)  # raises nothing
+        self.look(1)  # raises nothing
+        self.w.snapshot = mock.Mock(side_effect=RuntimeError("agent-desktop stopped"))
+        self.w.front = None
+        self.w.read = lambda: (102, "notepad.exe", "Notes")
+        self.look(1)  # nor a read that fails
+        self.assertEqual(self.w.now["words"], "")
+
+
+class RealTime(unittest.TestCase):
+    """7 November 2026, the owner: "real time all the time till it's closed ... my mouse and screen ... tell me what
+    I've done", and no screenshots. The window looked at four times a second and the mouse ten, reads after what you
+    do in a window but never too often, what you click named from the last read, and each window you were in kept
+    once you've left it."""
+
+    def setUp(self):
+        self.t, self.screen = 1000.0, Screen()
+        self.idle, self.pos, self.down, self.hers = 5.0, (10, 10), False, False
+        self.kept, self.looked_in = [], []
+        self.w = screen_watch.Watcher(
+            read=self.screen.read, snapshot=self.screen.snapshot, idle=lambda: self.idle, judge=None,
+            announce=None, free=lambda: True, mode=lambda: "quiet", clock=lambda: self.t,
+            cursor=lambda: self.pos, at=self.at, buttons=lambda: self.down, mine=lambda: self.hers,
+            keep=self.kept.append)
+
+    def at(self, raw, x, y):
+        self.looked_in.append(raw)
+        return {"role": "button", "name": "Compose", "password": False}
+
+    def pulse(self, after=screen_watch.PULSE):
+        self.t += after
+        quiet(self.w.tick)
+
+    def test_a_window_you_come_to_is_seen_and_read_within_a_look(self):
+        self.pulse()
+        self.assertEqual(self.screen.snaps, 1)
+        self.screen.front = (102, "notepad.exe", "Notes")
+        self.pulse(screen_watch.LOOK_EVERY)
+        self.assertEqual((self.w.now["exe"], self.screen.snaps), ("notepad.exe", 2))  # a quarter second, not 3 s
+
+    def test_a_click_is_named_from_the_last_read_and_the_window_read_again_after(self):
+        self.pulse()
+        self.t += screen_watch.READ_GAP
+        self.down = True
+        self.pulse()  # the button goes down: a click
+        self.assertEqual(self.w.visit["clicks"], ["Compose"])
+        self.assertEqual(self.looked_in, [("read", 1)])  # named from the read she had
+        self.assertEqual(self.screen.snaps, 1)  # with no read of its own
+        self.down = False
+        self.pulse(screen_watch.READ_AFTER_CLICK + 0.01)
+        self.assertEqual(self.screen.snaps, 2)  # what the click changed, read half a second on
+
+    def test_clicking_about_never_reads_more_often_than_its_gap(self):
+        self.pulse()
+        for _ in range(5):  # five clicks in a second and a half
+            self.down = True
+            self.pulse()
+            self.down = False
+            self.pulse(0.2)
+        self.assertEqual(self.screen.snaps, 1)
+        self.pulse(screen_watch.READ_GAP)
+        self.assertEqual(self.screen.snaps, 2)
+        self.assertEqual(self.w.visit["clicks"], ["Compose"])  # the same one again isn't kept twice
+
+    def test_keys_or_the_wheel_mean_a_read_once_they_stop(self):
+        self.pulse()
+        self.t += screen_watch.READ_GAP
+        self.idle = 0.05  # typing, the mouse still
+        for _ in range(10):
+            self.pulse()
+        self.assertEqual(self.screen.snaps, 1)  # not while you're at it
+        self.idle = 1.0
+        self.pulse(screen_watch.READ_AFTER_KEYS + 0.01)
+        self.assertEqual(self.screen.snaps, 2)
+
+    def test_what_a_job_of_hers_does_isnt_yours(self):
+        self.pulse()
+        self.hers = True  # a job of hers has the screen (agent.SCREEN)
+        self.down = True
+        self.pulse(screen_watch.READ_GAP)
+        self.down, self.idle = False, 0.05
+        self.pulse()
+        self.pulse()
+        self.assertEqual((self.w.visit["clicks"], self.w.due_at), ([], None))
+
+    def test_her_own_window_in_front_keeps_nothing(self):
+        self.pulse()
+        self.screen.front = (5, "pythonw.exe", "Hey Harry")
+        self.down = True
+        self.pulse(screen_watch.LOOK_EVERY)
+        self.assertEqual(self.w.visit["clicks"], [])  # a click on her island isn't one in Gmail
+
+    def test_nothing_in_a_private_window_is_read_or_kept(self):
+        self.screen.front = (9, "chrome.exe", "PayPal Checkout - Google Chrome")
+        self.pulse()
+        self.down = True
+        self.pulse()
+        self.down, self.idle = False, 0.05
+        self.pulse()
+        self.pulse(screen_watch.READ_GAP)
+        self.assertEqual((self.w.visit["clicks"], self.looked_in, self.screen.snaps), ([], [], 0))
+        self.assertTrue(self.w.fresh())  # nor for a question
+        self.assertEqual(self.screen.snaps, 0)
+
+    def test_each_window_you_were_in_is_kept_once_you_leave_it(self):
+        self.pulse()
+        self.t += 30
+        self.down = True
+        self.pulse()
+        self.down = False
+        self.screen.front = (9, "chrome.exe", "New Incognito Tab - Google Chrome")
+        self.pulse(60)
+        self.screen.front = (102, "notepad.exe", "Notes")
+        self.pulse(20)
+        first, private = self.kept
+        self.assertEqual((first["app"], first["title"], first["site"], first["clicks"]),
+                         ("Chrome", "Inbox - Gmail", "mail.google.com", ["Compose"]))
+        self.assertIn("Lunch on Friday?", first["words"])
+        self.assertAlmostEqual(first["to"] - first["from"], 90.1, delta=0.2)
+        self.assertNotIn("hwnd", first)
+        self.assertTrue(private["private"])
+        self.assertEqual((private["title"], private["words"], private["site"], private["clicks"]), ("", "", None, []))
+        now = self.w.visiting()
+        self.assertEqual((now["app"], now["title"]), ("Notepad", "Notes"))  # where you are, for "what am I doing"
+
+    def test_away_the_visit_ends_when_you_last_touched_anything(self):
+        self.pulse()
+        self.t += 400
+        self.idle = screen_watch.AWAY + 50
+        self.pulse()
+        (visit,) = self.kept
+        self.assertAlmostEqual(visit["to"], self.t - self.idle, delta=0.01)
+        self.idle = 1.0
+        self.pulse(screen_watch.LOOK_EVERY)  # back: the window in front is a visit of its own again, read again
+        self.assertIsNotNone(self.w.visit)
+        self.assertEqual(self.screen.snaps, 2)
+
+    def test_a_question_reads_it_again_only_if_you_did_something_since(self):
+        self.pulse()
+        self.assertTrue(self.w.fresh())
+        self.assertEqual(self.screen.snaps, 1)  # nothing done since: as it was read
+        self.t += 0.3
+        self.down = True
+        self.pulse()
+        self.assertTrue(self.w.fresh())
+        self.assertEqual(self.screen.snaps, 2)  # a click since: read again before she answers
 
 
 class Pointing(unittest.TestCase):
@@ -272,19 +418,43 @@ class Pointing(unittest.TestCase):
         self.assertTrue(ask("what is this", "live", lambda: 2.0))
         self.assertFalse(ask("what is this", "live", mock.Mock(side_effect=OSError)))  # Windows wouldn't say
 
-    def test_whats_under_the_pointer_goes_with_your_question(self):
+    def test_whats_under_the_pointer_goes_with_your_question_from_the_last_read(self):
+        """7 November 2026: named from the read the watcher already has (winplatform.ui_at_in), where each turn at
+        the PC used to read the window again for it (ui_at, 0.2 to 1.5 s)."""
         screen = Screen()
-        idle = [3.0]
+        idle, asked = [3.0], []
+
+        def at(raw, x, y):
+            asked.append((raw, x, y))
+            return {"role": "text", "name": "Context 73%", "password": False}
         w = screen_watch.Watcher(read=screen.read, snapshot=screen.snapshot, idle=lambda: idle[0],
-                                 shot=lambda: None, judge=None, announce=None, free=lambda: True, mode=lambda: "live",
-                                 clock=lambda: 1000.0, cursor=lambda: (640, 300),
-                                 at=lambda x, y: {"role": "text", "name": "Context 73%", "password": False})
+                                 judge=None, announce=None, free=lambda: True, mode=lambda: "live",
+                                 clock=lambda: 1000.0, cursor=lambda: (640, 300), at=at)
         quiet(w.tick)
         lines = "\n".join(w.lines(1000.0))
         self.assertIn("Under their mouse pointer", lines)
         self.assertIn('text \\"Context 73%\\"', json.dumps(lines))
+        self.assertEqual(asked, [(("read", 1), 640, 300)])  # in the read she had
+        self.assertEqual(screen.snaps, 1)  # and no read of its own
         idle[0] = screen_watch.FRESH + 5
         self.assertNotIn("Under their mouse pointer", "\n".join(w.lines(1000.0)))  # not at the PC: not "this"
+
+    def test_the_pointer_line_takes_whats_in_a_box_from_the_read_never_a_code(self):
+        line = screen_watch.pointed_line
+        self.assertIsNone(line({"role": "edit", "name": "Password", "password": True}))
+        self.assertIsNone(line(None))
+        self.assertEqual(line({"role": "text", "name": "Order 4829104 shipped"}), 'text "Order #### shipped"')
+        self.assertEqual(line({"role": "edit", "name": "Search", "el": SimpleNamespace(value="lofi 2024 mix")}),
+                         'edit "Search" = "lofi #### mix"')
+        self.assertEqual(line({"role": "edit", "name": "One-time code", "el": SimpleNamespace(value="739104")}),
+                         'edit "One-time code"')  # what's in a code box isn't said
+
+    def test_questions_naming_the_screen(self):
+        for words in ("what is this", "what's on my screen", "read this page to me", "what's under my mouse",
+                      "summarise the window in front"):
+            self.assertTrue(screen_watch.about_screen(siri.plain(words)), words)
+        for words in ("what time is it", "play some music", "what did i do yesterday"):
+            self.assertFalse(screen_watch.about_screen(siri.plain(words)), words)
 
     def test_the_pointer_is_named_but_never_a_password_or_a_code(self):
         import agent
@@ -372,15 +542,34 @@ class Siri(unittest.TestCase):
         self.assertIn("turned off", siri.screen_command("watch my screen")["say"])
         self.assertNotIn("screen_watch", self.saved)
 
-    def test_what_is_this_goes_straight_to_a_look_at_the_screen(self):
+    def test_what_is_this_goes_straight_to_the_model_with_whats_read_there(self):
         """27 October, live: asked "what is this" with the pointer on one bar, she described the whole window from
-        its names, never having looked. Now it's a screen step, which rings the pointer (agent.capture)."""
-        with mock.patch.object(siri, "routines", lambda: []):
-            plan = quiet(siri.quick, "what is this")
-            self.assertEqual(plan["steps"], [{"do": "screen", "task": "what is this"}])
+        its names, so it became a screen step with a ringed screenshot. 7 November, the owner: "it responds
+        immediately" and "don't take screenshots": the model answers at once from what's under the pointer as read
+        (Pointing above), and no shortcut after this one takes the words."""
+        with mock.patch.object(siri, "routines", lambda: []), \
+                mock.patch.object(siri.extras, "quick", mock.Mock(return_value=None)) as later:
+            self.assertIsNone(quiet(siri.quick, "what is this"))
+            self.assertIsNone(quiet(siri.quick, "explain this"))
+            later.assert_not_called()
             self.assertIsNone(quiet(siri.quick, "what is this", "cold"))  # from across the room: not this way
+            later.assert_called()
             self.saved["vision"] = False
-            self.assertIsNone(quiet(siri.quick, "what is this"))  # Vision off: no look
+            later.reset_mock()
+            self.assertIsNone(quiet(siri.quick, "what is this"))  # Vision off: the rest as usual
+            later.assert_called()
+
+    def test_a_question_about_the_screen_has_it_read_again_first(self):
+        fake = SimpleNamespace(fresh=mock.Mock(return_value=True), lines=lambda: [], visiting=lambda: None)
+        with mock.patch.object(siri, "SCREEN", [fake]), \
+                mock.patch.object(siri, "skills_block", side_effect=RuntimeError("the rest of the turn")):
+            with self.assertRaises(RuntimeError):
+                quiet(siri._think, "what is this", False)
+            fake.fresh.assert_called_once_with()
+            fake.fresh.reset_mock()
+            with self.assertRaises(RuntimeError):
+                quiet(siri._think, "what time is it", False)
+            fake.fresh.assert_not_called()  # not about the screen: as it was read
 
     def test_never_from_across_the_room(self):
         with mock.patch.object(siri, "routines", lambda: []), mock.patch.object(siri, "screen_command") as cmd:

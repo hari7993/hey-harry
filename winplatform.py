@@ -1970,6 +1970,15 @@ def cursor_pos():
     return pt.x, pt.y
 
 
+VK_LBUTTON, VK_RBUTTON, VK_MBUTTON = 0x01, 0x02, 0x04
+
+
+def mouse_down():
+    """True while a mouse button is held down, as Windows has it this moment (GetAsyncKeyState, a few microseconds):
+    how the screen watch sees a click, looking ten times a second, with no hook in the way of your mouse."""
+    return any(user32.GetAsyncKeyState(vk) & 0x8000 for vk in (VK_LBUTTON, VK_RBUTTON, VK_MBUTTON))
+
+
 def hide_window(hwnd):
     user32.ShowWindow(hwnd, SW_HIDE)
 
@@ -2694,20 +2703,26 @@ def ui_at(x, y):
     overlap and which is on top can't be told, one inside a dialog wins, then one whose name is a risky press: the
     gate then asks, rather than taking the harmless one under it. None if it can't say."""
     try:
-        snap = _desktop_snapshot(user32.GetForegroundWindow())
-        inside = [el for el in snap.elements[1:] if _shown(el) and _contains(el.rect, x, y)]
-        if not inside:
-            return None
-        leaves = [el for el in inside if not any(other.has_ancestor(el) for other in inside)]
-        dialogs = [el for el in inside if _is_dialog(el)]
-        if dialogs:  # a dialog is drawn over the page it's in
-            top = max(dialogs, key=lambda el: el.depth)
-            leaves = [el for el in leaves if el is top or el.has_ancestor(top)] or leaves
-        found = [_climb(el) for el in sorted(leaves, key=lambda el: (-el.depth, _area(el.rect)))]
-        return next((it for it in found if RISKY_CLICKS.search(it["name"].lower())), found[0])
+        return ui_at_in(_desktop_snapshot(user32.GetForegroundWindow()), x, y)
     except Exception as exc:
         print(f"  agent-desktop: {exc!r}")
         return None
+
+
+def ui_at_in(snap, x, y):
+    """ui_at's answer from a snapshot already read: the screen watch keeps its last one (7 November 2026), so what's
+    under the pointer, or what was just clicked, is named with no read of its own, a few milliseconds of sums over
+    what's kept. None if nothing read is there."""
+    inside = [el for el in snap.elements[1:] if _shown(el) and _contains(el.rect, x, y)]
+    if not inside:
+        return None
+    leaves = [el for el in inside if not any(other.has_ancestor(el) for other in inside)]
+    dialogs = [el for el in inside if _is_dialog(el)]
+    if dialogs:  # a dialog is drawn over the page it's in
+        top = max(dialogs, key=lambda el: el.depth)
+        leaves = [el for el in leaves if el is top or el.has_ancestor(top)] or leaves
+    found = [_climb(el) for el in sorted(leaves, key=lambda el: (-el.depth, _area(el.rect)))]
+    return next((it for it in found if RISKY_CLICKS.search(it["name"].lower())), found[0])
 
 
 def ui_focused():
@@ -2797,6 +2812,27 @@ def foreground():
     if not hwnd:
         return None, "", ""
     return hwnd, os.path.basename(window_exe(hwnd)).lower(), window_title(hwnd)
+
+
+_EXES = {}  # (hwnd, process id): its exe, for front_glance
+
+
+def front_glance():
+    """(hwnd, exe, title) of the window in front, as foreground() has it, for the screen watch's look four times a
+    second: which program it is (window_exe, a read of its process, about a millisecond) is asked only for a window
+    or a process it hasn't seen, the title (a few microseconds) every time."""
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None, "", ""
+    key = (hwnd, _pid(hwnd))
+    exe = _EXES.get(key)
+    if exe is None:
+        exe = os.path.basename(window_exe(hwnd)).lower()
+        if len(_EXES) > 256:
+            _EXES.clear()
+        if exe != "applicationframehost.exe":  # a Store app's frame, its app not in it yet: asked again next time
+            _EXES[key] = exe
+    return hwnd, exe, window_title(hwnd)
 
 
 def site_of(url):
@@ -2930,10 +2966,11 @@ def _snapshot_items(snap, most, browser=False, lists=SNAP_LISTS):
     return items, web, total, focused, cut
 
 
-def ui_snapshot(hwnd=None, most=60, settle=True):
+def ui_snapshot(hwnd=None, most=60, settle=True, raw=False):
     """The foreground or named window's controls from one bounded agent-desktop snapshot. settle: a browser page
     with almost nothing on it yet is read again half a second later, for a task, as it may still be loading; the
-    screen watch's look every few seconds takes it as it is, and reads it again on its next look."""
+    screen watch's look every few seconds takes it as it is, and reads it again on its next look. raw: the snapshot
+    itself comes too, as "raw", for ui_at_in."""
     hwnd = hwnd or user32.GetForegroundWindow()
     if not hwnd or _clock() < _slow.get(hwnd, 0.0) or _class_name(hwnd) in UNLISTED_CLASSES:
         return None
@@ -2957,7 +2994,7 @@ def ui_snapshot(hwnd=None, most=60, settle=True):
     return {"hwnd": hwnd, "title": window_title(hwnd), "exe": exe,
             "site": site_of(box["value"]) if box is not None and browser else None,
             "focus": next((item["id"] for item in items if item["focus"]), None), "total": total,
-            "focused": focused, "cut": cut, "items": items}
+            "focused": focused, "cut": cut, "items": items, **({"raw": snap} if raw else {})}
 
 
 def _same_scope(old, candidate):

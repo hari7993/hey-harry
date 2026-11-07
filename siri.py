@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, humanize, installer, kokoro, longmem, messaging, opencode, outcomes, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win
 import toolbox
 import screen_watch
+import timeline  # each window you were in, kept a week on this PC for "what did I do?" (7 November 2026)
 import phrasebook  # more ways to say her scripted lines, so she doesn't sound the same every time
 import identity  # her name: Harry, or the one you gave her
 # Newer skills (28 October 2026): where to click drawn on the screen, files by what's in them, a
@@ -1307,16 +1308,21 @@ def screen_glance(messages):
 
 def start_screen_watch(free):
     """Her eyes on the screen, on a thread of their own (screen_watch): free says when she's between turns, as a
-    glance never takes the model from a turn and is said only once she's free (ANNOUNCE)."""
+    glance never takes the model from a turn and is said only once she's free (ANNOUNCE). Never a screenshot: what's
+    on the screen is read through agent-desktop (7 November 2026, the owner's choice), and each window you were in
+    is kept for a week on this PC (timeline)."""
     watcher = screen_watch.Watcher(
-        read=win.foreground,
-        snapshot=lambda hwnd: win.ui_snapshot(hwnd, most=screen_watch.MOST_CONTROLS, settle=False),  # one read
-        idle=win.idle_seconds, shot=vision.capture, judge=screen_glance,
+        read=win.front_glance,  # four times a second: the program asked of Windows only for a new window
+        snapshot=lambda hwnd: win.ui_snapshot(hwnd, most=screen_watch.MOST_CONTROLS, settle=False, raw=True),
+        idle=win.idle_seconds, judge=screen_glance,
         announce=ANNOUNCE.put, free=free, mode=screen_mode, in_call=lambda: bool(win.call_apps()),
         who=lambda: " ".join(str(settings.get("name") or "").split()) or "the user",
-        cursor=win.cursor_pos, at=win.ui_at)  # what's under the pointer, for "what is this?"
+        cursor=win.cursor_pos, at=win.ui_at_in,  # what's under the pointer or clicked, from the last read
+        buttons=win.mouse_down, mine=agent.SCREEN.locked, keep=timeline.add)
     SCREEN[:] = [watcher]
     threading.Thread(target=watcher.run, name="screen-watch", daemon=True).start()
+    import atexit
+    atexit.register(lambda: watcher._left(time.time()))  # the window you're in as she closes is kept too
     return watcher
 
 
@@ -3901,12 +3907,15 @@ def _quick(words, gate=False):
     if screen:
         print("  screen watch")
         return screen
-    # "what is this", "explain this": a look at the screen, the pointer ringed on it (agent.capture), not the model's
-    # guess from the window's names. 27 October, live: asked "what is this" with the pointer on one bar, she described
-    # the whole Claude window from its names, never having looked
+    # "what is this", "explain this": straight to the model, with what's under the pointer and on the window as the
+    # screen watch has just read them (_think brings them up to date), and its answer said as it's written. 27
+    # October, live: asked "what is this" with the pointer on one bar, she described the whole Claude window from its
+    # names, so it was a screen step, the pointer ringed on a screenshot; since 7 November (the owner: "it responds
+    # immediately", "don't take screenshots") the control under the pointer is named from agent-desktop's read, and no
+    # other shortcut below gets these words
     if gate != "cold" and settings.get("vision") and screen_watch.POINTED.fullmatch(t):
-        print("  pointing at the screen")
-        return make_plan([{"do": "screen", "task": words}])
+        print("  pointing at the screen: the model, with what's read there")
+        return None
     # The newer skills (extras.py): where to click, drawn on the screen; the calendar; Spotify; named helpers;
     # files by what's in them; a reply in the email in front; meeting notes. Before messages and files below, whose
     # words ("reply saying ...", "find notes about ...") would take theirs
@@ -6887,6 +6896,8 @@ def think(text, gate, notify=None, sure=1.0):
 
 
 def _think(text, gate, notify=None, sure=1.0):
+    if SCREEN and settings.get("vision") and screen_watch.about_screen(plain(text)):
+        SCREEN[0].fresh()  # what you did in the window since its last read is read before she answers about it
     known = skills_block(text)
     recent = history.recent(3, 1800)  # the last half hour, for follow-ups like "close it"
     _, _, more = gated_blocks(text, recent)  # after skills_block, which works out what the words mean first
@@ -6910,6 +6921,8 @@ def _think(text, gate, notify=None, sure=1.0):
                              + cues.prompt_block(text)  # and her camera's, for words of seeing you
                              + handmouse.prompt_block(text)  # and your hand as the mouse, for words of it
                              + focus.prompt_block(text)  # and the focus timer's, for words of focusing
+                             # and what you did on the PC, for words asking about it ("what was I doing?")
+                             + timeline.prompt_block(text, SCREEN[0].visiting() if SCREEN else None)
                              + ("\n\n" + known if known else "")
                              + memory_block() + long_recall(text) + context() + job_news(gate)
                              + (cold if gate == "cold" else GATE_NOTE if gate else "")
