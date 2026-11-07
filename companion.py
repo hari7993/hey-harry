@@ -39,6 +39,9 @@ AFTER_TURN = 6 * 60  # seconds after you last spoke to her before she checks in:
 FOLLOW_AFTER_TURN = 90  # and before she asks about a plan
 AWAY = 120  # seconds without a key or the mouse after which you're not at the PC to be talked to
 FOLLOW_LATER = 10 * 60  # she asks how a plan went this long after its time: not on top of its reminder
+DONE_EARLY = 15 * 60  # "done" closes a plan whose time is at most this far off: you may do it a little early
+# What says a plan's done ("Yeah, it's done.", "I called him"): only near a plan's time, see Friend.done
+DONE = re.compile(r"\b(?:done|did it|did that|finished|sorted|already did|i called|called (?:him|her|them))\b", re.I)
 FOLLOW_WITHIN = 12 * 3600  # a plan's asked about while it's no more than this overdue; older ones close unasked
 MOOD_FOR = 2 * 86400  # how long a mood stays in what she knows of you
 SOON = 3 * 86400  # plans and events this near now are what her prompt carries
@@ -239,11 +242,29 @@ class Friend:
         return gone
 
     def heard(self, words, reply="", gate=False):
-        """After a turn of yours: words that may be about your life are noted in the background (notice)."""
+        """After a turn of yours: words that may be about your life are noted in the background (notice), and a "done"
+        near a plan's time closes it (done)."""
         self.last_turn = self.clock()
+        if words and DONE.search(str(words)):
+            self.done()
         if words and SIGNAL.search(str(words)) and self.noting.acquire(blocking=False):
             threading.Thread(target=self._notice, args=(str(words), str(reply or "")), name="friend-notes",
                              daemon=True).start()
+
+    def done(self, now=None):
+        """The plan whose time is now or just gone closed, as you've said it's done: 7 November, live, "Yeah, it's
+        done." to its reminder, and she'd have asked "Did you get to call Sam?" ten minutes later. The plan, or None."""
+        now = self.clock() if now is None else now
+        with self.lock:
+            near = [n for n in self.notes if n["kind"] == "plan" and n.get("status") == "open" and n.get("when")
+                    and now - FOLLOW_WITHIN < n["when"] <= now + DONE_EARLY]
+            if not near:
+                return None
+            plan = max(near, key=lambda n: n["when"])
+            plan["status"] = "done"
+            self._save()
+        print(f"  done: {plan['text']}")
+        return plan
 
     def _notice(self, words, reply):
         try:

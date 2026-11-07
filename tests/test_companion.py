@@ -177,6 +177,23 @@ class TalkingFirst(Now):
         with quiet():
             self.assertEqual(friend.tick(), "Hey, did you get to call Bunty?")
 
+    def test_done_near_its_time_and_she_doesnt_ask(self):
+        """7 November, live: "Yeah, it's done." to the reminder to call Sam, and she'd have asked about it after."""
+        self.mode = "quiet"
+        friend = self.friend()
+        friend.add("plan", "call Sam", when=NOW + 600)
+        friend.add("plan", "book the flight", when=NOW + 5 * 3600)
+        self.later(11 * 60)
+        with quiet():
+            friend.heard("Yeah, it's done.")
+        self.assertEqual([n["status"] for n in friend.notes], ["done", "open"])  # not the one hours away
+        self.later(30 * 60)
+        self.assertEqual(friend.tick(), "")
+        self.assertEqual(self.said, [])
+        with quiet():
+            friend.heard("done")  # nothing near now: nothing closed
+        self.assertEqual(friend.notes[1]["status"], "open")
+
     def test_a_plan_long_past_closes_without_a_word(self):
         friend = self.friend()
         friend.add("plan", "call Bunty", when=NOW - companion.FOLLOW_WITHIN - 60)
