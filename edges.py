@@ -269,7 +269,7 @@ def glass():
             name = "dark" if win.dark_mode() else "light"
         except Exception:
             name = "dark"
-    th = island.GLASS["light" if name == "light" else "paper" if name == "paper" else "dark"]
+    th = island.GLASS[name if name in island.GLASS else "dark"]  # NotchPixel's surfaces too (island.SURFACES)
     # solid (30 October 2026): see-through, the words of the windows behind showed in the panel round its bars, the
     # owner's screenshot
     return dict(th, fill=1.0)

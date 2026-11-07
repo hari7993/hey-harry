@@ -999,11 +999,127 @@ SHORTCUT_GLYPHS = {"cut": scissors_glyph, "paste": paste_glyph, "undo": undo_gly
                    "save": saved_glyph, "screenshot": shot_glyph}
 
 
+# NotchPixel's tabs and controls (7 November 2026, the owner's ask): night light, the power mode, the clipboard, the
+# launcher, the widgets, the mic and its mute, and the PC's own chip for its stats
+def night_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Night light: a crescent moon with a small star beside it."""
+    r = s * 0.3
+    ox, oy, bx, by = cx - s * 0.06, cy + s * 0.06, cx + s * 0.1, cy - s * 0.08
+    sx, sy, q = cx + s * 0.28, cy - s * 0.26, s * 0.13
+    # a four-pointed star as two thin diamonds across each other: polygon only does convex shapes
+    tall = [(sx, sy - q), (sx + q * 0.28, sy), (sx, sy + q), (sx - q * 0.28, sy)]
+    wide = [(sx - q, sy), (sx, sy - q * 0.28), (sx + q, sy), (sx, sy + q * 0.28)]
+    cv.shape(lambda xs, ys: np.minimum(np.maximum(circle(xs, ys, ox, oy, r), -circle(xs, ys, bx, by, r * 0.82)),
+                                       np.minimum(polygon(xs, ys, tall), polygon(xs, ys, wide))),
+             (cx - s * 0.5, cy - s * 0.5, cx + s * 0.5, cy + s * 0.45), colour, a)
+
+
+def power_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """The power mode: a lightning bolt, two triangles that cross in its middle (polygon does only convex ones)."""
+    top = [(cx + s * 0.1, cy - s * 0.46), (cx + s * 0.1, cy + s * 0.08), (cx - s * 0.26, cy + s * 0.08)]
+    low = [(cx - s * 0.1, cy - s * 0.08), (cx + s * 0.26, cy - s * 0.08), (cx - s * 0.1, cy + s * 0.46)]
+    cv.shape(lambda xs, ys: np.minimum(polygon(xs, ys, top), polygon(xs, ys, low)) - s * 0.02,
+             (cx - s * 0.35, cy - s * 0.5, cx + s * 0.35, cy + s * 0.5), colour, a)
+
+
+def clipboard_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """The clipboard: a board, its clip at the top, and two lines of writing."""
+    hw, hh, w = s * 0.3, s * 0.38, max(1.0, s * 0.09)
+    cy2 = cy + s * 0.04
+
+    def sd(xs, ys):
+        board = np.abs(rbox(xs, ys, cx, cy2, hw, hh, s * 0.07)) - w / 2
+        clip = rbox(xs, ys, cx, cy2 - hh, hw * 0.45, s * 0.07, s * 0.04)
+        lines = _segments(xs, ys, (((cx - hw * 0.5, cy2 - s * 0.02), (cx + hw * 0.5, cy2 - s * 0.02)),
+                                   ((cx - hw * 0.5, cy2 + s * 0.16), (cx + hw * 0.2, cy2 + s * 0.16))), w)
+        return np.minimum(np.minimum(board, clip), lines)
+    cv.shape(sd, (cx - s * 0.42, cy - s * 0.5, cx + s * 0.42, cy + s * 0.5), colour, a)
+
+
+def launcher_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """The launcher: six dots in two rows, as NotchPixel's grip."""
+    q = s * 0.075
+    dots = [(cx + dx * s * 0.24, cy + dy * s * 0.14) for dx in (-1, 0, 1) for dy in (-1, 1)]
+
+    def sd(xs, ys):
+        d = None
+        for x, y in dots:
+            part = circle(xs, ys, x, y, q)
+            d = part if d is None else np.minimum(d, part)
+        return d
+    cv.shape(sd, (cx - s * 0.4, cy - s * 0.3, cx + s * 0.4, cy + s * 0.3), colour, a)
+
+
+def widgets_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Widgets: four tiles, a phone's home screen."""
+    q, g, w = s * 0.15, s * 0.04, max(1.0, s * 0.09)
+
+    def sd(xs, ys):
+        d = None
+        for dx in (-1, 1):
+            for dy in (-1, 1):
+                part = np.abs(rbox(xs, ys, cx + dx * (q + g), cy + dy * (q + g), q, q, s * 0.05)) - w / 2
+                d = part if d is None else np.minimum(d, part)
+        return d
+    cv.shape(sd, (cx - s * 0.45, cy - s * 0.45, cx + s * 0.45, cy + s * 0.45), colour, a)
+
+
+def mic_glyph(cv, cx, cy, s, colour, a=1.0, t=None, muted=False):
+    """A microphone on its stand, and a line through it while it's muted."""
+    w = max(1.0, s * 0.09)
+
+    def sd(xs, ys):
+        head = rbox(xs, ys, cx, cy - s * 0.12, s * 0.13, s * 0.22, s * 0.13)
+        cup = np.maximum(np.abs(circle(xs, ys, cx, cy - s * 0.06, s * 0.27)) - w / 2, cy - s * 0.04 - ys)
+        stand = _segments(xs, ys, (((cx, cy + s * 0.21), (cx, cy + s * 0.38)),
+                                   ((cx - s * 0.14, cy + s * 0.38), (cx + s * 0.14, cy + s * 0.38))), w)
+        d = np.minimum(np.minimum(head, cup), stand)
+        if muted:
+            d = np.minimum(np.maximum(d, -segment(xs, ys, cx - s * 0.36, cy - s * 0.4, cx + s * 0.36, cy + s * 0.36,
+                                                  w * 3)),
+                           segment(xs, ys, cx - s * 0.36, cy - s * 0.4, cx + s * 0.36, cy + s * 0.36, w))
+        return d
+    cv.shape(sd, (cx - s * 0.45, cy - s * 0.5, cx + s * 0.45, cy + s * 0.5), colour, a)
+
+
+def chip_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """The PC's chip, for its stats: a square with pins on each side."""
+    q, w = s * 0.22, max(1.0, s * 0.09)
+    pins = []
+    for i in (-1, 0, 1):
+        o = i * s * 0.12
+        pins += [((cx + o, cy - q), (cx + o, cy - q - s * 0.12)), ((cx + o, cy + q), (cx + o, cy + q + s * 0.12)),
+                 ((cx - q, cy + o), (cx - q - s * 0.12, cy + o)), ((cx + q, cy + o), (cx + q + s * 0.12, cy + o))]
+    cv.shape(lambda xs, ys: np.minimum(np.abs(rbox(xs, ys, cx, cy, q, q, s * 0.05)) - w / 2,
+                                       _segments(xs, ys, pins, w)),
+             (cx - s * 0.45, cy - s * 0.45, cx + s * 0.45, cy + s * 0.45), colour, a)
+
+
+def phone_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A phone, for PC Deck and To phone: its outline, rounded, and its speaker's slot at the top."""
+    hw, hh, w = s * 0.22, s * 0.4, max(1.0, s * 0.09)
+    cv.shape(lambda xs, ys: np.minimum(np.abs(rbox(xs, ys, cx, cy, hw, hh, s * 0.09)) - w / 2,
+                                       rbox(xs, ys, cx, cy - hh + s * 0.11, s * 0.06, w / 2, w / 2)),
+             (cx - s * 0.35, cy - s * 0.5, cx + s * 0.35, cy + s * 0.5), colour, a)
+
+
+def globe_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """A globe, for the web drawer: a ring, its middle line and the curve of its meridian."""
+    r, w = s * 0.36, max(1.0, s * 0.08)
+    cv.shape(lambda xs, ys: np.minimum(np.minimum(np.abs(circle(xs, ys, cx, cy, r)) - w / 2,
+                                                  np.maximum(np.abs(ys - cy) - w / 2, np.abs(xs - cx) - r)),
+                                       np.abs(np.hypot((xs - cx) / 0.45, ys - cy) - r) * 0.45 - w / 2),
+             (cx - s * 0.5, cy - s * 0.5, cx + s * 0.5, cy + s * 0.5), colour, a)
+
+
 DEVICE_GLYPHS = {"headphones": headphones_glyph, "headset": headphones_glyph, "buds": buds_glyph,
                  "speaker": speaker_box_glyph, "drive": drive_glyph, "jack": jack_glyph}
 GLYPHS.update({"wifi": wifi_glyph, "bluetooth": bluetooth_glyph, "dnd": dnd_glyph, "calendar": calendar_glyph,
                "timer": timer_glyph, "tray": tray_glyph, "controls": controls_glyph, "bell": bell_glyph,
-               "awake": cup_glyph, "link": link_glyph,
+               "awake": cup_glyph, "link": link_glyph, "night": night_glyph, "power": power_glyph,
+               "clipboard": clipboard_glyph, "launcher": launcher_glyph, "widgets": widgets_glyph, "mic": mic_glyph,
+               "mic_off": lambda cv, cx, cy, s, colour, a=1.0, t=None: mic_glyph(cv, cx, cy, s, colour, a, muted=True),
+               "chip": chip_glyph, "phone": phone_glyph, "globe": globe_glyph,
                "weather": lambda cv, cx, cy, s, colour, a=1.0, t=None: cloud_glyph(cv, cx, cy, s, colour, a,
                                                                                    "partly cloudy"),
                **DEVICE_GLYPHS})

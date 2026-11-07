@@ -299,8 +299,7 @@ def _endpoint():
     ep = getattr(speakers, "EndpointVolume", None)
     if ep is None:  # older pycaw hands back the raw device
         from comtypes import CLSCTX_ALL
-        ep = ctypes.cast(speakers.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None),
-                         ctypes.POINTER(IAudioEndpointVolume))
+        ep = speakers.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None).QueryInterface(IAudioEndpointVolume)
     return ep
 
 
@@ -441,7 +440,10 @@ def _mic_endpoint():
     mic = AudioUtilities.GetMicrophone()
     if mic is None:
         raise RuntimeError("There's no microphone")
-    return ctypes.cast(mic.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None), ctypes.POINTER(IAudioEndpointVolume))
+    # QueryInterface, not ctypes.cast: a cast is a second pointer COM was never told of, and both release it when
+    # they go, so Windows frees it twice (7 November 2026: she crashed starting up, 0xC0000005 in comtypes' Release,
+    # once the island's Calls asked whether the mic is muted every 2 seconds)
+    return mic.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None).QueryInterface(IAudioEndpointVolume)
 
 
 def mic_muted():
@@ -784,6 +786,146 @@ def set_night_light(on):
     except ValueError as exc:
         raise RuntimeError("I can't switch Night light directly on this version of Windows") from exc
     return True
+
+
+# --------------------------------------------------------------------------- the graphics' load (game strip)
+class _PdhValue(ctypes.Structure):
+    _fields_ = [("CStatus", DWORD), ("doubleValue", ctypes.c_double)]
+
+
+class _PdhItem(ctypes.Structure):
+    _fields_ = [("szName", ctypes.c_wchar_p), ("FmtValue", _PdhValue)]
+
+
+_GPU = {"query": None, "counter": None}
+GPU_COUNTER = "\\GPU Engine(*engtype_3D)\\Utilization Percentage"  # as Task Manager's GPU column counts it
+
+
+def gpu_load():
+    """How busy the graphics are drawing, 0 to 100: their 3D engines' load summed over the apps using them, as Task
+    Manager counts it (Windows' performance counters, pdh). None the first time, which only starts the counting, and
+    where Windows doesn't count it. For the island's game strip (7 November 2026, after NotchPixel's)."""
+    if _GPU["query"] is False:
+        return None
+    pdh = ctypes.WinDLL("pdh")
+    pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)]
+    pdh.PdhAddEnglishCounterW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.c_size_t,
+                                          ctypes.POINTER(ctypes.c_void_p)]
+    pdh.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
+    pdh.PdhGetFormattedCounterArrayW.argtypes = [ctypes.c_void_p, DWORD, ctypes.POINTER(DWORD),
+                                                 ctypes.POINTER(DWORD), ctypes.c_void_p]
+    for fn in (pdh.PdhOpenQueryW, pdh.PdhAddEnglishCounterW, pdh.PdhCollectQueryData,
+               pdh.PdhGetFormattedCounterArrayW):
+        fn.restype = DWORD
+    if _GPU["query"] is None:
+        query, counter = ctypes.c_void_p(), ctypes.c_void_p()
+        if pdh.PdhOpenQueryW(None, 0, ctypes.byref(query)) != 0 or \
+                pdh.PdhAddEnglishCounterW(query, GPU_COUNTER, 0, ctypes.byref(counter)) != 0:
+            _GPU["query"] = False
+            return None
+        pdh.PdhCollectQueryData(query)
+        _GPU.update(query=query, counter=counter)
+        return None
+    if pdh.PdhCollectQueryData(_GPU["query"]) != 0:
+        return None
+    size, count = DWORD(0), DWORD(0)
+    if pdh.PdhGetFormattedCounterArrayW(_GPU["counter"], 0x200, ctypes.byref(size), ctypes.byref(count),
+                                        None) != 0x800007D2 or not size.value:  # PDH_MORE_DATA: how much room
+        return 0 if not size.value else None
+    buf = (ctypes.c_byte * size.value)()
+    if pdh.PdhGetFormattedCounterArrayW(_GPU["counter"], 0x200, ctypes.byref(size), ctypes.byref(count), buf) != 0:
+        return None
+    items = ctypes.cast(buf, ctypes.POINTER(_PdhItem))
+    total = sum(items[i].FmtValue.doubleValue for i in range(count.value) if items[i].FmtValue.CStatus in (0, 1))
+    return max(0, min(100, int(round(total))))
+
+
+# The world clock's cities (island Widgets, 7 November 2026, after NotchPixel's) by Windows' own time zones, which
+# have the summer time rules: Python here has no tz database (no tzdata), and this needs none
+WORLD_ZONES = {"London": "GMT Standard Time", "Paris": "Romance Standard Time", "Berlin": "W. Europe Standard Time",
+               "New York": "Eastern Standard Time", "Chicago": "Central Standard Time",
+               "San Francisco": "Pacific Standard Time", "Dubai": "Arabian Standard Time",
+               "India": "India Standard Time", "Singapore": "Singapore Standard Time",
+               "Tokyo": "Tokyo Standard Time", "Sydney": "AUS Eastern Standard Time"}
+
+
+class _SYSTEMTIME(ctypes.Structure):
+    _fields_ = [(name, wintypes.WORD) for name in ("wYear", "wMonth", "wDayOfWeek", "wDay", "wHour", "wMinute",
+                                                    "wSecond", "wMilliseconds")]
+
+
+class _TIMEZONE(ctypes.Structure):
+    _fields_ = [("Bias", LONG), ("StandardName", wintypes.WCHAR * 32), ("StandardDate", _SYSTEMTIME),
+                ("StandardBias", LONG), ("DaylightName", wintypes.WCHAR * 32), ("DaylightDate", _SYSTEMTIME),
+                ("DaylightBias", LONG)]
+
+
+@lru_cache(maxsize=32)
+def _zone(zone):
+    """A Windows time zone's rules from the registry (its TZI), as SystemTimeToTzSpecificLocalTime takes them."""
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones\\" + zone) as key:
+        tzi = bytes(winreg.QueryValueEx(key, "TZI")[0])
+    info = _TIMEZONE()
+    info.Bias, info.StandardBias, info.DaylightBias = struct.unpack_from("<iii", tzi, 0)
+    info.StandardDate = _SYSTEMTIME.from_buffer_copy(tzi[12:28])
+    info.DaylightDate = _SYSTEMTIME.from_buffer_copy(tzi[28:44])
+    return info
+
+
+def zone_time(zone):
+    """The time now in a Windows time zone ("Eastern Standard Time"): (hour, minute, its date less today's here in
+    days, -1, 0 or 1), or None for a zone Windows doesn't have."""
+    try:
+        info = _zone(zone)
+    except OSError:
+        return None
+    utc, there = _SYSTEMTIME(), _SYSTEMTIME()
+    kernel32.GetSystemTime(ctypes.byref(utc))
+    if not kernel32.SystemTimeToTzSpecificLocalTime(ctypes.byref(info), ctypes.byref(utc), ctypes.byref(there)):
+        return None
+    import datetime
+    days = (datetime.date(there.wYear, there.wMonth, there.wDay) - datetime.date.today()).days
+    return there.wHour, there.wMinute, days
+
+
+# Windows' power mode (Settings > System > Power), the overlay on the power plan, by its id; any other overlay (a
+# laptop's "better battery") reads as balanced. For the island's Controls (7 November 2026, after NotchPixel's)
+POWER_MODES = {"efficiency": "961cc777-2547-4f9d-8174-7d86181b8a7a",
+               "balanced": "00000000-0000-0000-0000-000000000000",
+               "performance": "ded574b5-45a0-4f42-8737-46345c09c238"}
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("raw", ctypes.c_ubyte * 16)]
+
+
+def power_mode():
+    """"efficiency", "balanced" or "performance", as the power mode is now, or None where Windows has none to tell
+    (before Windows 10 1709)."""
+    import uuid
+    g = _GUID()
+    try:
+        if powrprof.PowerGetEffectiveOverlayScheme(ctypes.byref(g)) != 0:
+            return None
+    except AttributeError:
+        return None
+    now = str(uuid.UUID(bytes_le=bytes(g.raw)))
+    return next((name for name, gid in POWER_MODES.items() if gid == now), "balanced")
+
+
+def set_power_mode(name):
+    """The power mode set to name (POWER_MODES), as its list in Settings sets it."""
+    import uuid
+    g = _GUID()
+    ctypes.memmove(g.raw, uuid.UUID(POWER_MODES[name]).bytes_le, 16)
+    try:
+        call = powrprof.PowerSetActiveOverlayScheme
+    except AttributeError:
+        raise RuntimeError("This Windows has no power modes") from None
+    call.argtypes, call.restype = [_GUID], DWORD
+    if call(g) != 0:
+        raise RuntimeError("Windows wouldn't change the power mode")
 
 
 def lock():
@@ -1627,6 +1769,44 @@ def clipboard_formats():
         user32.CloseClipboard()
 
 
+def _clipboard_bytes(fmt):
+    """One format on the clipboard, its bytes as they are, or None if it isn't there or the clipboard's busy."""
+    if not user32.IsClipboardFormatAvailable(fmt) or not user32.OpenClipboard(None):
+        return None
+    try:
+        handle = user32.GetClipboardData(fmt)
+        size = kernel32.GlobalSize(handle) if handle else 0
+        ptr = kernel32.GlobalLock(handle) if size else None
+        if not ptr:
+            return None
+        try:
+            return ctypes.string_at(ptr, size)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    finally:
+        user32.CloseClipboard()
+
+
+def clipboard_files():
+    """The files on the clipboard, as File Explorer's Copy puts them there (CF_HDROP): their paths, or []."""
+    data = _clipboard_bytes(15)
+    if not data or len(data) < 20:
+        return []
+    start, wide = int.from_bytes(data[:4], "little"), int.from_bytes(data[16:20], "little")
+    names = data[start:].decode("utf-16-le" if wide else "mbcs", errors="replace")
+    return [p for p in names.split("\0") if p]
+
+
+def clipboard_picture():
+    """The picture on the clipboard as a bitmap's bytes, header first (CF_DIB), or None if there's none."""
+    return _clipboard_bytes(8)
+
+
+def set_clipboard_picture(dib):
+    """A picture (CF_DIB's bytes, as clipboard_picture gives them) on the clipboard, to paste."""
+    clipboard_restore([(8, bytes(dib))])
+
+
 def set_clipboard_files(paths):
     """Files on the clipboard, as File Explorer's Copy puts them (CF_HDROP), so Ctrl+V pastes them into a chat."""
     files = ("\0".join(str(p) for p in paths) + "\0\0").encode("utf-16-le")
@@ -1725,17 +1905,22 @@ WM_KEYDOWN, WM_SYSKEYDOWN = 0x100, 0x104
 CHORDS = []
 VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN, VK_SNAPSHOT = 0x10, 0x11, 0x12, 0x5B, 0x5C, 0x2C
 CHORD_KEYS = {0x56: "paste", 0x58: "cut", 0x5A: "undo", 0x59: "redo", 0x53: "save"}  # V, X, Z, Y, S with Ctrl
+# Ctrl+Alt+M: the one mute key, for the mic in every app (island_plugins.Calls, 7 November 2026, as NotchPixel's)
+VK_M = 0x4D
 _sig(user32.GetAsyncKeyState, [ctypes.c_int], ctypes.c_short)
 
 
 def chord(vk, held=None):
     """The shortcut a key going down makes with the keys held with it: "paste", "cut", "undo", "redo", "save" with
-    Ctrl, "screenshot" for Print Screen or Win+Shift+S; None for anything else, Ctrl+Alt (AltGr, on some keyboards)
-    too. Ctrl+C isn't one: the clipboard changing says that. held(vk) is True while that key's down."""
+    Ctrl, "screenshot" for Print Screen or Win+Shift+S, "mute" for Ctrl+Alt+M; None for anything else, Ctrl+Alt
+    (AltGr, on some keyboards) too. Ctrl+C isn't one: the clipboard changing says that. held(vk) is True while that
+    key's down."""
     held = held or (lambda key: bool(user32.GetAsyncKeyState(key) & 0x8000))
     windows = held(VK_LWIN) or held(VK_RWIN)
     if vk == VK_SNAPSHOT or (vk == 0x53 and windows and held(VK_SHIFT)):
         return "screenshot"
+    if vk == VK_M and held(VK_CONTROL) and held(VK_MENU) and not windows:  # before AltGr is left out
+        return "mute"
     if vk not in CHORD_KEYS or windows or not held(VK_CONTROL) or held(VK_MENU):
         return None
     if vk == 0x5A and held(VK_SHIFT):  # Ctrl+Shift+Z: redo, as most apps have it
@@ -1752,7 +1937,7 @@ def start_ptt_listener(on_press, on_release):
     def event_filter(msg, data):
         if data.vkCode != VK_RMENU or data.flags & LLKHF_INJECTED:
             if CHORDS and not data.flags & LLKHF_INJECTED and msg in (WM_KEYDOWN, WM_SYSKEYDOWN) and \
-                    (data.vkCode in CHORD_KEYS or data.vkCode == VK_SNAPSHOT):
+                    (data.vkCode in CHORD_KEYS or data.vkCode in (VK_SNAPSHOT, VK_M)):
                 name = chord(data.vkCode)
                 for told in list(CHORDS) if name else ():
                     try:

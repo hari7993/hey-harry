@@ -86,7 +86,8 @@ DEFAULTS = {
     # eyes (Nixi's, her own: the owner wants them, 28 October 2026), orb (a ring of dashes, there to pick) or
     # wave (the Siri wave, the pill's alone)
     "island_face": "eyes",
-    "island_theme": "paper",  # paper (white, her window's look, 29 October 2026), system, light, dark or amoled
+    "island_theme": "paper",  # paper (white, her window's look, 29 October 2026), system, light, dark or amoled;
+    # or NotchPixel's black, graphite, rose, lavender, peach or sakura (island.SURFACES, 7 November 2026)
     "island_border": False,  # a thin line round it
     "island_align": "center",  # left, center or right of the screen's top
     # hanging from the top of the screen like a notch, in the same glass, no gap above it (28 October 2026, the owner's
@@ -108,6 +109,14 @@ DEFAULTS = {
     "island_status": "",
     "island_shelf_keep": False,
     "island_shelf": [],
+    "island_clip_pins": [],  # words pinned in the island's Clipboard (7 November 2026), kept on this PC only
+    "island_world_clocks": ["London", "New York", "Dubai"],  # the Widgets' world clock (winplatform.WORLD_ZONES)
+    "island_sites": ["https://www.youtube.com", "https://web.whatsapp.com"],  # the Web tab's pinned sites (drawer.py)
+    # NotchPixel's Appearance (island.BAR_STYLES, VISUALIZERS): the music card's line, what's beside her eyes while
+    # music plays, and the cover's colours behind the card
+    "island_bar": "wave",
+    "island_visualizer": "pixels",
+    "island_album_bg": True,
     # her focus timer, a Pomodoro (focus.py, 30 October 2026): minutes of a round's focus, and of its break
     "focus_minutes": 25,
     "break_minutes": 5,
@@ -131,6 +140,7 @@ DEFAULTS = {
     # taskbar while it's on; and its pins, None till they're first read from the taskbar's
     "dock": False,
     "dock_mode": "smart",
+    "dock_style": "taskbar",  # NotchPixel's taskbar (dock.Taskbar, 7 November 2026), or "dock", the one that grows
     "dock_replace_taskbar": False,
     "dock_pins": None,
     "island_plugins": {},  # plugin ID: on or off (island_plugins.PLUGINS), missing ones as the plugin says

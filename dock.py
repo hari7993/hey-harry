@@ -17,6 +17,8 @@ import ctypes
 import math
 import os
 import queue
+import re
+import socket
 import subprocess
 import sys
 import threading
@@ -631,6 +633,10 @@ class Dock:
         self.rest = rest
         self.glass = (self.row_x, bottom - glass_h, self.row_x + rest, bottom)
         self.screen = screen
+        self._canvas(w, h)
+
+    def _canvas(self, w, h):
+        """Its picture w by h px, made again only when that changes."""
         if (w, h) != self.size:
             if self.bitmap is not None:
                 bubble._select(self.dc, self.old)
@@ -692,6 +698,8 @@ class Dock:
         self.last = now
         self.redraw = False
         self._take(now)
+        if self._ticking(now):
+            self.redraw = True
         if now - self.full_at > 2.0:
             self.full_at = now
             state = ctypes.c_int()
@@ -707,7 +715,7 @@ class Dock:
         gx0, gy0, gx1, gy1 = self.glass
         sx0, sx1 = self.span or (gx0, gx1)  # as wide as it's grown
         on_row = self.lift.x > 0.5 and sx0 - 6 * self.s <= px <= sx1 + 6 * self.s and \
-            gy0 - (self.hover.x * (MAG - 1) * ICON + LIFT) * self.s <= py <= self.screen[3]
+            gy0 - self._reach() <= py <= self.screen[3]
         at_edge = py >= self.screen[3] - 2 and gx0 <= px <= gx1
         self.edge_at = (self.edge_at or now) if at_edge else None
         if on_row or self.dragging is not None or (self.edge_at and now - self.edge_at >= SHOW_AFTER):
@@ -737,6 +745,14 @@ class Dock:
         near = py >= self.screen[3] - (ICON * MAG + 60) * self.s
         self.job = self.root.after(int(1000 * (LIVE if moving or on_row else POLL if near else POLL_FAR)),
                                    self._poll)
+
+    def _reach(self):
+        """How far over its glass the pointer is still on it, px: as far as the icons have grown and risen."""
+        return (self.hover.x * (MAG - 1) * ICON + LIFT) * self.s
+
+    def _ticking(self, now):
+        """True if something on it changed by itself and it's to be drawn again: nothing on the dock does."""
+        return False
 
     def _overlapped(self, front):
         """True if the window in front is over where the dock sits (not minimised, not the desktop)."""
@@ -1005,3 +1021,370 @@ class Dock:
         _user32.keybd_event(0x53, 0, 0, 0)  # S
         _user32.keybd_event(0x53, 0, 2, 0)
         _user32.keybd_event(0x5B, 0, 2, 0)
+
+
+# --------------------------------------------------------------------------- the taskbar (7 November 2026)
+# The owner's ask after NotchPixel's (notchpixel.com, "A taskbar, if you want one"): a notch along the bottom of the
+# screen in place of Windows' taskbar, in her island's colours, hanging from the bottom edge as her island hangs from
+# the top one. Start, search and your apps, which don't grow; a soft square under the one pointed at and its name on a
+# pill over it; and at its right the network and the volume (Windows' quick settings), the time and the date, and the
+# bell (Windows' notifications and its calendar). dock_style picks it or the dock that grows.
+STYLES = ("taskbar", "dock")
+BAR_H, BAR_ICON, BAR_SLOT, BAR_GAP = 46, 24, 40, 13  # logical px: its height, an icon, one to the next, a divider
+BAR_PAD, BAR_R, BAR_FLARE, BAR_M = 6, 12, 10, 14  # logical px: round its ends, its corners, its shoulders, its shadow
+TRAY = ("quick", "clock", "bell")  # what's at its right, after a divider (bar_cells)
+TRAY_W = {"sep": BAR_GAP, "quick": 62, "bell": 38}  # their widths; the clock's is its words' and 20 more
+_kernel32 = ctypes.WinDLL("kernel32")
+_kernel32.GetTimeFormatEx.argtypes = [wt.LPCWSTR, wt.DWORD, ctypes.c_void_p, wt.LPCWSTR, wt.LPWSTR, ctypes.c_int]
+_kernel32.GetDateFormatEx.argtypes = [wt.LPCWSTR, wt.DWORD, ctypes.c_void_p, wt.LPCWSTR, wt.LPWSTR, ctypes.c_int,
+                                      wt.LPCWSTR]
+
+
+def make(root):
+    """Her dock as Settings has it (dock_style): the taskbar, NotchPixel's, or the dock that grows, a Mac's."""
+    return Dock(root) if settings.get("dock_style") == "dock" else Taskbar(root)
+
+
+def bar_cells(kinds, clock_w, s):
+    """The taskbar's cells left to right, ([(what, x0, x1)], its width), in px from its left end: what is the slot's
+    index for each of kinds ("icon" or "gap", as slots gives them), then "sep", a divider, and the tray's (TRAY).
+    clock_w: the time and the date's width."""
+    cells, x = [], BAR_PAD * s
+    for i, kind in enumerate(kinds):
+        w = (BAR_SLOT if kind == "icon" else BAR_GAP) * s
+        cells.append((i, x, x + w))
+        x += w
+    for what in ("sep",) + TRAY:
+        w = (clock_w + 20 * s) if what == "clock" else TRAY_W[what] * s
+        cells.append((what, x, x + w))
+        x += w
+    return cells, x + BAR_PAD * s
+
+
+def bar_shape(xs, ys, x0, x1, top, bottom, r, f, flush):
+    """The taskbar's outline as signed distances: its top corners round (r); flush with the bottom of the screen,
+    square where it meets it, each side curving out into it over f px, her island's notch upside down
+    (island._drop), and nothing below bottom; else round all round."""
+    cx, hw = (x0 + x1) / 2, (x1 - x0) / 2
+    if not flush:
+        return face.rbox(xs, ys, cx, (top + bottom) / 2, hw, (bottom - top) / 2, r)
+    body = face.rbox(xs, ys, cx, (top + bottom + r) / 2, hw, (bottom - top + r) / 2, r)  # its bottom corners below
+    for corner in ((x0 - f, x1 + f) if f > 0 else ()):
+        side = np.maximum(face.rbox(xs, ys, x0 if corner < x0 else x1, bottom - f / 2, f, f / 2, 0.0),
+                          -face.circle(xs, ys, corner, bottom - f, f))
+        body = np.minimum(body, side)
+    return np.maximum(body, ys - bottom)
+
+
+def clock_words():
+    """The time, the date, and the date in full, as Windows writes them in your own formats: ("12:58",
+    "07-11-2026", "Saturday, 7 November 2026")."""
+    out = []
+    for call, flags in ((_kernel32.GetTimeFormatEx, 0x2), (_kernel32.GetDateFormatEx, 0x1),
+                        (_kernel32.GetDateFormatEx, 0x2)):  # TIME_NOSECONDS, DATE_SHORTDATE, DATE_LONGDATE
+        buf = ctypes.create_unicode_buffer(80)
+        args = (None, flags, None, None, buf, 80) + ((None,) if call is _kernel32.GetDateFormatEx else ())
+        out.append(buf.value if call(*args) else "")
+    if not all(out):
+        out = [time.strftime("%H:%M"), time.strftime("%d-%m-%Y"), time.strftime("%A, %d %B %Y")]
+    return tuple(out)
+
+
+def tray_state():
+    """What the taskbar's tray shows: {"net": "wifi", "wired" or None, "volume": 0 to 100 or None, "muted"}. Read
+    off Tk's thread (the volume's a COM call), and never online: only the adapters that are up and have an address."""
+    out = {"net": None, "volume": None, "muted": False}
+    try:
+        import psutil
+        stats, addrs = psutil.net_if_stats(), psutil.net_if_addrs()
+        for name, st in stats.items():
+            if not st.isup or re.search(r"loopback|vethernet|virtual|vmware|vbox|bluetooth", name, re.I):
+                continue
+            if not any(a.family == socket.AF_INET and not a.address.startswith(("127.", "169.254."))
+                       for a in addrs.get(name, ())):
+                continue
+            if re.search(r"wi-?fi|wlan|wireless", name, re.I):
+                out["net"] = "wifi"
+                break
+            out["net"] = "wired"
+    except Exception:
+        pass
+    try:
+        out["volume"] = win.volume()
+        out["muted"] = bool(win._endpoint().GetMute())
+    except Exception:
+        pass
+    return out
+
+
+def tray_keys(what, build=None):
+    """The keys that open what a tray part is for: Windows+A, quick settings, for the network and the volume;
+    Windows+N, the notifications and the calendar, for the time and the bell (Windows 10 has them in Windows+A)."""
+    build = sys.getwindowsversion().build if build is None else build
+    return (0x5B, 0x41) if what == "quick" or build < 22000 else (0x5B, 0x4E)
+
+
+def _wired_glyph(cv, cx, cy, s, colour, a=1.0):
+    """A network cable's plug, s px: a box with its three pins and a lead down."""
+    w, h = s * 0.62, s * 0.46
+    lw = max(1.0, s * 0.09)
+    cv.shape(lambda X, Y: np.abs(face.rbox(X, Y, cx, cy - s * 0.08, w / 2, h / 2, s * 0.08)) - lw / 2,
+             (cx - w, cy - s * 0.5, cx + w, cy + s * 0.3), colour, a)
+    for dx in (-0.16, 0.0, 0.16):
+        px = cx + dx * s
+        cv.shape(lambda X, Y, px=px: face.rbox(X, Y, px, cy - s * 0.08, lw / 2, h * 0.22, lw / 2),
+                 (px - lw, cy - s * 0.3, px + lw, cy + s * 0.1), colour, a)
+    cv.shape(lambda X, Y: face.rbox(X, Y, cx, cy + s * 0.3, lw / 2, s * 0.15, lw / 2),
+             (cx - lw, cy + s * 0.1, cx + lw, cy + s * 0.5), colour, a)
+
+
+class Taskbar(Dock):
+    """The taskbar along the bottom of the screen, as NotchPixel's: a Dock, with its windows, pins, clicks, hiding
+    and Windows' own taskbar put away, drawn as a bar whose icons don't grow, with the tray at its right."""
+
+    def __init__(self, root):
+        self.flush = False
+        self.tray, self.tray_q, self.tray_at, self.tray_reading = {"net": None, "volume": None, "muted": False}, \
+            queue.Queue(), 0.0, False
+        self.minute, self.clock = None, clock_words()
+        self.cells, self.bar_w, self.clock_w = [], 0.0, 0.0
+        self.bar_pic = None  # (what it was drawn for, its colours, its cover): the glass, kept
+        super().__init__(root)
+
+    def _place(self):
+        """Its size and where it sits: flush with the bottom of the screen in the taskbar's strip while it hides
+        Windows' taskbar, as tall as the strip has room for, else just over the bottom of the work area."""
+        screen, work = self._screen()
+        strip = screen[3] - work[3]
+        k = self.k
+        self.flush = self.replacing and strip > 0
+        self.s = s = min(k, max(0.6 * k, strip / BAR_H)) if self.flush else k
+        self.clock_w = max(self._text(round(12 * s), 600).render(self.clock[0]).shape[1],
+                           self._text(round(11 * s), 500).render(self.clock[1]).shape[1])
+        self.cells, self.bar_w = bar_cells([kind for kind, _ in self.slots], self.clock_w, s)
+        m, bar_h = BAR_M * s, BAR_H * s
+        w = int(math.ceil(self.bar_w + 2 * (BAR_FLARE * s + m)))
+        h = int(math.ceil((LABEL + 12) * s + bar_h + (0 if self.flush else m)))
+        bottom = screen[3] if self.flush else work[3] - BOTTOM * k
+        self.x = int(round((screen[0] + screen[2]) / 2 - w / 2))
+        self.y = int(round(bottom + (0 if self.flush else m) - h))
+        self.row_x = self.x + (w - self.bar_w) / 2
+        self.rest = self.bar_w
+        self.glass = (self.row_x, bottom - bar_h, self.row_x + self.bar_w, bottom)
+        self.screen = screen
+        self.bar_pic = None
+        self._canvas(w, h)
+
+    def layout(self):
+        """(each slot's middle and how much it's grown, never, the bar's left and right), as the dock's."""
+        return [((x0 + x1) / 2, 1.0) for what, x0, x1 in self.cells if not isinstance(what, str)], 0.0, self.bar_w
+
+    def _reach(self):
+        return 0.0  # nothing grows over it: a click just over it is the window's under it
+
+    def _cell(self):
+        """What's under the pointer: an item's index, one of TRAY, or None."""
+        if self.px is None:
+            return None
+        for what, x0, x1 in self.cells:
+            if x0 <= self.px < x1:
+                if isinstance(what, str):
+                    return what if what in TRAY else None
+                kind, i = self.slots[what]
+                return i if kind == "icon" else None
+        return None
+
+    def _under(self, places):
+        return self._cell()
+
+    def _hit(self):
+        return self._cell()
+
+    def _ticking(self, now):
+        """The clock each minute (and the bar made wider if its words grew), and the tray read every 3 seconds."""
+        changed = False
+        minute = time.localtime().tm_min
+        if minute != self.minute:
+            self.minute = minute
+            words = clock_words()
+            if words != self.clock:
+                self.clock, changed = words, True
+                width = self.clock_w
+                self._place()
+                if abs(self.clock_w - width) > 1:
+                    self.box = None
+        try:
+            while True:
+                got = self.tray_q.get_nowait()
+                self.tray_reading = False
+                if got != self.tray:
+                    self.tray, changed = got, True
+        except queue.Empty:
+            pass
+        if now - self.tray_at > 3.0 and not self.tray_reading:
+            self.tray_at, self.tray_reading = now, True
+            threading.Thread(target=lambda: self.tray_q.put(tray_state()), name="harry-taskbar-tray",
+                             daemon=True).start()
+        return changed
+
+    # ---------------------------------------------------------------- its picture
+    def _glass_picture(self, th, bx0, by0, by1):
+        """The bar's glass, (colours, cover), for the whole window: its shadow round it, from the bar alone and not
+        its shoulders, and its hairline, never along the bottom of the screen it hangs from."""
+        s, (w, h) = self.s, self.size
+        xs = np.arange(w, dtype=np.float32) + 0.5
+        ys = (np.arange(h, dtype=np.float32) + 0.5)[:, None]
+        bx1 = bx0 + self.bar_w
+        sd = bar_shape(xs, ys, bx0, bx1, by0, by1, BAR_R * s, BAR_FLARE * s, self.flush)
+        far = bar_shape(xs, ys + 2 * s, bx0, bx1, by0, by1, BAR_R * s, 0.0, self.flush)
+        cover = np.clip(0.5 - sd, 0.0, 1.0)
+        shadow = th["shadow"] * np.clip(0.5 - far / (10 * s), 0.0, 1.0) ** 2
+        lw = max(1.0, s)
+        e = np.clip(0.5 - (np.abs(sd + 0.5 * lw) - 0.5 * lw), 0.0, 1.0) * cover * th["line_a"]
+        if self.flush:
+            e = e * np.clip((by1 - lw - ys) / lw, 0.0, 1.0)
+        op = cover * th["fill"]
+        col = np.empty((h, w, 3), np.float32)
+        col[:] = th["body"]
+        col *= op[..., None]
+        col *= (1.0 - e)[..., None]
+        col += np.asarray(th["line"], np.float32) * e[..., None]
+        op = np.clip(op * (1.0 - e) + e, 0.0, 1.0)
+        np.minimum(col, op[..., None], out=col)
+        op = op + np.maximum(shadow - cover, 0.0) * (1.0 - op)
+        return col, op
+
+    def _draw(self):
+        s, (w, h) = self.s, self.size
+        th = edges.glass()
+        bx0 = self.row_x - self.x  # the bar's left end in the window
+        bar_h = self.glass[3] - self.glass[1]
+        by1 = h - (0 if self.flush else BAR_M * s)
+        by0, cy = by1 - bar_h, by1 - bar_h / 2
+        key = (w, h, round(bx0, 2), round(by0, 2), self.flush, repr(sorted(th.items())))
+        if self.bar_pic is None or self.bar_pic[0] != key:
+            self.bar_pic = (key,) + self._glass_picture(th, bx0, by0, by1)
+        col, op = self.col, self.op
+        col[:], op[:] = self.bar_pic[1], self.bar_pic[2]
+        cv = face.Canvas(col, op=op)
+        ink = th["text"]
+        under = self._cell() if self.hover.x > 0.02 and self.dragging is None else None
+        n = max(4, int(round(BAR_ICON * s)))
+        tip = None
+        for what, x0, x1 in self.cells:
+            cx = bx0 + (x0 + x1) / 2
+            if what == "sep" or (not isinstance(what, str) and self.slots[what][0] == "gap"):
+                cv.shape(lambda X, Y, cx=cx: face.rbox(X, Y, cx, cy, 0.5 * max(1.0, s), bar_h * 0.2, 0.5 * max(1.0, s)),
+                         (cx - 2, cy - bar_h / 2, cx + 2, cy + bar_h / 2), ink, 0.16)
+                continue
+            me = what if isinstance(what, str) else self.slots[what][1]
+            if me == under:  # the soft square under the one pointed at
+                hw, hh = (x1 - x0) / 2 - 2 * s, bar_h / 2 - 5 * s
+                cv.shape(lambda X, Y, cx=cx, hw=hw, hh=hh: face.rbox(X, Y, cx, cy, hw, hh, 8 * s),
+                         (cx - hw - 1, cy - hh - 1, cx + hw + 1, cy + hh + 1), ink, 0.1 * min(1.0, self.hover.x * 1.5))
+                tip = (me, cx)
+            if isinstance(what, str):
+                self._tray_part(cv, what, cx, cy, th)
+                continue
+            it = self.items[me]
+            cv.image(self._icon(it, n, th), cx - n / 2, cy - n / 2, 0.55 if self.dragging == it["key"] else 1.0)
+            if it["windows"]:  # a dot under one that's open, longer under the one in front
+                wide = 3.5 * s if self.front in it["windows"] else 0.0
+                r, y = 1.6 * s, by1 - 4.5 * s
+                cv.shape(lambda X, Y, cx=cx, y=y, r=r, wide=wide: face.rbox(X, Y, cx, y, r + wide, r, r),
+                         (cx - r - wide - 2, y - r - 2, cx + r + wide + 2, y + r + 2), ink, 0.6)
+        if tip is not None and self.hover.x > 0.5:
+            me, cx = tip
+            words = self.items[me]["name"] if isinstance(me, int) else self._tray_name(me)
+            self._tip(cv, words, cx, by0 - 6 * s, th)
+        _into(self.buf, col, op)
+        bubble._flush()
+        slide = (1.0 - min(1.0, max(0.0, self.lift.x))) * (bar_h + (0 if self.flush else BAR_M * s))
+        y = int(round(self.y + slide))
+        alpha = max(0, min(255, int(round(255 * min(1.0, max(0.0, self.lift.x) * 1.4)))))
+        if alpha <= 0:
+            if self.shown:
+                win.hide_window(self.hwnd)
+                self.shown = False
+            return
+        if not self.shown:
+            win.show_no_activate(self.hwnd, self.x, y, w, h)
+            self.shown = True
+        origin, size, src = wt.POINT(self.x, y), wt.SIZE(w, h), wt.POINT(0, 0)
+        bubble._ULW(self.hwnd, None, ctypes.byref(origin), ctypes.byref(size), self.dc, ctypes.byref(src), 0,
+                    ctypes.byref(bubble._BLEND(0, 0, alpha, 1)), 2)
+
+    def _tray_part(self, cv, what, cx, cy, th):
+        """One of the tray's parts at cx: the network and the volume as they are, the time over the date, the bell."""
+        s, ink = self.s, th["text"]
+        if what == "quick":
+            net, x = self.tray["net"], cx - 12 * s
+            if net == "wired":
+                _wired_glyph(cv, x, cy, 16 * s, ink)
+            else:  # Wi-Fi, faint while there's no network at all
+                face.wifi_glyph(cv, x, cy, 16 * s, ink, 1.0 if net else 0.35)
+            vol = self.tray["volume"]
+            face.speaker_glyph(cv, cx + 12 * s, cy, 16 * s, ink, 1.0, (vol if vol is not None else 100) / 100,
+                               self.tray["muted"])
+        elif what == "clock":
+            top, low = self._text(round(12 * s), 600), self._text(round(11 * s), 500)
+            t, d = top.render(self.clock[0]), low.render(self.clock[1])
+            gap = 1 * s
+            y0 = cy - (top.line + low.line + gap) / 2
+            cv.text(t, cx - t.shape[1] / 2, y0, ink, 1.0)
+            cv.text(d, cx - d.shape[1] / 2, y0 + top.line + gap, th["muted"], 1.0)
+        elif what == "bell":
+            face.bell_glyph(cv, cx, cy, 16 * s, ink, 1.0)
+
+    def _tray_name(self, what):
+        """What the pill over a tray part says."""
+        if what == "clock":
+            return self.clock[2]
+        if what == "bell":
+            return "Notifications"
+        vol = self.tray["volume"]
+        net = {"wifi": "Wi-Fi", "wired": "Ethernet"}.get(self.tray["net"], "No network")
+        return f"{net}, volume {'muted' if self.tray['muted'] else f'{vol}%'}" if vol is not None else net
+
+    def _tip(self, cv, words, cx, bottom, th):
+        """The name of the one pointed at on a pill of the glass over it, kept inside the window."""
+        t = self._text(round(12 * self.s), 600)
+        cover = t.render(words[:48])
+        tw, s = cover.shape[1], self.s
+        pw, ph = tw + 22 * s, LABEL * s
+        cx = max(pw / 2 + 2, min(self.size[0] - pw / 2 - 2, cx))
+        y0 = bottom - ph
+        cv.shape(lambda X, Y: face.rbox(X, Y, cx, y0 + ph / 2, pw / 2, ph / 2, ph / 2),
+                 (cx - pw / 2 - 1, y0 - 1, cx + pw / 2 + 1, bottom + 1), th["body"], th["fill"])
+        cv.text(cover, cx - tw / 2, y0 + (ph - cover.shape[0]) / 2, th["text"], 1.0)
+
+    # ---------------------------------------------------------------- clicks
+    def _move(self):
+        if self.press is not None and isinstance(self.press[0], str):
+            return  # the tray's parts don't move
+        super()._move()
+
+    def _up(self):
+        what = self._hit()
+        if isinstance(what, str):
+            press, self.press = self.press, None
+            if press is not None and press[0] == what and self.dragging is None and not self.busy():
+                self._keys(tray_keys(what))
+            return
+        super()._up()
+
+    def _middle(self):
+        if not isinstance(self._hit(), str):
+            super()._middle()
+
+    def _right(self):
+        if not isinstance(self._hit(), str):
+            super()._right()
+
+    @staticmethod
+    def _keys(keys):
+        """keys pressed together and let go, as Start's Windows key is (_start_menu)."""
+        for key in keys:
+            _user32.keybd_event(key, 0, 0, 0)
+        for key in reversed(keys):
+            _user32.keybd_event(key, 0, 2, 0)

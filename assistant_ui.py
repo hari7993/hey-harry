@@ -58,14 +58,18 @@ POPUP_STYLES = {"island": "Her island at the top", "card": "The iPhone card at t
 ISLAND_STYLES = {"panel": "Answer card", "capsule": "Glass capsule", "pill": "Black pill"}
 ISLAND_FACES = {"eyes": "Her eyes", "orb": "The orb", "wave": "The Siri wave"}
 ISLAND_THEMES = {"paper": "Paper, like her window", "amoled": "AMOLED black", "dark": "Dark", "light": "Light",
-                 "system": "Like Windows"}
+                 "system": "Like Windows", "black": "Black", "graphite": "Graphite", "rose": "Rosé",
+                 "lavender": "Lavender", "peach": "Peach", "sakura": "Sakura"}
 ISLAND_ALIGN = {"center": "In the middle", "left": "On the left", "right": "On the right"}
+ISLAND_BARS = {"wave": "A wave", "simple": "A plain line", "pixels": "Squares", "comet": "A comet", "hearts": "Hearts"}
+ISLAND_VISUALIZERS = {"pixels": "Squares", "bars": "Bars"}
 ISLAND_FONTS = {"figtree": "Figtree", "glance": "Plus Jakarta Sans and Poppins", "segoe": "Windows' own (Segoe)"}
 ISLAND_STATUS = {"": "Nothing", "time": "The time", "weather": "The weather", "battery": "The battery",
                  "time,battery": "The time and battery", "weather,time": "The weather and time",
                  "weather,battery": "The weather and battery", "weather,time,battery": "The time, weather and battery",
                  "cpu,ram": "Processor and memory", "time,weather,battery,cpu,ram": "All of them"}
 DOCK_MODES = {"smart": "Out of a window's way", "peek": "Only at the bottom edge", "fixed": "Always there"}
+DOCK_STYLES = {"taskbar": "A taskbar, like NotchPixel's", "dock": "A dock that grows, like a Mac's"}
 hermes_memory.set_memory_dir(os.path.join(win.APPDATA_DIR, "memories"))  # the same places siri.py keeps them
 hermes_memory.set_home(win.APPDATA_DIR)
 skills.set_skills_dir(os.path.join(win.APPDATA_DIR, "skills"))
@@ -2624,10 +2628,18 @@ class AssistantWindow:
                           "the Siri wave on the pill."),
               "island_face", ISLAND_FACES)
         combo(row("Theme", "Paper is white with faint dots, like this window. AMOLED is pure black, like a phone's "
-                           "notch. Like Windows follows light and dark mode."),
+                           "notch. Like Windows follows light and dark mode. Black, Graphite, Rosé, Lavender, "
+                           "Peach and Sakura are NotchPixel's, each with its own colour for what's on."),
               "island_theme", ISLAND_THEMES)
         combo(row("Font", "Her words on the island. Figtree is clear at small sizes; Plus Jakarta Sans and "
                           "Poppins are Glance's; Segoe is Windows' own."), "island_font", ISLAND_FONTS)
+        combo(row("Song's line", "How the music card shows how far the song's got, as NotchPixel's choices: a wave "
+                                 "that runs while it plays, a plain line, squares, a comet or hearts."), "island_bar",
+              ISLAND_BARS)
+        combo(row("Music at rest", "What dances beside her eyes while music plays: squares, as NotchPixel's, or "
+                                   "bars."), "island_visualizer", ISLAND_VISUALIZERS)
+        check(row("Album colours", "The cover's colours behind the music card."), "island_album_bg",
+              "Show the cover's colours")
         check(row("Border", "A thin line round it, so it shows on a dark wallpaper."), "island_border",
               "Show a border")
         combo(row("Where", "Along the top of the screen you're working on."), "island_align", ISLAND_ALIGN)
@@ -2671,8 +2683,11 @@ class AssistantWindow:
               "Show it in the notch")
         check(row("Round corners", "The top corners of the screen rounded off, like a MacBook's.", "Edges"),
               "island_corners", "Round the top corners")
-        check(row("Dock", "Your pinned and open apps along the bottom of the screen, growing as you point at them. "
-                          "Click to open or switch, right-click to pin.", "Dock"), "dock", "Show the dock")
+        check(row("Dock", "Your pinned and open apps along the bottom of the screen. Click to open or switch, "
+                          "right-click to pin.", "Dock"), "dock", "Show the dock")
+        combo(row("Look", "A taskbar hanging from the bottom of the screen, with the network, the volume, the time "
+                          "and the bell at its right, as NotchPixel's. Or a dock whose icons grow as you point at "
+                          "them, as a Mac's.", "Dock"), "dock_style", DOCK_STYLES)
         combo(row("Hiding", "Out of a window's way, or only when the pointer's at the bottom of the screen.", "Dock"),
               "dock_mode", DOCK_MODES)
         check(row("Taskbar", "Hides Windows' taskbar while the dock is on, and brings it back when the dock's off or "
@@ -2728,8 +2743,12 @@ class AssistantWindow:
 
     def _dock_changed(self):
         """Her dock (dock.py) started, stopped or set again as Settings has it now. Off, and her last run ended with
-        Windows' taskbar hidden, it's put back."""
+        Windows' taskbar hidden, it's put back. Its look changed (dock_style), it's made again in the new one."""
         want = bool(settings.get("dock"))
+        taskbar = settings.get("dock_style") != "dock"
+        if self.dock is not None and want and (type(self.dock).__name__ == "Taskbar") != taskbar:
+            self.dock.close()
+            self.dock = None
         if self.dock is not None and not want:
             self.dock.close()
             self.dock = None
@@ -2738,7 +2757,7 @@ class AssistantWindow:
         elif want:
             try:
                 import dock
-                self.dock = dock.Dock(self.root)
+                self.dock = dock.make(self.root)
             except Exception as exc:
                 print(f"  the dock didn't start: {exc!r}")
                 self.dock = None

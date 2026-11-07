@@ -8162,6 +8162,9 @@ def task_worker():
                 elif not TASK_STORE.is_cancelled(task["id"]):
                     late = task.get("missed")  # the PC was off or asleep: say when it was for
                     tell_task(task, f"Reminder{' from ' + tasking.describe_due(task['due']) if late else ''}: {text}.")
+                    shown = sys.modules.get("island_plugins")  # and in the island, with Snooze and Done
+                    if shown is not None:
+                        shown.remind(text)
             elif kind == "watch":
                 run_watch(task)
             elif kind == "lookup":
