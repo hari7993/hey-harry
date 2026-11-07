@@ -2136,7 +2136,8 @@ class NotchPixel(unittest.TestCase):
         with mock.patch.object(island.plugins, "on", return_value=True), \
                 mock.patch.object(isl, "_agent_busy", return_value=False):
             self.assertTrue(isl._hub_hover(idle))
-            self.assertFalse(isl._hub_hover(SimpleNamespace(kind="media")))  # what's playing opens its own card
+            self.assertFalse(isl._hub_hover(SimpleNamespace(kind="notification")))  # a popup opens its own card;
+            # what's playing opens them on Music (MusicTab, the owner's ask the same day)
             self.assertFalse(isl._hub_hover(None))
             isl.hub_page = "controls"
             self.assertFalse(isl._hub_hover(idle))  # open already
@@ -2157,12 +2158,14 @@ class NotchPixel(unittest.TestCase):
         draw, hot, expr = isl._hub_head(isl.HUB_W * k, isl.CARD_PAD * k, 26 * k, "calendar", {})
         tabs = [h for h in hot if h[0].startswith("tab:")]
         self.assertEqual([h[0] for h in tabs], [f"tab:{p}" for p in island.HUB_PAGES])
-        self.assertAlmostEqual(tabs[1][1] - tabs[0][1], 22 * k)  # 22 px apart, as NotchPixel's
+        # 22 px apart, as NotchPixel's; 20 once there are twelve, so the time still fits beside them
+        self.assertAlmostEqual(tabs[1][1] - tabs[0][1], (20 if len(island.HUB_PAGES) > 11 else 22) * k)
         col = np.zeros((int(70 * k), int(isl.HUB_W * k), 3), np.float32)
         draw(face.Canvas(col), 0, 0, isl.HUB_W * k, 1.0, time.time())
-        cx, cy = (tabs[1][1] + tabs[1][3]) / 2, isl.CARD_PAD * k + 13 * k + 9 * k
+        at = island.HUB_PAGES.index("calendar")
+        cx, cy = (tabs[at][1] + tabs[at][3]) / 2, isl.CARD_PAD * k + 13 * k + 9 * k
         self.assertTrue(np.allclose(col[int(round(cy)), int(round(cx))], island.GLASS["rose"]["accent"], atol=0.2))
-        cx = (tabs[0][1] + tabs[0][3]) / 2
+        cx = (tabs[at - 1][1] + tabs[at - 1][3]) / 2
         self.assertLess(col[int(round(cy)), int(round(cx))].max(), 0.1)  # none under the others
 
     def test_the_music_card_is_notchpixels(self):
@@ -2669,3 +2672,74 @@ class PhonePlugin(unittest.TestCase):
         self.assertEqual(act.data["title"], "Let an Android phone control this PC?")
         allow = next(b for b in act.data["buttons"] if b["name"] == "allow")
         self.assertTrue(allow["careful"])  # the pointer has to rest on it: no stray or scripted click allows a phone
+
+
+class MusicTab(unittest.TestCase):
+    """7 November 2026, the owner: "while music plays, how do I change the side bar to see other options". Music is
+    the panels' first tab, as NotchPixel's island has it: resting on what's playing opens the panels there, the song
+    as its card has it, the other tabs along the top."""
+
+    def capsule(self, **kw):
+        isl = fonted(self, **dict({"style": "capsule", "runner": mock.Mock(), "hover": True}, **kw))
+        isl.recent, isl.alerts_seen, isl.hub_month, isl.drag, isl.shelf_drag = [], 0.0, None, None, None
+        isl.dirty, isl._wake, isl.hub_data, isl.clips, isl.hub_page = False, lambda: None, {}, [], None
+        return isl
+
+    def song(self, now, playing=True):
+        return plugins.Activity("media", "media", {"title": "Song", "artist": "Band", "app": "Chrome",
+                                                   "playing": playing, "position": 30.0, "duration": 200.0, "at": now,
+                                                   "art": None}, live=True)
+
+    def test_resting_on_whats_playing_opens_the_panels_on_music(self):
+        isl = self.capsule()
+        self.assertEqual(island.HUB_PAGES[0], "music")
+        with mock.patch.object(island.plugins, "on", return_value=True), \
+                mock.patch.object(isl, "_agent_busy", return_value=False):
+            self.assertTrue(isl._hub_hover(SimpleNamespace(kind="media")))
+            self.assertFalse(isl._hub_hover(SimpleNamespace(kind="notification")))  # a popup opens its own card
+            with mock.patch.object(isl, "_hub_want"):
+                isl._hub_open("music")
+        self.assertEqual(isl.hub_page, "music")
+
+    def test_music_has_the_song_its_buttons_and_the_other_tabs(self):
+        now = time.time()
+        isl = self.capsule()
+        isl.lives = {"media": self.song(now)}
+        isl.hub_page = "music"
+        with mock.patch.object(island.plugins, "on", return_value=True):
+            lay = isl._hub(now)
+        names = [h[0] for h in lay.hot]
+        self.assertEqual(sum(n.startswith("tab:") for n in names), len(island.HUB_PAGES))  # every tab a click away
+        for name in ("music:previous", "music:toggle", "music:next", "music:seek"):
+            self.assertIn(name, names)
+        self.assertEqual(lay.rate, 24)  # the song's line runs
+        drawn(lay)
+        with mock.patch.object(isl, "_agent_busy", return_value=False):
+            isl._hub_press("music:toggle", False)
+            isl.runner.do.assert_called_with("media", "toggle")
+            isl._hub_press("tab:controls", False)
+        self.assertEqual(isl.hub_page, "controls")
+        isl.layout, isl.origin, isl.island_rect = lay, SimpleNamespace(x=0, y=0), (100, 0, 100 + lay.w, lay.h)
+        x0, y0, x1, y1 = next(h for h in lay.hot if h[0] == "music:seek")[1:]
+        with mock.patch.object(island.win, "cursor_pos", return_value=(100 + x0 + (x1 - x0) / 2, (y0 + y1) / 2)):
+            isl._click(False)
+        what, name, seconds = isl.runner.do.call_args[0]
+        self.assertEqual((what, name), ("media", "seek"))
+        self.assertAlmostEqual(seconds, 100.0, delta=1.0)
+
+    def test_with_nothing_playing_it_says_so(self):
+        isl = self.capsule()
+        isl.lives, isl.hub_page = {}, "music"
+        with mock.patch.object(island.plugins, "on", return_value=True):
+            lay = isl._hub(time.time())
+        self.assertEqual(lay.rate, 1)
+        self.assertFalse([h for h in lay.hot if h[0].startswith("music:")])
+        drawn(lay)
+
+    def test_the_card_on_its_own_is_as_it_was(self):
+        now = time.time()
+        isl = self.capsule()
+        lay = isl._make(("live", self.song(now)), now)  # where the panels are off: its own card, as before
+        self.assertEqual([h[0] for h in lay.hot], ["previous", "toggle", "next", "open", "seek"])
+        self.assertEqual(lay.kind, "media")
+

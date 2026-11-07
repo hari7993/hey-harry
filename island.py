@@ -188,14 +188,15 @@ MOVING = ("moon", "record", "hand", "pointer", "timer")  # the glyphs (face.GLYP
 # The panels (30 October 2026, after bloom's notch): opened by a click on her eyes, one at a time, the wheel going on
 # to the next; each with its glyph in the tabs along their top and its colour in her eyes' glow
 # NotchPixel's Clipboard and Launcher tabs too (7 November 2026, the owner's ask: "all they have that we don't")
-CORAL, SKY = (1.0, 0.5, 0.38), (0.35, 0.72, 1.0)
-HUB_PAGES = ("controls", "calendar", "today", "widgets", "alerts", "devices", "shelf", "clipboard", "launcher",
-             "deck", "web")
-HUB_GLYPHS = {"controls": "controls", "calendar": "calendar", "today": "weather", "widgets": "widgets",
-              "alerts": "bell", "devices": "headphones", "shelf": "tray", "clipboard": "clipboard",
+CORAL, SKY, ROSE = (1.0, 0.5, 0.38), (0.35, 0.72, 1.0), (0.98, 0.36, 0.55)
+# Music first, as NotchPixel's island has it (7 November 2026): while music plays, resting on her opens it there
+HUB_PAGES = ("music", "controls", "calendar", "today", "widgets", "alerts", "devices", "shelf", "clipboard",
+             "launcher", "deck", "web")
+HUB_GLYPHS = {"music": "note", "controls": "controls", "calendar": "calendar", "today": "weather",
+              "widgets": "widgets", "alerts": "bell", "devices": "headphones", "shelf": "tray", "clipboard": "clipboard",
               "launcher": "launcher", "deck": "phone", "web": "globe"}
-HUB_TINTS = {"controls": BLUE, "calendar": RED, "today": CYAN, "widgets": INDIGO, "alerts": ORANGE, "devices": TEAL,
-             "shelf": VIOLET, "clipboard": PINK, "launcher": GREEN, "deck": CORAL, "web": SKY}
+HUB_TINTS = {"music": ROSE, "controls": BLUE, "calendar": RED, "today": CYAN, "widgets": INDIGO, "alerts": ORANGE,
+             "devices": TEAL, "shelf": VIOLET, "clipboard": PINK, "launcher": GREEN, "deck": CORAL, "web": SKY}
 PIN_SITE = "Pin a site to the island: "  # the typing box's words for the Web tab's Pin a site (_typed)
 # the Widgets' PC stats, as NotchPixel's: (what the Hub reads, its name, its colour)
 STATS = (("cpu", "CPU", BLUE), ("ram", "Memory", VIOLET), ("disk", "Disk", TEAL), ("battery", "Battery", GREEN))
@@ -2513,23 +2514,41 @@ class DynamicIsland:
 
     def _glass_media(self, act):
         """What's playing, opened on the capsule while you point at it, as NotchPixel's music card is (7 November
-        2026, the owner's ask; till then the iPhone's Spotify card): the player and her eyes at the top, then the cover,
-        big and round-cornered with the player's badge on its corner, the song and who it's by in the song's colour,
-        and back, play or pause and next beside them, with a soft square under the one pointed at; across under it all
-        the song's line, a wave while it plays (_wave), with the time gone and the time to go under its ends. The
-        cover's colour washes the card from behind it, as NotchPixel's album colours do. The same places to click."""
-        k, th = self.k, self.theme()
+        2026, the owner's ask; till then the iPhone's Spotify card): the player and her eyes at the top, then the song
+        (_music_body). Where the panels open as you rest on her, they open on Music instead (_hub_music), with the
+        other tabs a click away."""
+        k = self.k
         d = act.data
-        W, pad, small = self.CARD_W * k, self.CARD_PAD * k, self.f_small
+        W, pad = self.CARD_W * k, self.CARD_PAD * k
         tint = art.brand(d["app"])
         head_h, head, expr = self._live_head(W, d["app"] or "Now playing", self._logo(d["app"]),
                                              "headphones" if d["playing"] else "open", tint if d["playing"] else None)
+        end, body, hot, glow = self._music_body(d, W, pad, pad + head_h + 8 * k)
+
+        def draw(cv, ox, oy, Wn, Hn, a, now):
+            body(cv, ox, oy, Wn, Hn, a, now, lambda: head(cv, ox, oy, Wn, a, now))
+        return Layout(("media-card", d["title"], d["artist"], d["playing"], id(d.get("art")), d.get("output"),
+                       bool(d.get("lyrics"))),
+                      "media", W, end + pad, draw,
+                      radius=self._corner(), hot=hot, eyes=expr, rate=24 if d["playing"] else 2, face=True,
+                      aura=(glow, "steady") if glow is not None else None)
+
+    def _music_body(self, d, W, pad, y_art, prefix=""):
+        """The song, as NotchPixel's music card has it, from y_art down: the cover, big and round-cornered with the
+        player's badge on its corner, the song and who it's by in the song's colour, and back, play or pause and next
+        beside them, with a soft square under the one pointed at; the line being sung and the next (LRCLIB); across
+        under it all the song's line (_wave), with the time gone and the time to go under its ends; and where it plays.
+        The cover's colour washes it from behind, as NotchPixel's album colours do. (where it ends, draw(cv, ox, oy,
+        Wn, Hn, a, now, under), its places to click, named prefix + previous, toggle, next, open, seek and output,
+        and the cover's colour or None): under() is drawn over the wash and under the rest."""
+        k, th = self.k, self.theme()
+        small = self.f_small
+        tint = art.brand(d["app"])
         art_s, badge_s = round(66 * k), round(20 * k)
         pic = art.rounded(_resize(d["art"], art_s), 13 * k) if d.get("art") is not None else None
         badge = art.badge(d["app"], badge_s, self._text) if pic is not None else None  # no cover: the badge is it
         if pic is None:
             pic = art.badge(d["app"], art_s, self._text)
-        y_art = pad + head_h + 8 * k
         mid = y_art + art_s / 2
         bx = W - pad - 122 * k  # back, play or pause and next: their middles and how far round them their squares go
         buttons = (("previous", bx + 18 * k, 17 * k), ("toggle", bx + 61 * k, 23 * k), ("next", bx + 104 * k, 17 * k))
@@ -2542,30 +2561,31 @@ class DynamicIsland:
         y_lyr = y_art + art_s + 10 * k
         y_bar = y_lyr + (self.f_label.line + small.line + 8 * k if lyrics else 4 * k)
         y_time = y_bar + 7 * k
-        H = y_time + small.line + pad - 2 * k
-        hot = [(name, cx - r, mid - r, cx + r, mid + r) for name, cx, r in buttons]
-        hot.append(("open", 0, 0, bx - 4 * k, y_bar - 4 * k))
+        end = y_time + small.line - 2 * k
+        hot = [(prefix + name, cx - r, mid - r, cx + r, mid + r) for name, cx, r in buttons]
+        hot.append((prefix + "open", 0, 0 if not prefix else y_art - 4 * k, bx - 4 * k, y_bar - 4 * k))
         if d["duration"] > 0:  # along the song's line: a click there goes to that part of it, as NotchPixel's scrubs
-            hot.append(("seek", pad, y_bar - 7 * k, W - pad, y_bar + 7 * k))
+            hot.append((prefix + "seek", pad, y_bar - 7 * k, W - pad, y_bar + 7 * k))
         # where it plays, under it, as Glance's card says; a click moves it to the next speakers or headphones
         out = small.render(small.fit(f"Playing on {d['output']}", W - 2 * pad - 24 * k)) if d.get("output") else None
-        y_out = H - pad + 4 * k
+        y_out = end + 4 * k
         if out is not None:
-            H += small.line + 6 * k
-            hot.insert(0, ("output", W / 2 - out.shape[1] / 2 - 18 * k, y_out - 2 * k, W / 2 + out.shape[1] / 2 + 4 * k,
-                           y_out + small.line + 2 * k))
+            end += small.line + 6 * k
+            hot.insert(0, (prefix + "output", W / 2 - out.shape[1] / 2 - 18 * k, y_out - 2 * k,
+                           W / 2 + out.shape[1] / 2 + 4 * k, y_out + small.line + 2 * k))
 
         glow = d.get("tint") if d["playing"] else None  # the cover's own colour (island_art.tint), round it
         wash = glow if settings.get("island_album_bg") is not False else None  # Appearance's album colours
         song = d.get("tint") or tint  # the song's colour: its words and its line
         words = self._ink(song)
 
-        def draw(cv, ox, oy, Wn, Hn, a, now):
+        def draw(cv, ox, oy, Wn, Hn, a, now, under=None):
             if wash is not None:  # the cover's colours from behind it, over the card, as NotchPixel's album colours
                 ax, ay = ox + pad + art_s / 2, oy + y_art + art_s / 2
                 cv.shape(lambda xs, ys: face.circle(xs, ys, ax, ay, art_s * 0.3), (ox, oy, ox + Wn, oy + Hn), wash, a,
                          0.3, 70 * k)
-            head(cv, ox, oy, Wn, a, now)
+            if under is not None:
+                under()
             cv.image(pic, ox + pad, oy + y_art, a)
             if badge is not None:  # the player's badge on the cover's corner, ringed in the card's colour
                 bcx, bcy = ox + pad + art_s - badge_s / 2 + 5 * k, oy + y_art + art_s - badge_s / 2 + 5 * k
@@ -2578,7 +2598,7 @@ class DynamicIsland:
             cv.text(self.f_label.render(sub), ox + tx - 2, y + 2 * k, words, a)
             for name, cx, r in buttons:
                 x = ox + cx
-                if self.pointed == name:  # the soft square under the pointer
+                if self.pointed == prefix + name:  # the soft square under the pointer
                     cv.shape(lambda xs, ys, x=x, r=r: face.rbox(xs, ys, x, y, r, r, r * 0.55),
                              (x - r - 1, y - r - 1, x + r + 1, y + r + 1), th["text"], 0.12 * a)
                 if name == "toggle":
@@ -2603,11 +2623,43 @@ class DynamicIsland:
                 ox0 = ox + Wn / 2 - out.shape[1] / 2 + 8 * k
                 face.speaker_glyph(cv, ox0 - 12 * k, oy + y_out + small.line / 2, 13 * k, th["muted"], a)
                 cv.text(out, ox0 - 2, oy + y_out, th["muted"], a)
-        return Layout(("media-card", d["title"], d["artist"], d["playing"], id(d.get("art")), d.get("output"),
-                       bool(lyrics)),
-                      "media", W, H, draw,
-                      radius=self._corner(), hot=hot, eyes=expr, rate=24 if d["playing"] else 2, face=True,
-                      aura=(glow, "steady") if glow is not None else None)
+        return end, draw, hot, glow
+
+    def _hub_music(self, W, pad, y0, d, now):
+        """Music, the panels' first tab, as NotchPixel's island has it (7 November 2026, the owner: "while music
+        plays, how do I change the side bar to see other options"): the song as its card has it (_music_body), its
+        buttons for the player (music:...), the other tabs along the top; or, with nothing playing, that there isn't."""
+        k, th = self.k, self.theme()
+        act = self._playing()
+        if act is None:
+            f = self.f_small
+
+            def draw(cv, ox, oy, Wn, Hn, a, now):
+                face.headphones_glyph(cv, ox + Wn / 2, oy + y0 + 20 * k, 32 * k, th["muted"], a)
+                for j, line in enumerate(("Nothing\u2019s playing", "Play something in Spotify, YouTube or any app")):
+                    cover = (self.f_label if j == 0 else f).render(line)
+                    cv.text(cover, ox + Wn / 2 - cover.shape[1] / 2, oy + y0 + 44 * k + j * (f.line + 6 * k),
+                            th["text"] if j == 0 else th["muted"], a)
+            return 44 * k + 2 * f.line + 12 * k, draw, [], ("music", None)
+        m = act.data
+        end, body, hot, _ = self._music_body(m, W, pad, y0, "music:")
+        key = ("music", m.get("title"), m.get("artist"), m.get("playing"), id(m.get("art")), m.get("output"),
+               bool(m.get("lyrics")))
+        return end - y0, body, hot, key
+
+    def _playing(self):
+        """What's playing (island_plugins.Media's live activity), or None."""
+        lives = self.lives if isinstance(getattr(self, "lives", None), dict) else {}
+        act = lives.get("media")
+        return act if act is not None and isinstance(act.data, dict) else None
+
+    def _seek_at(self, lay, name, px):
+        """A click on a song's line, named name, at px on the screen: the music player told to go there."""
+        act = self._playing()
+        spot = next((h for h in lay.hot if h[0] == name), None)
+        if act is not None and spot is not None and act.data.get("duration"):
+            frac = (px - self.origin.x - self.island_rect[0] - spot[1]) / max(1.0, spot[3] - spot[1])
+            self.runner.do("media", "seek", max(0.0, min(1.0, frac)) * float(act.data["duration"]))
 
     def _glass_note(self, act):
         """A notification on the capsule, as a phone's island shows one: the app's badge and name at the top, her
@@ -2854,9 +2906,10 @@ class DynamicIsland:
         return self.style == "capsule" and plugins.on("hub")
 
     def _hub_hover(self, lay):
-        """True if the pointer coming to rest on lay opens the panels: her eyes alone (idle) with the panels shut,
+        """True if the pointer coming to rest on lay opens the panels: her eyes alone (idle), or what's playing, which
+        opens them on Music, the other tabs beside it (7 November 2026, the owner's ask); with the panels shut,
         Panels' "hover" on, and her not doing a task in an app, whose real pointer may pass over her."""
-        return lay is not None and lay.kind == "idle" and self.hub_page is None and self._hub_on() and \
+        return lay is not None and lay.kind in ("idle", "media") and self.hub_page is None and self._hub_on() and \
             plugins.get_options("hub").get("hover", True) and not self._agent_busy()
 
     def _hub_open(self, page=None):
@@ -2943,15 +2996,18 @@ class DynamicIsland:
             head(cv, ox, oy, Wn, a, now)
             body(cv, ox, oy, Wn, Hn, a, now)
         return Layout(("hub", page, key, round(H)), "hub", W, H, draw, radius=self._corner(),
-                      hot=head_hot + hot + [("stay", 0, 0, W, H)], eyes=expr, rate=1, face=True)
+                      hot=head_hot + hot + [("stay", 0, 0, W, H)], eyes=expr, face=True,
+                      rate=24 if page == "music" and self._playing() is not None and
+                      self._playing().data.get("playing") else 1)
 
     def _hub_head(self, W, pad, head_h, page, d):
         """The panels' top: (draw(cv, ox, oy, Wn, a, now), its places to click, how her eyes look)."""
         k, th = self.k, self.theme()
         # NotchPixel's tabs (7 November 2026, the owner's ask): thin glyphs 22 px apart, the open one in the words'
         # colour with a dot under it, the rest faint. Till then each was on a round of its colour when open
-        r, small = 11 * k, self.f_label
-        me = self._face("open", HUB_TINTS[page])
+        r, small = (10 if len(HUB_PAGES) > 11 else 11) * k, self.f_label  # 20 px apart with twelve: the time fits
+        song = self._playing() if page == "music" else None
+        me = self._face("headphones" if song is not None and song.data.get("playing") else "open", HUB_TINTS[page])
         ew = me[0]
         # all at the left while they fit there; more, as since NotchPixel's tabs came, half either side of her eyes,
         # as a phone's camera sits in the middle of its strip, and what's beside them at the right only as far as
@@ -2959,14 +3015,14 @@ class DynamicIsland:
         n = len(HUB_PAGES)
         left = n if pad + n * 2 * r <= W / 2 - ew / 2 - 8 * k else (n + 1) // 2
         tabs, hot = [], []
-        x = pad if left == n else W / 2 - ew / 2 - 8 * k - left * 2 * r
+        x = pad if left == n else W / 2 - ew / 2 - 5 * k - left * 2 * r
         for i, p in enumerate(HUB_PAGES):
             if i == left:
-                x = W / 2 + ew / 2 + 8 * k
+                x = W / 2 + ew / 2 + 5 * k
             tabs.append((p, x + r))
             hot.append((f"tab:{p}", x, pad - 2 * k, x + 2 * r, pad + head_h + 2 * k))
             x += 2 * r
-        room = (x if left < n else W / 2 + ew / 2) + 8 * k  # the status goes no further left than this
+        room = (x if left < n else W / 2 + ew / 2) + 4 * k  # the status goes no further left than this
         hot.append(("close", W / 2 - ew / 2, pad - 2 * k, W / 2 + ew / 2, pad + head_h + 2 * k))
         weather = d.get("weather") if plugins.get_options("hub").get("weather", True) else None
         battery = d.get("battery")
@@ -4084,6 +4140,8 @@ class DynamicIsland:
             if 0 <= int(arg) < len(items) and not right:
                 self._shelf_drop(items[int(arg)])
             return
+        elif kind == "music" and arg in ("previous", "toggle", "next", "open", "output") and not right:
+            self.runner.do("media", arg)  # Music's buttons, for the player as on its card
         elif kind == "tophone" and not right:  # the shelf's files as a QR code for your phone, while it shows
             self.phone_view = True
             self.runner.do("phone", "files", [str(p) for p in self.shelf_items()])
@@ -4987,7 +5045,7 @@ class DynamicIsland:
                 self.dirty = True
                 self._wake()
                 if self._hub_hover(lay):  # rested on her eyes: the panels open, as NotchPixel's island opens
-                    self._hub_open()
+                    self._hub_open("music" if lay.kind == "media" else None)  # on Music while it plays
         else:
             self.hover_at = now
             if self.hub_page is not None and now - self.away_at > HUB_LINGER:  # the pointer's gone: they close
@@ -5045,11 +5103,7 @@ class DynamicIsland:
             self.dirty = True
             self._wake()
         elif lay.kind == "media" and name == "seek" and not right:  # that part of the song, as NotchPixel's scrub
-            act = self.lives.get("media")
-            spot = next((h for h in lay.hot if h[0] == "seek"), None)
-            if act is not None and spot is not None and act.data.get("duration"):
-                frac = (px - self.origin.x - self.island_rect[0] - spot[1]) / max(1.0, spot[3] - spot[1])
-                self.runner.do("media", "seek", max(0.0, min(1.0, frac)) * float(act.data["duration"]))
+            self._seek_at(lay, name, px)
         elif lay.kind == "media" and name and not right:
             self.runner.do("media", name)
         elif lay.kind == "card":
@@ -5058,6 +5112,8 @@ class DynamicIsland:
             self._panel_press(name)
         elif lay.kind == "idle" and name == "hub" and not right:  # a click on her eyes: the panels
             self._hub_open()
+        elif lay.kind == "hub" and name == "music:seek" and not right:  # Music's line, there in the song
+            self._seek_at(lay, name, px)
         elif lay.kind == "hub":
             self.shelf_drag = None
             if self.drag is not None:  # a slider let go: it's set where it was left

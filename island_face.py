@@ -1103,6 +1103,19 @@ def phone_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
              (cx - s * 0.35, cy - s * 0.5, cx + s * 0.35, cy + s * 0.5), colour, a)
 
 
+def note_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
+    """Music, the panels' first tab: two notes joined by a beam."""
+    w = max(1.0, s * 0.09)
+    xl, xr = cx - s * 0.18, cx + s * 0.22
+    hy_l, hy_r, top = cy + s * 0.26, cy + s * 0.18, cy - s * 0.34
+    cv.shape(lambda xs, ys: np.minimum(np.minimum(
+        np.hypot((xs - (xl - s * 0.08)) / 1.25, ys - hy_l) - s * 0.1,
+        np.hypot((xs - (xr - s * 0.08)) / 1.25, ys - hy_r) - s * 0.1),
+        _segments(xs, ys, (((xl + w / 2, hy_l), (xl + w / 2, top + s * 0.06)), ((xr + w / 2, hy_r), (xr + w / 2, top)),
+                           ((xl + w / 2, top + s * 0.06), (xr + w / 2, top))), w * 1.3)),
+        (cx - s * 0.5, cy - s * 0.5, cx + s * 0.5, cy + s * 0.5), colour, a)
+
+
 def globe_glyph(cv, cx, cy, s, colour, a=1.0, t=None):
     """A globe, for the web drawer: a ring, its middle line and the curve of its meridian."""
     r, w = s * 0.36, max(1.0, s * 0.08)
@@ -1119,7 +1132,7 @@ GLYPHS.update({"wifi": wifi_glyph, "bluetooth": bluetooth_glyph, "dnd": dnd_glyp
                "awake": cup_glyph, "link": link_glyph, "night": night_glyph, "power": power_glyph,
                "clipboard": clipboard_glyph, "launcher": launcher_glyph, "widgets": widgets_glyph, "mic": mic_glyph,
                "mic_off": lambda cv, cx, cy, s, colour, a=1.0, t=None: mic_glyph(cv, cx, cy, s, colour, a, muted=True),
-               "chip": chip_glyph, "phone": phone_glyph, "globe": globe_glyph,
+               "chip": chip_glyph, "phone": phone_glyph, "globe": globe_glyph, "note": note_glyph,
                "weather": lambda cv, cx, cy, s, colour, a=1.0, t=None: cloud_glyph(cv, cx, cy, s, colour, a,
                                                                                    "partly cloudy"),
                **DEVICE_GLYPHS})
