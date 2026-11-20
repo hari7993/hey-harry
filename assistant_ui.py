@@ -1,4 +1,5 @@
 """Hey Harry's window on Windows: status on top, sidebar tabs for stats, the dictionary, apps, history, settings and keys."""
+import ctypes
 import datetime
 import json
 import math
@@ -17,6 +18,7 @@ from collections import namedtuple
 from tkinter import messagebox, ttk
 
 import activity
+import glass
 import hearing
 import hermes_memory
 import history
@@ -52,6 +54,12 @@ MODE_LABELS = {"ptt": "Hold Right Alt", "wake": "Hey Harry"}
 TABS = (("home", "Home"), ("todo", "To-do"), ("tasks", "Tasks"), ("contacts", "Contacts"), ("dict", "Dictionary"),
         ("apps", "Apps"), ("hist", "Dictation history"), ("mem", "Memory"), ("priv", "Privacy"),
         ("island", "Island"), ("settings", "Settings"), ("keys", "Keys"))
+# The sidebar, in groups by what goes together (20 November 2026, the owner: twelve tabs in one list were "too
+# overwhelming"): (its name, its tabs). The first has no name; one in NAV_FOLDS folds away under its name, shut till
+# you open it or go to a tab of its own
+NAV = ((None, ("home", "todo", "tasks")), ("What she knows", ("mem", "contacts", "dict", "apps")),
+       ("Setup", ("settings", "island", "keys")), ("More", ("hist", "priv")))
+NAV_FOLDS = {"More"}
 # the Island tab's choices: what's saved, what it says
 POPUP_STYLES = {"island": "Her island at the top", "card": "The iPhone card at the top",
                 "pill": "The Siri pill at the bottom"}
@@ -246,6 +254,11 @@ BG, SIDE, LINE, EDGE = "#ffffff", "#fafafa", "#e5e5e5", "#d4d4d4"  # EDGE: round
 FAINT, DOTS, ORANGE = "#99a1af", "#d9d9d9", "#f54a00"  # the tabs you're not on; the dots, black at 15% on white
 DOT_GAP = 20  # logical px from one dot to the next, as the page has them
 ACCENT_SOFT = "#f5f5f5"  # a button under the mouse
+# a tab you're not on, and a group's name over its tabs: grey that still reads on the frosted glass behind them
+# (FAINT, 2.6 to 1 on white, was too pale to read there), darker under the mouse
+NAV_IDLE, NAV_OVER = "#5b6472", "#262626"
+# her frosted glass (glass.py): how far towards white the blurred wallpaper is washed behind each panel
+GLASS_SIDE, GLASS_TOP, GLASS_OVER = 0.80, 0.87, 0.88  # the sidebar, the top, and her quick actions over the window
 # a few colours, soft (29 October 2026, the owner: "add minimal color, not only white and black"): each part of a
 # page, each Home card and the tab you're on has one, its icon in it on a tint of it
 TINTS = {"orange": ("#f54a00", "#fff1e8"), "blue": ("#2563eb", "#edf3ff"), "green": ("#16a34a", "#e9f9ef"),
@@ -1086,6 +1099,254 @@ class ListPicker:
         self.app.list_picker = None
 
 
+def motion_ok():
+    """False if Windows is set to show no animations (Settings > Accessibility > Visual effects): hers that only
+    please then stay still."""
+    on = ctypes.c_int(1)
+    try:
+        ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(on), 0)  # SPI_GETCLIENTAREAANIMATION
+    except (AttributeError, OSError):
+        return True
+    return bool(on.value)
+
+
+class SendButton:
+    """Home's Send, the one thing its box is for, drawn here so it can do more than a ttk button (20 November 2026,
+    the owner's ask): her orange with a paper plane by its word; under the mouse the word turns to SENT and the plane
+    flies off its corner and comes round again, for as long as the mouse is on it. Enter and Space press it from the
+    keyboard, with a line round it while it has the focus."""
+    WORD, SENT = "Send", "Off it goes"
+    LAP = 1.25  # seconds from one take-off to the next
+
+    def __init__(self, app, parent, command):
+        self.app, self.command, px = app, command, app.px
+        self.hot = self.down = False
+        self.job, self.began = None, 0.0
+        self.h = px(34)
+        self.gap, self.side = px(22), px(16)  # from the word's end to the plane, and in from each end
+        self.w = 2 * self.side + max(app._measure(app.f_bold, w) for w in (self.WORD, self.SENT)) + self.gap + px(4)
+        c = self.canvas = tk.Canvas(parent, width=self.w, height=self.h, bg=BG, highlightthickness=0, bd=0,
+                                    cursor="hand2", takefocus=1)
+        self.pill = c.create_polygon(*rounded(0, 0, self.w - 1, self.h - 1, px(8)), smooth=True, fill=ACCENT,
+                                     outline=ACCENT)
+        self.word = c.create_text(0, self.h // 2, anchor="w", text=self.WORD, font=app.f_bold, fill=BG)
+        self.plane = c.create_text(0, self.h // 2, anchor="w", text="", font=app.f_icon, fill=BG)
+        self._rest()
+        c.bind("<Enter>", lambda e: self.hover(True))
+        c.bind("<Leave>", lambda e: self.hover(False))
+        c.bind("<ButtonPress-1>", lambda e: self._press(True))
+        c.bind("<ButtonRelease-1>", self._release)
+        c.bind("<Return>", lambda e: self.command())
+        c.bind("<space>", lambda e: self.command())
+        c.bind("<FocusIn>", lambda e: c.itemconfigure(self.pill, outline=TEXT))
+        c.bind("<FocusOut>", lambda e: c.itemconfigure(self.pill, outline=ACCENT))
+
+    def _home(self):
+        """Where the plane sits: after the word, the two of them in the middle of the button."""
+        c = self.canvas
+        wide = self.app._measure(self.app.f_bold, c.itemcget(self.word, "text")) + self.gap
+        x = (self.w - wide) // 2
+        c.coords(self.word, x, self.h // 2)
+        return x + wide - self.app.px(14), self.h // 2 + self.app.px(1)
+
+    def _rest(self):
+        self.canvas.coords(self.plane, *self._home())
+        self.canvas.itemconfigure(self.plane, fill=BG)
+
+    def _colour(self):
+        return mix(ACCENT, "#000000", 0.24 if self.down else 0.12 if self.hot else 0.0)
+
+    def hover(self, on):
+        """The mouse on it or off it: its word, its shade, and the plane's flight started or put back."""
+        c = self.canvas
+        self.hot = on
+        c.itemconfigure(self.pill, fill=self._colour())
+        c.itemconfigure(self.word, text=self.SENT if on else self.WORD)
+        if self.job is not None:
+            c.after_cancel(self.job)
+            self.job = None
+        self._rest()
+        if on and motion_ok():
+            self.began = time.monotonic()
+            self._fly()
+
+    def _fly(self):
+        """One frame of the plane's lap: off up and to the right, fading into the button's orange as it leaves, a
+        beat away, then in from the lower left to where it sits."""
+        c, px = self.canvas, self.app.px
+        (x, y), back = self._home(), self._colour()
+        t = ((time.monotonic() - self.began) % self.LAP) / self.LAP
+        if t < 0.45:  # away, slow then fast
+            k = (t / 0.45) ** 2
+            c.coords(self.plane, x + px(26) * k, y - px(17) * k)
+            c.itemconfigure(self.plane, fill=mix(BG, back, min(1.0, k * 1.3)))
+        elif t < 0.6:  # gone
+            c.itemconfigure(self.plane, fill=back)
+        else:  # and back, fast then settling
+            k = ease((t - 0.6) / 0.4)
+            c.coords(self.plane, x - px(18) * (1 - k), y + px(11) * (1 - k))
+            c.itemconfigure(self.plane, fill=mix(back, BG, k))
+        self.job = c.after(16, self._fly)
+
+    def _press(self, down):
+        self.down = down
+        self.canvas.itemconfigure(self.pill, fill=self._colour())
+
+    def _release(self, event):
+        self._press(False)
+        if 0 <= event.x < self.w and 0 <= event.y < self.h:
+            self.command()
+
+
+class Palette:
+    """Her quick actions, over the window (20 November 2026, the owner's ask: a small search box at the top with
+    Ctrl K on it, "and on hitting it or clicking it, a quick actions modal"). Type a few letters of a tab, a part
+    of Settings or something she can do, Up and Down through what matches, Enter does it; anything else typed is
+    asked of her, as Home's box does. The window dims under it, and Esc, a click outside or another window puts it
+    away. Frosted like her sidebar when her glass is on (glass.py)."""
+    ROWS = 7
+
+    def __init__(self, app):
+        self.app, root, px = app, app.root, app.px
+        self.actions, self.shown, self.at = app.quick_actions(), [], 0
+        self.veil = tk.Toplevel(root, bg="#000000")  # the window dimmed under it
+        self.veil.overrideredirect(True)
+        self.veil.attributes("-alpha", 0.14)
+        self.veil.geometry(f"{root.winfo_width()}x{root.winfo_height()}+{root.winfo_rootx()}+{root.winfo_rooty()}")
+        self.veil.bind("<Button-1>", lambda e: self.close())
+        top = self.top = tk.Toplevel(root, bg=EDGE)
+        top.overrideredirect(True)
+        self.w, self.row_h, self.head_h, self.foot_h = px(540), px(40), px(58), px(34)
+        h = self.head_h + self.ROWS * self.row_h + self.foot_h + px(8)
+        x = root.winfo_rootx() + (root.winfo_width() - self.w) // 2
+        y = root.winfo_rooty() + min(px(96), max(0, (root.winfo_height() - h) // 2))
+        top.geometry(f"{self.w}x{h}+{x}+{y}")
+        for window in (self.veil, top):
+            window.attributes("-topmost", bool(root.attributes("-topmost")))
+        c = self.canvas = tk.Canvas(top, bg=BG, highlightthickness=0, bd=0)
+        c.pack(fill="both", expand=True, padx=1, pady=1)  # a hairline round it, the Toplevel's own colour
+        self.photo = None
+        if app.glass is not None:  # the wallpaper behind it, frosted, as behind her sidebar
+            self.photo = tk.PhotoImage(master=root, format="ppm",
+                                       data=glass.cut(app.glass, x + 1, y + 1, self.w - 2, h - 2, GLASS_OVER))
+            c.create_image(0, 0, image=self.photo, anchor="nw")
+        pad = px(18)
+        c.create_text(pad, self.head_h // 2, anchor="w", text="", font=app.f_icon_big, fill=MUTED)
+        self.entry = tk.Entry(c, font=("Segoe UI", 12), bd=0, relief="flat", bg=BG, fg=TEXT, insertbackground=TEXT,
+                              highlightthickness=0)
+        c.create_polygon(*rounded(pad + px(30), px(11), self.w - pad, self.head_h - px(11), px(8)), smooth=True,
+                         fill=BG, outline=EDGE)  # the box it's typed in, white on the glass
+        c.create_window(pad + px(42), self.head_h // 2, anchor="w", window=self.entry,
+                        width=self.w - 2 * pad - px(56), height=px(26))
+        c.create_line(0, self.head_h, self.w, self.head_h, fill=LINE)
+        self.pick = c.create_polygon(0, 0, 0, 0, smooth=True, fill=TINTS["orange"][1], outline="")
+        self.rows = []
+        for i in range(self.ROWS):
+            cy = self.head_h + px(6) + i * self.row_h + self.row_h // 2
+            self.rows.append((c.create_text(pad + px(6), cy + px(1), anchor="w", font=app.f_icon, fill=MUTED),
+                              c.create_text(pad + px(38), cy, anchor="w", font=app.f_body, fill=TEXT),
+                              c.create_text(self.w - pad - px(6), cy, anchor="e", font=app.f_small, fill=MUTED)))
+        fy = h - 2 - self.foot_h // 2
+        c.create_line(0, h - 2 - self.foot_h, self.w, h - 2 - self.foot_h, fill=LINE)
+        c.create_text(pad, fy, anchor="w", font=app.f_small, fill=MUTED,
+                      text="Up and Down to choose      Enter to do it      Esc to close")
+        self.none = c.create_text(self.w // 2, self.head_h + px(64), font=app.f_body, fill=MUTED, state="hidden",
+                                  text="Nothing by that name. Type what you want and Enter asks her.")
+        self.entry.bind("<KeyRelease>", self._typed)
+        self.entry.bind("<Up>", lambda e: self._move(-1))
+        self.entry.bind("<Down>", lambda e: self._move(1))
+        self.entry.bind("<Return>", lambda e: self.use())
+        self.entry.bind("<Escape>", lambda e: self.close())
+        self.entry.bind("<Control-k>", lambda e: self.close() or "break")
+        c.bind("<Motion>", self._over)
+        c.bind("<Button-1>", lambda e: self._over(e) and self.use())
+        top.bind("<FocusOut>", lambda e: top.after(60, self._left))
+        try:  # round corners, as Windows 11 gives its own windows (DWMWA_WINDOW_CORNER_PREFERENCE, round)
+            hwnd = ctypes.windll.user32.GetAncestor(top.winfo_id(), 2)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(ctypes.c_int(2)), 4)
+        except (AttributeError, OSError):
+            pass
+        top.lift()
+        self.entry.focus_force()
+        self._fill()
+
+    def _left(self):
+        """Put away once the keyboard has gone to another window."""
+        try:
+            if self.top.winfo_exists() and self.top.focus_displayof() is None:
+                self.close()
+        except tk.TclError:
+            pass
+
+    def matches(self, query):
+        """The actions for what's typed, best first: every word of it somewhere in an action's name or kind, one
+        that starts with it on top. With something typed, asking her is always the last."""
+        words = query.lower().split()
+        found = [a for a in self.actions if all(w in f"{a[1]} {a[2]}".lower() for w in words)]
+        found.sort(key=lambda a: not a[1].lower().startswith(query.lower().strip()))
+        if words:
+            text = " ".join(query.split())
+            found.append(("", f"Ask {identity.name()}: “{text}”", "Ask",
+                          lambda: self.app.controls.put(("typed", text))))
+        return found
+
+    def _typed(self, event):
+        if event.keysym not in ("Up", "Down", "Return", "Escape"):
+            self.at = 0
+            self._fill()
+
+    def _fill(self):
+        c, app = self.canvas, self.app
+        self.shown = self.matches(self.entry.get())
+        self.at = max(0, min(self.at, len(self.shown) - 1))
+        first = max(0, min(self.at - self.ROWS + 1, len(self.shown) - self.ROWS))  # the one picked stays in sight
+        self.first = first
+        for i, (icon, words, kind) in enumerate(self.rows):
+            action = self.shown[first + i] if first + i < len(self.shown) else None
+            c.itemconfigure(icon, text=action[0] if action else "")
+            c.itemconfigure(words, text=app._fit(action[1], app.f_body, self.w - app.px(190)) if action else "")
+            c.itemconfigure(kind, text=action[2] if action else "")
+        if self.shown:
+            top = self.head_h + app.px(6) + (self.at - first) * self.row_h
+            c.coords(self.pick, *rounded(app.px(8), top + app.px(2), self.w - app.px(10), top + self.row_h - app.px(2),
+                                         app.px(8)))
+        c.itemconfigure(self.pick, state="normal" if self.shown else "hidden")
+        c.itemconfigure(self.none, state="hidden" if self.shown else "normal")
+
+    def _move(self, step):
+        if self.shown:
+            self.at = (self.at + step) % len(self.shown)
+            self._fill()
+        return "break"
+
+    def _over(self, event):
+        """The row under the mouse picked. True if there's one there."""
+        i = (event.y - self.head_h - self.app.px(6)) // self.row_h
+        if 0 <= i < self.ROWS and self.first + i < len(self.shown):
+            if self.at != self.first + i:
+                self.at = self.first + i
+                self._fill()
+            return True
+        return False
+
+    def use(self):
+        """Does the one picked, with her quick actions put away first."""
+        action = self.shown[self.at] if self.shown else None
+        self.close()
+        if action:
+            action[3]()
+        return "break"
+
+    def close(self):
+        if self.app.palette is self:
+            self.app.palette = None
+        for window in (self.top, self.veil):
+            try:
+                window.destroy()
+            except tk.TclError:
+                pass
+
+
 class AssistantWindow:
     def __init__(self, root):
         self.root = root
@@ -1100,6 +1361,8 @@ class AssistantWindow:
         self.walkthrough = None  # her setup window while it's open (onboarding.py)
         self.list_picker = None  # Settings > Voice's or Speech to text's picker while it's open (ListPicker)
         self.named = []  # (label, its words as written): her name in them, said again with a new one (_renamed)
+        self.glass_job = None
+        self.glass = None  # her frosted glass once it's made: the wallpaper blurred, kept small (_glass_made)
         self._setup_root()
         self._setup_styles()
         self.bubble = Bubble(root)
@@ -1114,6 +1377,7 @@ class AssistantWindow:
                       "priv": self._build_privacy(), "island": self._build_island(),
                       "settings": self._build_settings(), "keys": self._build_keys()}
         self._select_tab("keys" if missing_secrets() else "home")
+        self._start_glass()
         if not settings.get("onboarded"):  # the first time: her walkthrough, over the window
             self.root.after(700, self.open_walkthrough)
         identity.on_rename(self._renamed)
@@ -1167,6 +1431,8 @@ class AssistantWindow:
         self.f_mono = ("Consolas", 11)
         icons = "Segoe Fluent Icons" if "Segoe Fluent Icons" in tkfont.families(self.root) else "Segoe MDL2 Assets"
         self.f_icon, self.f_icon_big = (icons, 12), (icons, 15)
+        self.f_group, self.f_fold = ("Segoe UI Semibold", 8), (icons, 7)  # a group of tabs' name, and its arrow
+        self.f_key = ("Segoe UI Semibold", 8)  # a key's name on its cap: Ctrl K
         for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):  # text boxes and lists in the same type as the rest
             tkfont.nametofont(name).configure(family="Segoe UI", size=10)
         for key, value in (("font", self.f_body), ("background", BG), ("foreground", TEXT),
@@ -1346,13 +1612,25 @@ class AssistantWindow:
         brand = side.create_text(pad + (self.logo_photo.width() or px(52)) + px(10), mid, anchor="w",
                                  text=identity.named("Hey Harry"), font=self.f_brand, fill=TEXT)
         self.named.append((Item(side, brand), "Hey Harry"))
-        self.nav_top, self.nav_h = mid + px(34), px(36)
+        self.nav_top, self.nav_h, self.nav_gap = mid + px(30), px(33), px(34)  # a tab's row, a group's name's
         self.tab_buttons, self.side_over, self.leave_hot = {}, None, False
-        for i, (key, title) in enumerate(TABS):
-            y = self.nav_top + i * self.nav_h + self.nav_h // 2
-            icon = side.create_text(pad, y, anchor="w", text=ICONS.get(key, ""), font=self.f_icon, fill=FAINT)
-            text = side.create_text(pad + px(28), y, anchor="w", text=title, font=self.f_body, fill=FAINT)
-            self.tab_buttons[key] = (icon, text)
+        titles = dict(TABS)
+        # the tabs in their groups (NAV), each under its group's name; a group that folds has an arrow by its name
+        was = settings.get("nav_open")
+        self.nav_open = {name for name in NAV_FOLDS if name in (was if isinstance(was, list) else ())}
+        self.nav_y, self.nav_groups, self.group_over = {}, {}, None
+        for name, keys in NAV:
+            if name:
+                words = side.create_text(pad, 0, anchor="w", text=name.upper(), font=self.f_group, fill=NAV_IDLE)
+                arrow = side.create_text(px(SIDEBAR) - pad, 0, anchor="e", font=self.f_fold, fill=NAV_IDLE,
+                                         state="normal" if name in NAV_FOLDS else "hidden")
+                self.nav_groups[name] = (words, arrow)
+            for key in keys:
+                icon = side.create_text(pad, 0, anchor="w", text=ICONS.get(key, ""), font=self.f_icon, fill=NAV_IDLE)
+                text = side.create_text(pad + px(28), 0, anchor="w", text=titles[key], font=self.f_body,
+                                        fill=NAV_IDLE)
+                self.tab_buttons[key] = (icon, text)
+        self._lay_nav()
         # a soft pill of its own colour behind the tab you're on, sliding to the next
         self.nav_bar = side.create_polygon(0, 0, 0, 0, smooth=True, fill=ACCENT_SOFT, outline="")
         side.tag_lower(self.nav_bar)
@@ -1364,9 +1642,9 @@ class AssistantWindow:
             left = side.create_text(0, 0, anchor="e", font=self.f_mono, fill=ACCENT, state="hidden")
             self.timer_rows.append((Item(side, name), Item(side, left)))
         self.hint = Item(side, side.create_text(pad, 0, anchor="sw", width=px(SIDEBAR) - 2 * pad, font=self.f_small,
-                                                fill=MUTED, text=identity.named(HINTS[self.mode])), self._lay_bottom)
+                                                fill=NAV_IDLE, text=identity.named(HINTS[self.mode])), self._lay_bottom)
         self.leave = side.create_text(pad, 0, anchor="sw", text=identity.named("\u23fb  Quit Hey Harry"),
-                                      font=self.f_small, fill=FAINT)
+                                      font=self.f_small, fill=NAV_IDLE)
         self.named.append((Item(side, self.leave), "\u23fb  Quit Hey Harry"))  # "Quit Hey Friday" once she's Friday
         side.bind("<Configure>", lambda e: self._lay_side())
         side.bind("<Motion>", self._side_motion)
@@ -1386,6 +1664,7 @@ class AssistantWindow:
         self._dots(c, w, h)
         c.coords(self.side_line, w - 1, 0, w - 1, h)
         self._lay_bottom()
+        self._glass_soon()
 
     def _lay_bottom(self):
         """Quit at the bottom of the sidebar, the hint over it and the timers over that, soonest on top."""
@@ -1427,7 +1706,9 @@ class AssistantWindow:
             print(f"  couldn't draw her logo: {exc!r}")
             self.logo_off = True
             return
-        rgb = rgba[..., :3] + (1 - rgba[..., 3:])  # premultiplied, over the white
+        # premultiplied, over the white, or over the frosted glass behind it once that's there (_lay_glass)
+        back = getattr(self, "logo_back", None)
+        rgb = rgba[..., :3] + (1 - rgba[..., 3:]) * (1.0 if back is None or back.shape != rgba[..., :3].shape else back)
         h, w = rgb.shape[:2]
         pixels = (rgb * 255 + 0.5).astype("uint8").tobytes()
         self.logo_photo.configure(data=b"P6 %d %d 255 " % (w, h) + pixels, format="ppm")
@@ -1440,35 +1721,81 @@ class AssistantWindow:
         """A tab in black words with its icon in its colour while you're on it, else grey, or colour while the mouse
         fades it."""
         icon, text = self.tab_buttons[key]
-        colour = TEXT if on else colour or FAINT
+        colour = TEXT if on else colour or NAV_IDLE
         self.side.itemconfigure(icon, fill=TINTS[TAB_TINTS[key]][0] if on else colour)
         self.side.itemconfigure(text, fill=colour, font=self.f_bold if on else self.f_body)
 
     def _hover_tab(self, key, inside):
-        start, end = self.side.itemcget(self.tab_buttons[key][1], "fill"), MUTED if inside else FAINT
+        start, end = self.side.itemcget(self.tab_buttons[key][1], "fill"), NAV_OVER if inside else NAV_IDLE
         self.animate(f"hover {key}", 140, lambda t: self._paint_tab(key, False, mix(start, end, t)))
+
+    def _lay_nav(self):
+        """The tabs down the sidebar, group by group: each group's name over its tabs with room above it, and a
+        group that's folded shut (NAV_FOLDS, not in nav_open) as its name alone, unless you're on a tab of its own.
+        Where each is kept: nav_y a tab's top, group_y a group's name's."""
+        c, px = self.side, self.px
+        pad, y = px(22), self.nav_top
+        self.nav_y, self.group_y = {}, {}
+        for name, keys in NAV:
+            shown = True
+            if name:
+                y += px(8)
+                shown = name not in NAV_FOLDS or name in self.nav_open or getattr(self, "current_tab", None) in keys
+                words, arrow = self.nav_groups[name]
+                c.coords(words, pad, y + self.nav_gap // 2 + px(2))
+                c.coords(arrow, px(SIDEBAR) - pad, y + self.nav_gap // 2 + px(2))
+                c.itemconfigure(arrow, text="" if shown else "")  # down while open, along while shut
+                self.group_y[name] = y
+                y += self.nav_gap
+            for key in keys:
+                for item, x in zip(self.tab_buttons[key], (pad, pad + px(28))):
+                    c.coords(item, x, y + self.nav_h // 2)
+                    c.itemconfigure(item, state="normal" if shown else "hidden")
+                if shown:
+                    self.nav_y[key] = y
+                    y += self.nav_h
+
+    def _fold_group(self, name):
+        """A group that folds (NAV_FOLDS), opened or shut from its name, and kept that way."""
+        if name not in NAV_FOLDS:
+            return
+        self.nav_open ^= {name}
+        settings.put("nav_open", sorted(self.nav_open))
+        self._lay_nav()
+        if hasattr(self, "current_tab"):
+            self._slide_nav_bar()
 
     def _side_row(self, y):
         """The tab at y down the sidebar, or None."""
-        i = (y - self.nav_top) // self.nav_h if y >= self.nav_top else -1
-        return TABS[int(i)][0] if 0 <= i < len(TABS) else None
+        return next((key for key, top in self.nav_y.items() if top <= y < top + self.nav_h), None)
+
+    def _side_group(self, y):
+        """The group that folds whose name is at y down the sidebar, or None."""
+        return next((name for name, top in self.group_y.items()
+                     if name in NAV_FOLDS and top <= y < top + self.nav_gap), None)
 
     def _side_motion(self, event):
-        """The mouse over the sidebar (None: off it): the tab under it fades darker, and Quit goes black."""
+        """The mouse over the sidebar (None: off it): the tab under it fades darker, a group's name that folds goes
+        black, and so does Quit."""
         c = self.side
         over = c.find_withtag("current") if event is not None else ()
         leave = bool(over) and over[0] == self.leave
         key = self._side_row(event.y) if event is not None and not leave else None
+        group = self._side_group(event.y) if event is not None and not leave and not key else None
         if key != self.side_over:
             for k, inside in ((self.side_over, False), (key, True)):
                 if k and k != getattr(self, "current_tab", None):
                     self._hover_tab(k, inside)
             self.side_over = key
-            c.configure(cursor="hand2" if key else "")
+        if group != self.group_over:
+            for name, inside in ((self.group_over, False), (group, True)):
+                for item in self.nav_groups.get(name, ()):
+                    c.itemconfigure(item, fill=NAV_OVER if inside else NAV_IDLE)
+            self.group_over = group
         if leave != self.leave_hot:
             self.leave_hot = leave
-            c.itemconfigure(self.leave, fill=TEXT if leave else FAINT)
-            c.configure(cursor="hand2" if leave or key else "")
+            c.itemconfigure(self.leave, fill=TEXT if leave else NAV_IDLE)
+        c.configure(cursor="hand2" if leave or key or group else "")
 
     def _side_click(self, event):
         over = self.side.find_withtag("current")
@@ -1476,9 +1803,11 @@ class AssistantWindow:
             self.quit()
         elif self._side_row(event.y):
             self._select_tab(self._side_row(event.y))
+        elif self._side_group(event.y):
+            self._fold_group(self._side_group(event.y))
 
     def _tab_step(self, step):
-        keys = [k for k, _ in TABS]
+        keys = [key for _, group in NAV for key in group if key in self.nav_y]  # the ones shown, top to bottom
         self._select_tab(keys[(keys.index(self.current_tab) + step) % len(keys)])
         return "break"
 
@@ -1489,16 +1818,14 @@ class AssistantWindow:
         except (KeyError, tk.TclError):
             on = False
         if on:
-            px, i = self.px, [k for k, _ in TABS].index(self.current_tab)
-            y = self.nav_top + i * self.nav_h
+            px, y = self.px, self.nav_y[self.current_tab]
             self.side.coords(self.nav_ring, px(6), y + px(2), int(self.side.cget("width")) - px(10),
                              y + self.nav_h - px(2))
         self.side.itemconfigure(self.nav_ring, state="normal" if on else "hidden")
 
     def _slide_nav_bar(self):
         c, px = self.side, self.px
-        i = [k for k, _ in TABS].index(self.current_tab)
-        y, h = self.nav_top + i * self.nav_h + px(3), self.nav_h - px(6)
+        y, h = self.nav_y[self.current_tab] + px(3), self.nav_h - px(6)
         x0, x1 = px(10), int(c.cget("width")) - px(12)
         start = getattr(self, "nav_at", y)  # the first time it's just there
         c.itemconfigure(self.nav_bar, fill=TINTS[TAB_TINTS[self.current_tab]][1])
@@ -1526,9 +1853,26 @@ class AssistantWindow:
         self.badge_dot = head.create_oval(0, 0, 0, 0, fill=ACCENT, width=0, state="hidden", tags="badge")
         self.badge_text = head.create_text(0, 0, anchor="w", text="Full access", font=self.f_badge, fill=BG,
                                            state="hidden", tags="badge")
+        # her quick actions, a small box by the mode with its keys on it (20 November 2026): a click or Ctrl+K opens
+        # them over the window (Palette)
+        self.search_box = head.create_polygon(0, 0, 0, 0, smooth=True, fill=BG, outline=EDGE, tags="search")
+        self.search_icon = head.create_text(0, 0, anchor="w", text="", font=self.f_icon, fill=MUTED,
+                                            tags="search")
+        self.search_words = head.create_text(0, 0, anchor="w", text="Search", font=self.f_body, fill=MUTED,
+                                             tags="search")
+        self.search_cap = head.create_polygon(0, 0, 0, 0, smooth=True, fill=ACCENT_SOFT, outline=LINE, tags="search")
+        self.search_keys = head.create_text(0, 0, anchor="center", text="Ctrl K", font=self.f_key, fill=MUTED,
+                                            tags="search")
+        self.palette = None  # her quick actions while they're open
+        head.tag_bind("search", "<Button-1>", lambda e: self.open_palette())
+        head.tag_bind("search", "<Enter>", lambda e: head.itemconfigure(self.search_box, outline=TEXT), add="+")
+        head.tag_bind("search", "<Leave>", lambda e: head.itemconfigure(self.search_box, outline=EDGE), add="+")
+        self.root.bind("<Control-k>", lambda e: self.open_palette())
+        for cls in ("TEntry", "TCombobox", "Text"):  # Ctrl+K cuts to a line's end in a text box: hers wins
+            self.root.bind_class(cls, "<Control-k>", lambda e: self.open_palette())
         head.tag_bind("badge", "<Button-1>", lambda e: self.set_full_access(False))
         head.tag_bind("mode", "<Button-1>", self._mode_click)
-        for tag in ("badge", "mode"):
+        for tag in ("badge", "mode", "search"):
             head.tag_bind(tag, "<Enter>", lambda e: head.configure(cursor="hand2"))
             head.tag_bind(tag, "<Leave>", lambda e: head.configure(cursor=""))
         self.dot_colour, self.dot_busy, self.dot_job = STATUS_COLORS["Starting"], False, None
@@ -1562,6 +1906,16 @@ class AssistantWindow:
         mx = w - pad - mw
         c.move("mode", mx - ox, top - oy)
         self.mode_at, right = (mx, top), mx
+        # the quick actions' box left of the mode, as tall as it: a glass, "Search", and its keys on a cap
+        cy, x1 = top + mh / 2, mx - px(12)
+        kw = self._measure(self.f_key, "Ctrl K") + px(12)
+        x0 = x1 - (px(34) + self._measure(self.f_body, "Search") + px(14) + kw + px(7))
+        c.coords(self.search_box, *rounded(x0, top, x1, top + mh, px(8)))
+        c.coords(self.search_icon, x0 + px(11), cy + px(1))
+        c.coords(self.search_words, x0 + px(34), cy)
+        c.coords(self.search_cap, *rounded(x1 - px(7) - kw, cy - px(10), x1 - px(7), cy + px(10), px(5)))
+        c.coords(self.search_keys, x1 - px(7) - kw / 2, cy)
+        right = mx = x0
         if self.badge_on:
             cy, bh, x1 = top + mh / 2, px(26), mx - px(12)
             x0 = x1 - self._measure(self.f_badge, "Full access") - px(32)
@@ -1589,6 +1943,7 @@ class AssistantWindow:
             c.configure(height=height)
         c.coords(self.head_line, 0, height - 1, w, height - 1)
         self._dots(c, w, height)
+        self._glass_soon()  # the glass behind it, for its size now
 
     def _lay_status(self):
         """How she's doing along the top: her dot, what she's at, and the rest in grey, cut short to the room it has."""
@@ -1783,26 +2138,55 @@ class AssistantWindow:
         message.pack(side="left", padx=self.px(10))
         return message
 
-    def _part(self, parent, title, tint, icon):
+    def _part(self, parent, title, tint, icon, folded=False):
         """A part of a page (29 October 2026): a card with a hairline round it, its icon on a tint of its colour and
-        its name in thin capitals at its top, then its rows. (the card, the frame its rows are gridded in)"""
+        its name in thin capitals at its top, then its rows. It folds (20 November 2026, the owner: "fold
+        unimportant content into accordions"): a click on its top, or Enter on it, shuts it to its name and opens it
+        again, and how you left it is kept; folded is how it starts before you've touched it. (the card, the frame
+        its rows are gridded in)"""
         px = self.px
         colour, soft = TINTS[tint]
         card = tk.Frame(parent, bg=BG, highlightthickness=1, highlightbackground=LINE, highlightcolor=LINE,
                         padx=px(20), pady=px(14))
-        top = tk.Frame(card, bg=BG)
+        top = tk.Frame(card, bg=BG, cursor="hand2", takefocus=1, highlightthickness=1, highlightbackground=BG,
+                       highlightcolor=TEXT)
         top.pack(fill="x")
         tk.Label(top, text=icon, font=self.f_icon, fg=colour, bg=soft, width=2, pady=px(4)).pack(side="left")
         self._label(top, caps(title), self.f_section).pack(side="left", padx=(px(12), 0))
+        arrow = tk.Label(top, font=self.f_fold, fg=MUTED, bg=BG)
+        arrow.pack(side="right", padx=(0, px(2)))
         rows = tk.Frame(card, bg=BG)
-        rows.pack(fill="x")
         rows.grid_columnconfigure(0, weight=1)
+        kept = settings.get("parts_folded")
+        kept = kept if isinstance(kept, dict) else {}
+        shut = [bool(kept.get(title, folded))]
+
+        def show():
+            arrow.configure(text="" if shut[0] else "")  # along while shut, down while open
+            if shut[0]:
+                rows.pack_forget()
+            else:
+                rows.pack(fill="x")
+
+        def fold(_=None):
+            shut[0] = not shut[0]
+            now = settings.get("parts_folded")
+            settings.put("parts_folded", {**(now if isinstance(now, dict) else {}), title: shut[0]})
+            show()
+        for w in (top, *top.winfo_children()):
+            w.configure(cursor="hand2")
+            w.bind("<Button-1>", fold)
+        top.bind("<Return>", fold)
+        top.bind("<space>", fold)
+        show()
+        card.unfold = lambda: shut[0] and fold()  # for a jump to it (_jump): open when you get there
         return card, rows
 
     def _jumps(self, page, parts):
         """Along the top of a long page, staying there as it scrolls: each part's name by a dot of its colour, a
         click on one scrolling to it. parts: (name, colour, its card)."""
         px = self.px
+        page.parts = parts  # for her quick actions, which go to each by name (Palette)
         bar = tk.Frame(page.outer, bg=BG)
         bar.pack(side="top", fill="x", pady=(0, px(14)), before=page.canvas)
         for name, tint, card in parts:
@@ -1820,6 +2204,7 @@ class AssistantWindow:
 
     def _jump(self, page, card):
         """A long page scrolled till card is at its top, quickly, then settling."""
+        getattr(card, "unfold", lambda: None)()  # a part folded shut opens as you go to it
         page.update_idletasks()
         canvas, total = page.canvas, max(1, page.winfo_height())
         end = max(0.0, min(1.0, (card.winfo_rooty() - page.winfo_rooty()) / total))
@@ -1926,45 +2311,50 @@ class AssistantWindow:
 
     # ------------------------------------------------------------------ home
     def _build_home(self):
-        page = self._page("Your Harry stats", "Everything since you started using Harry. Refreshes each time you open this tab.",
-                          scroll=True)
+        """Home, in the order you'd use it (20 November 2026, the owner: "base the whole hierarchy on the order of
+        operations"): first the box to ask her in, with its Send; then what she's done for you, your dictation's
+        figures together and her commands' together, where there were six cards alike; then what you use most; and
+        how to use her last, folded shut till you want it."""
+        px = self.px
+        page = self._page("Home", "Ask her here or out loud, then see what she's done for you.", scroll=True)
         ask = tk.Frame(page, bg=BG)  # typing to her instead of talking (28 October 2026)
-        ask.pack(fill="x", pady=(0, self.px(16)))
-        self.ask_box = HintEntry(ask, "Type to Harry instead of talking (or tap right Alt twice, anywhere)", width=64)
-        self.ask_box.pack(side="left", fill="x", expand=True, ipady=self.px(3))
+        ask.pack(fill="x")
+        self.ask_box = HintEntry(ask, "Ask Harry anything, or tell her what to do", width=64)
+        self.ask_box.pack(side="left", fill="x", expand=True, ipady=px(6))
         self.ask_box.bind("<Return>", lambda e: self.ask_typed())
-        ttk.Button(ask, text="Send", style="Accent.TButton", command=self.ask_typed).pack(side="left",
-                                                                                       padx=(self.px(8), 0))
-        grid = tk.Frame(page, bg=BG)
-        grid.pack(fill="x")
-        for c in range(3):
-            grid.grid_columnconfigure(c, weight=1, uniform="card")
+        self.send = SendButton(self, ask, self.ask_typed)
+        self.send.canvas.pack(side="left", padx=(px(10), 0))
+        self._label(page, "Or just say it. Tap right Alt twice, anywhere, to type to her.", self.f_small,
+                    MUTED).pack(anchor="w", pady=(px(7), px(22)))
         self.stat_cards = []
-        for i in range(6):
-            card = tk.Frame(grid, bg=BG, padx=self.px(16), pady=self.px(14), highlightthickness=1,
-                            highlightbackground=LINE, highlightcolor=LINE)
-            card.grid(row=i // 3, column=i % 3, sticky="nsew", padx=(0, self.px(14) if i % 3 < 2 else 0),
-                      pady=(0, self.px(14)))
-            colour, soft = TINTS[STAT_TINTS[i]]
-            tk.Label(card, text=STAT_ICONS[i], font=self.f_icon_big, fg=colour, bg=soft, width=2,
-                     pady=self.px(4)).pack(anchor="w", pady=(0, self.px(8)))
-            value = self._label(card, "", self.f_value, bg=BG)
-            title = self._label(card, "", self.f_bold, bg=BG)
-            sub = self._label(card, "", self.f_small, MUTED, BG)
-            for v in (value, title, sub):
-                v.pack(fill="x")
-            for w in (card, *card.winfo_children()):  # it lights up in its colour under the mouse
-                w.bind("<Enter>", lambda e, c=card, n=i: self._light_card(c, n, True))
-                w.bind("<Leave>", lambda e, c=card, n=i: self._light_card(c, n, False, e))
-            self.stat_cards.append((value, title, sub))
+        for name, tint, icon, first in (("Dictation", "blue", "\ue720", 0), ("Commands", "green", "\ue945", 3)):
+            card, box = self._part(page, name, tint, icon)
+            card.pack(fill="x", pady=(0, px(14)))
+            for n in range(3):  # three figures side by side, a hairline between them
+                i, col = first + n, n * 2
+                box.grid_columnconfigure(col, weight=1, uniform="figure")
+                if n:
+                    tk.Frame(box, bg=LINE, width=1).grid(row=0, column=col - 1, sticky="ns", pady=(px(14), px(4)))
+                cell = tk.Frame(box, bg=BG)
+                cell.grid(row=0, column=col, sticky="nsew", padx=(px(18) if n else 0, px(8)), pady=(px(12), px(2)))
+                value = self._label(cell, "", self.f_value)
+                value.pack(anchor="w")
+                named = tk.Frame(cell, bg=BG)
+                named.pack(anchor="w", pady=(px(2), 0))
+                tk.Label(named, text=STAT_ICONS[i], font=self.f_icon, fg=TINTS[STAT_TINTS[i]][0],
+                         bg=BG).pack(side="left", padx=(0, px(6)))
+                title = self._label(named, "", self.f_bold)
+                title.pack(side="left")
+                sub = self._label(cell, "", self.f_small, MUTED, wraplength=px(200))
+                sub.pack(anchor="w")
+                self.stat_cards.append((value, title, sub))
         used, box = self._part(page, "Most used", "amber", "\ue734")
-        used.pack(fill="x", pady=(0, self.px(14)))
-        self.top_actions = self._label(box, "", fg=MUTED, wraplength=self.px(660))
-        self.top_actions.grid(row=0, column=0, sticky="w", pady=(self.px(8), 0))
-        how, box = self._part(page, "How to use", "blue", "\ue897")
+        used.pack(fill="x", pady=(0, px(14)))
+        self.top_actions = self._label(box, "", fg=MUTED, wraplength=px(660))
+        self.top_actions.grid(row=0, column=0, sticky="w", pady=(px(8), 0))
+        how, box = self._part(page, "How to use", "blue", "\ue897", folded=True)
         how.pack(fill="x")
-        self._label(box, HOW_TO, fg=MUTED, wraplength=self.px(660)).grid(row=0, column=0, sticky="w",
-                                                                         pady=(self.px(8), 0))
+        self._label(box, HOW_TO, fg=MUTED, wraplength=px(660)).grid(row=0, column=0, sticky="w", pady=(px(8), 0))
         return page
 
     def ask_typed(self):
@@ -1983,15 +2373,6 @@ class AssistantWindow:
         was = label.cget("text").replace(",", "")
         start = int(was) if was.isdigit() and int(was) <= end else 0
         self.animate(key, 700, lambda t: label.configure(text=f"{round(start + (end - start) * t):,}"))
-
-    def _light_card(self, card, n, inside, event=None):
-        if event is not None:
-            under = self.root.winfo_containing(event.x_root, event.y_root)
-            if under is not None and (under is card or under.master is card):
-                return
-        start, end = card.cget("highlightbackground"), TINTS[STAT_TINTS[n]][0] if inside else LINE
-        self.animate(f"card {n}", 160, lambda t: card.configure(highlightbackground=mix(start, end, t),
-                                                                highlightcolor=mix(start, end, t)))
 
     def _load_stats(self):
         words = dictations = words_today = dictations_today = 0
@@ -3588,6 +3969,7 @@ class AssistantWindow:
                 self.models_loaded = True
                 self._auto_refresh()
         self.current_tab = key
+        self._lay_nav()  # a tab in a group folded shut: its group opens round it
         page = getattr(self.pages[key], "outer", self.pages[key])
         page.tkraise()
         rise = self.px(16)  # it comes up into place, over the page before's blank top
@@ -3599,6 +3981,105 @@ class AssistantWindow:
             self._paint_tab(name, name == key)
         self._slide_nav_bar()
         self._show_head(key)
+
+    # ------------------------------------------------------------------ quick actions
+    def open_palette(self):
+        """Her quick actions over the window (Palette), from the box at the top or Ctrl+K; again puts them away."""
+        if self.palette is not None:
+            self.palette.close()
+        else:
+            self.palette = Palette(self)
+        return "break"
+
+    def quick_actions(self):
+        """What her quick actions offer, as (icon, its name, its kind, what does it): every tab, every part of the
+        long pages by name, and the few things the window itself does."""
+        titles, out = dict(TABS), []
+        for _, keys in NAV:
+            out += [(ICONS[key], titles[key], "Go to", lambda key=key: self._select_tab(key)) for key in keys]
+        for _, keys in NAV:
+            for key in keys:
+                page = self.pages[key]
+                for name, _, card in getattr(page, "parts", ()):
+                    def go(key=key, page=page, card=card):
+                        self._select_tab(key)
+                        self.root.after(300, lambda: self._jump(page, card))
+                    out.append((ICONS[key], f"{titles[key]}: {name}", "Section", go))
+        other = MODES[1 - MODES.index(self.mode)]
+        listen = {"wake": "Listen for \u201cHey Harry\u201d", "ptt": "Hold right Alt to talk"}[other]
+        out += [("\ue720", identity.named(listen), "Mode", lambda: self.set_mode(other)),
+                ("\ue718", "Stop keeping this window on top" if self.on_top else "Keep this window on top", "Window",
+                 self.toggle_on_top),
+                ("\ue706", "Turn frosted glass off" if settings.get("glass") else "Turn frosted glass on", "Window",
+                 lambda: self.set_glass(not settings.get("glass"))),
+                ("\ue897", "Show the walkthrough", "Help", self.open_walkthrough),
+                ("\ue921", "Minimise to the taskbar", "Window", self.root.iconify),
+                ("\ue7e8", identity.named("Quit Hey Harry"), "Window", self.quit)]
+        return out
+
+    # ------------------------------------------------------------------ frosted glass
+    def _start_glass(self):
+        """Her frosted glass (glass.py), made on a thread as she starts and handed back through the events queue: a
+        picture under all else on the sidebar and on the top, filled once it's made and each time the window moves."""
+        self.glass_photos, self.glass_at, self.glass_job = {}, {}, None
+        for name, canvas in (("side", self.side), ("top", self.head)):
+            photo = self.glass_photos[name] = tk.PhotoImage(master=self.root)
+            canvas.create_image(0, 0, image=photo, anchor="nw", tags="glass")
+            canvas.tag_lower("glass")
+        self.root.bind("<Configure>", lambda e: e.widget is self.root and self._glass_soon(), add="+")
+        if settings.get("glass"):
+            self._make_glass()
+
+    def _make_glass(self):
+        size = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        threading.Thread(target=lambda: self.events.put(("glass", glass.frost(size))), name="glass",
+                         daemon=True).start()
+
+    def _glass_made(self, frosted):
+        """The wallpaper frosted (None: there's none, so white as before), drawn behind each panel."""
+        if frosted is None or not settings.get("glass"):
+            return
+        self.glass, self.glass_at = frosted, {}
+        self._lay_glass()
+
+    def _glass_soon(self):
+        """The glass drawn again once the window's been still a moment: a move is some 80 ms of drawing, so never
+        while it's being dragged."""
+        if self.glass is None:  # none yet, or none at all
+            return
+        if self.glass_job is not None:
+            self.root.after_cancel(self.glass_job)
+        self.glass_job = self.root.after(160, self._lay_glass)
+
+    def _lay_glass(self):
+        """The glass behind the sidebar and the top for where each is on the screen now, and behind her logo."""
+        self.glass_job = None
+        if self.glass is None:
+            return
+        for name, canvas, white in (("side", self.side, GLASS_SIDE), ("top", self.head, GLASS_TOP)):
+            at = canvas.winfo_rootx(), canvas.winfo_rooty(), canvas.winfo_width(), canvas.winfo_height()
+            if at[2] < 2 or at == self.glass_at.get(name):
+                continue
+            self.glass_at[name] = at
+            self.glass_photos[name].configure(data=glass.cut(self.glass, *at, white), format="ppm")
+            canvas.tag_lower("glass")
+        w, h = self.logo_photo.width(), self.logo_photo.height()
+        if w and h:  # her logo's corners over the glass behind them, not over white
+            x, y = self.side.winfo_rootx() + self.px(22), self.side.winfo_rooty() + self.px(38) - h // 2
+            self.logo_back = glass.pane(self.glass, x, y, w, h, GLASS_SIDE) / 255.0
+            self._draw_logo(1.0)
+
+    def set_glass(self, on):
+        """Her frosted glass on or off, from her quick actions, and kept."""
+        settings.put("glass", bool(on))
+        if on:
+            self._make_glass()
+            return
+        self.glass, self.glass_at, self.logo_back = None, {}, None
+        for photo in self.glass_photos.values():
+            photo.blank()
+            photo.configure(width=1, height=1)
+        self._draw_logo(1.0)
 
     # ------------------------------------------------------------------ assistant
     def _start_worker(self):
@@ -3629,6 +4110,8 @@ class AssistantWindow:
                     self._note(event[1], error=event[2])
                 elif event[0] == "models":
                     self._show_models()
+                elif event[0] == "glass":  # the wallpaper, frosted on its thread (_start_glass)
+                    self._glass_made(event[1])
                 elif event[0] == "lists":  # a provider's voices read again (VoiceSource)
                     if self.list_picker is not None:
                         self.list_picker.reload()

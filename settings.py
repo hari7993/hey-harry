@@ -10,6 +10,9 @@ DEFAULTS = {
     "mode": "ptt",
     "mic": "",
     "keep_on_top": False,
+    # her window's frosted glass (glass.py, 20 November 2026): the wallpaper, blurred, behind her sidebar, the top and
+    # her quick actions. Off from her quick actions (Ctrl+K), and white again
+    "glass": True,
     # free, the same model as siri.FAST_MODEL. It was space-bunny-free on OpenCode Zen, gone (410) since 11 October,
     # so a fresh install failed every request until Settings refreshed the model list
     "llm_model": "kilo/nvidia/nemotron-3-ultra-550b-a55b:free",
