@@ -3972,9 +3972,16 @@ class AssistantWindow:
         self.current_tab = key
         self._lay_nav()  # a tab in a group folded shut: its group opens round it
         page = getattr(self.pages[key], "outer", self.pages[key])
+        # only the page you're on is in the window, and it's just there (20 November 2026, the owner: opening one
+        # was "like broken and slow"). All twelve used to lie one over the other, laid out and drawn each time the
+        # window opened or changed size, and the one opened slid up 16 px over a quarter of a second: a move of its
+        # hundreds of controls each frame, 50 ms and more a frame, which held the whole window 0.2 to 0.8 s
+        for other in self.pages.values():
+            other = getattr(other, "outer", other)
+            if other is not page and other.winfo_manager():
+                other.place_forget()
+        page.place(x=0, y=0, relwidth=1, relheight=1)
         page.tkraise()
-        rise = self.px(16)  # it comes up into place, over the page before's blank top
-        self.animate("page", 260, lambda t: page.place_configure(y=round(rise * (1 - t))))
         for name in self.tab_buttons:
             job = self._anims.pop(f"hover {name}", None)  # a fade from the mouse mustn't paint over it after
             if job:
