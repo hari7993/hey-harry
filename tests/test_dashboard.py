@@ -120,6 +120,22 @@ class Glass(unittest.TestCase):
         self.assertTrue(ppm.startswith(b"P6 5 3 255 "))
         self.assertEqual(len(ppm), len(b"P6 5 3 255 ") + 5 * 3 * 3)
 
+    def test_a_panels_glass_is_made_at_one_pixel_in_four_so_a_page_opens_smooth(self):
+        """20 November 2026, the owner: "very slow ... not smooth". Every pixel of a sidebar and the top was 86 ms."""
+        import time
+        import numpy as np
+        frosted = np.broadcast_to(np.linspace(0, 255, 240).astype(np.uint8)[None, :, None], (150, 240, 3))
+        small = glass.pane(frosted, 300, 200, 330, 1050, 0.8, assistant_ui.GLASS_STEP)
+        self.assertEqual(small.shape, (263, 83, 3))  # a sixteenth of its pixels
+        whole = glass.pane(frosted, 300, 200, 330, 1050, 0.8)
+        near = whole[2::4, 2::4].astype(int)  # the same glass, at the pixels it was made for
+        self.assertLess(abs(small[:near.shape[0], :near.shape[1]].astype(int) - near).max(), 3)
+        began = time.perf_counter()
+        for _ in range(5):
+            glass.cut(frosted, 300, 200, 330, 1050, 0.8, assistant_ui.GLASS_STEP)
+            glass.cut(frosted, 630, 200, 1260, 260, 0.87, assistant_ui.GLASS_STEP)
+        self.assertLess((time.perf_counter() - began) / 5, 0.03)
+
     def test_the_wallpaper_frosted_to_the_screens_size_and_none_without_one(self):
         import cv2
         import numpy as np

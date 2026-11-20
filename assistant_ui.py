@@ -259,6 +259,7 @@ ACCENT_SOFT = "#f5f5f5"  # a button under the mouse
 NAV_IDLE, NAV_OVER = "#5b6472", "#262626"
 # her frosted glass (glass.py): how far towards white the blurred wallpaper is washed behind each panel
 GLASS_SIDE, GLASS_TOP, GLASS_OVER = 0.80, 0.87, 0.88  # the sidebar, the top, and her quick actions over the window
+GLASS_STEP = 4  # a panel's glass is made at one pixel in this many each way and drawn out by Tk (glass.pane)
 # a few colours, soft (29 October 2026, the owner: "add minimal color, not only white and black"): each part of a
 # page, each Home card and the tab you're on has one, its icon in it on a tint of it
 TINTS = {"orange": ("#f54a00", "#fff1e8"), "blue": ("#2563eb", "#edf3ff"), "green": ("#16a34a", "#e9f9ef"),
@@ -1227,8 +1228,8 @@ class Palette:
         c.pack(fill="both", expand=True, padx=1, pady=1)  # a hairline round it, the Toplevel's own colour
         self.photo = None
         if app.glass is not None:  # the wallpaper behind it, frosted, as behind her sidebar
-            self.photo = tk.PhotoImage(master=root, format="ppm",
-                                       data=glass.cut(app.glass, x + 1, y + 1, self.w - 2, h - 2, GLASS_OVER))
+            self.photo = tk.PhotoImage(master=root)
+            app._glass_photo(self.photo, (x + 1, y + 1, self.w - 2, h - 2), GLASS_OVER)
             c.create_image(0, 0, image=self.photo, anchor="nw")
         pad = px(18)
         c.create_text(pad, self.head_h // 2, anchor="w", text="", font=app.f_icon_big, fill=MUTED)
@@ -4056,18 +4057,27 @@ class AssistantWindow:
         self.glass_job = None
         if self.glass is None:
             return
+        moved = False
         for name, canvas, white in (("side", self.side, GLASS_SIDE), ("top", self.head, GLASS_TOP)):
-            at = canvas.winfo_rootx(), canvas.winfo_rooty(), canvas.winfo_width(), canvas.winfo_height()
+            # the top's as tall as it ever gets, so a page with more words under its name needs no new glass: only
+            # a move or a new width does (20 November 2026: made again on each page opened, the page stuttered)
+            high = self.px(260) if name == "top" else canvas.winfo_height()
+            at = canvas.winfo_rootx(), canvas.winfo_rooty(), canvas.winfo_width(), high
             if at[2] < 2 or at == self.glass_at.get(name):
                 continue
-            self.glass_at[name] = at
-            self.glass_photos[name].configure(data=glass.cut(self.glass, *at, white), format="ppm")
+            self.glass_at[name], moved = at, True
+            self._glass_photo(self.glass_photos[name], at, white)
             canvas.tag_lower("glass")
         w, h = self.logo_photo.width(), self.logo_photo.height()
-        if w and h:  # her logo's corners over the glass behind them, not over white
+        if moved and w and h:  # her logo's corners over the glass behind them, not over white
             x, y = self.side.winfo_rootx() + self.px(22), self.side.winfo_rooty() + self.px(38) - h // 2
             self.logo_back = glass.pane(self.glass, x, y, w, h, GLASS_SIDE) / 255.0
             self._draw_logo(1.0)
+
+    def _glass_photo(self, photo, at, white):
+        """photo filled with the glass at (x, y, w, h) on the screen: made small (GLASS_STEP) and drawn out by Tk."""
+        small = tk.PhotoImage(master=self.root, data=glass.cut(self.glass, *at, white, GLASS_STEP), format="ppm")
+        photo.tk.call(photo, "copy", small, "-zoom", GLASS_STEP, "-shrink")
 
     def set_glass(self, on):
         """Her frosted glass on or off, from her quick actions, and kept."""

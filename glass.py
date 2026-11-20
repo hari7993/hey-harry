@@ -54,16 +54,18 @@ def frost(size, path=None):
         return None
 
 
-def pane(frosted, x, y, w, h, white):
+def pane(frosted, x, y, w, h, white, step=1):
     """The w by h of the glass at x, y on the screen: frosted (frost's, one in SMALLER of the screen's pixels) drawn
     out smooth to full size there and washed towards white by white (0 the wallpaper as blurred, 1 plain white), an
     array h by w by 3 of 0-255. Only what's behind a panel is ever made, a few ms each time the window moves, so all
-    she keeps is the small picture, about 100 kB. Off the screen's edge (a window dragged half away, another
-    monitor) it's the edge's own colour carried on."""
+    she keeps is the small picture, about 100 kB. step: one pixel in that many each way, for a panel's whole
+    background, which Tk then draws out (20 November 2026: at every pixel a sidebar and the top took 86 ms, and
+    opening a page stuttered; one in 4 is 16 times less, and glass this soft shows no difference). Off the screen's
+    edge (a window dragged half away, another monitor) it's the edge's own colour carried on."""
     import numpy as np
     sh, sw = frosted.shape[:2]
-    fy = np.clip((np.arange(y, y + h) + 0.5) / SMALLER - 0.5, 0, sh - 1)
-    fx = np.clip((np.arange(x, x + w) + 0.5) / SMALLER - 0.5, 0, sw - 1)
+    fy = np.clip((np.arange(y, y + h, step) + step / 2) / SMALLER - 0.5, 0, sh - 1)
+    fx = np.clip((np.arange(x, x + w, step) + step / 2) / SMALLER - 0.5, 0, sw - 1)
     y0, x0 = fy.astype(np.intp), fx.astype(np.intp)
     y1, x1 = np.minimum(y0 + 1, sh - 1), np.minimum(x0 + 1, sw - 1)
     wy, wx = (fy - y0).astype(np.float32)[:, None, None], (fx - x0).astype(np.float32)[None, :, None]
@@ -72,6 +74,7 @@ def pane(frosted, x, y, w, h, white):
     return (full * (1 - white) + 255.0 * white + 0.5).astype(np.uint8)
 
 
-def cut(frosted, x, y, w, h, white):
+def cut(frosted, x, y, w, h, white, step=1):
     """pane's, as a PPM picture for tk.PhotoImage."""
-    return b"P6 %d %d 255 " % (w, h) + pane(frosted, x, y, w, h, white).tobytes()
+    made = pane(frosted, x, y, w, h, white, step)
+    return b"P6 %d %d 255 " % (made.shape[1], made.shape[0]) + made.tobytes()
