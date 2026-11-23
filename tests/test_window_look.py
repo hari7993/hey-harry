@@ -21,28 +21,38 @@ class Words(unittest.TestCase):
 
 
 class Wheel(unittest.TestCase):
-    """29 October 2026: the wheel scrolled a page only over its margins, and the owner found it very hard to."""
+    """29 October 2026: the wheel scrolled a page only over its margins, and the owner found it very hard to. Since
+    22 November 2026 it glides there (assistant_ui.Glide), a pixel a unit; frames run at once here."""
 
     def window(self, under, mapped=True):
-        canvas = mock.Mock()
-        page = SimpleNamespace(outer=".page", canvas=canvas, bar=mock.Mock(winfo_ismapped=lambda: mapped))
-        app = SimpleNamespace(pages={"settings": page}, current_tab="settings",
+        canvas, frames = mock.Mock(), []
+        page = SimpleNamespace(outer=".page", canvas=canvas, bar=mock.Mock(winfo_ismapped=lambda: mapped),
+                               glide=assistant_ui.Glide(lambda n: canvas.yview_scroll(n, "units"),
+                                                        lambda ms, fn: frames.append(fn)))
+        app = SimpleNamespace(pages={"settings": page}, current_tab="settings", s=1.0,
                               root=mock.Mock(winfo_containing=lambda x, y: under))
+        self.frames = frames
         return app, canvas
 
     def turn(self, app, delta=-120):
         assistant_ui.AssistantWindow._wheel(app, SimpleNamespace(x_root=10, y_root=10, delta=delta))
+        while self.frames:
+            self.frames.pop(0)()
 
-    def test_over_words_deep_in_the_page_it_scrolls_three_steps_a_notch(self):
+    def scrolled(self, canvas):
+        return sum(c.args[0] for c in canvas.yview_scroll.call_args_list)
+
+    def test_over_words_deep_in_the_page_it_glides_a_notch_down(self):
         app, canvas = self.window(".page.!canvas.!frame.!frame3.!label7")
         self.turn(app)
-        canvas.yview_scroll.assert_called_once_with(3, "units")
+        self.assertEqual(self.scrolled(canvas), assistant_ui.Glide.NOTCH)
+        self.assertGreater(canvas.yview_scroll.call_count, 5)  # in steps, not one jump
 
     def test_a_touchpads_small_turns_add_up(self):
         app, canvas = self.window(".page.!canvas.!frame.!label")
         for _ in range(3):
-            self.turn(app, delta=-30)  # three quarters of a notch: two steps and a bit
-        self.assertEqual(sum(c.args[0] for c in canvas.yview_scroll.call_args_list), 2)
+            self.turn(app, delta=-30)  # three quarters of a notch
+        self.assertAlmostEqual(self.scrolled(canvas), 0.75 * assistant_ui.Glide.NOTCH, delta=2)
 
     def test_never_off_the_page_over_a_table_or_with_nothing_to_scroll(self):
         for under, mapped in ((".pages2.!label", True), (".page.!canvas.!frame.!label", False), (None, True),

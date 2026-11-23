@@ -125,6 +125,9 @@ class _Reader(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.skip, self.parts, self.title, self.description, self.in_title = 0, [], "", "", False
+        # the site's own colour and name, as it declares them (theme-color, og:site_name): her window draws a page's
+        # frame in them, so any site she reads looks like itself (chat.Bento, 22 November 2026)
+        self.theme, self.site = "", ""
 
     def handle_starttag(self, tag, attrs):
         if tag in self.SKIP:
@@ -133,8 +136,13 @@ class _Reader(HTMLParser):
             self.in_title = True
         if tag == "meta":
             a = dict(attrs)
-            if (a.get("name") or a.get("property") or "").lower() in ("description", "og:description"):
+            key = (a.get("name") or a.get("property") or "").lower()
+            if key in ("description", "og:description"):
                 self.description = self.description or (a.get("content") or "")
+            elif key == "theme-color" and re.fullmatch(r"#(?:[0-9a-fA-F]{3}){1,2}", (a.get("content") or "").strip()):
+                self.theme = self.theme or a["content"].strip().lower()
+            elif key in ("og:site_name", "application-name"):
+                self.site = self.site or " ".join((a.get("content") or "").split())[:40]
         if tag in self.BLOCK:
             self.parts.append("\n")
 
@@ -239,10 +247,13 @@ def read(url, limit=5000):
                 body = "\n".join(l for l in lines if len(l) > 40 or (l and l[-1] in ".?!:"))
                 body = (reader.description.strip() + "\n" if reader.description else "") + body
                 title = " ".join(reader.title.split())
+                looks = {k: v for k, v in (("site", reader.site), ("theme", reader.theme)) if v}
                 if len(body) < THIN:  # an empty shell: read again with its JavaScript run
                     body = _rendered(final, body)
         body = _checked(body[:20000])
-        return {"url": final, "title": title, "text": body[:limit]}
+        page = {"url": final, "title": title, "text": body[:limit]}
+        page.update(locals().get("looks") or {})  # its own name and colour, when it says them (_Reader)
+        return page
     return _cached("read", url, 600, make)
 
 

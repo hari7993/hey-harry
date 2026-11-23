@@ -276,9 +276,9 @@ def act(element, command, value=None, headed=False, timeout_ms=DEFAULT_ACTION_MS
 
 
 def point_click(x, y, timeout_ms=DEFAULT_ACTION_MS):
-    """Click one verified absolute point with the real pointer."""
-    return call("mouse-click", "--xy", f"{round(x)},{round(y)}", "--headed", "--timeout-ms", str(timeout_ms),
-                timeout=timeout_ms / 1000 + 3.0)
+    """Click one verified absolute point with the real pointer. mouse-click takes no --timeout-ms (agent-desktop
+    1.1.0 turned it down as INVALID_ARGS, so every click by place failed till 9 November 2026): the wait is ours."""
+    return call("mouse-click", "--xy", f"{round(x)},{round(y)}", "--headed", timeout=timeout_ms / 1000 + 3.0)
 
 
 def mouse_click(rect, timeout_ms=DEFAULT_ACTION_MS):

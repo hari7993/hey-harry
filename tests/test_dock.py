@@ -56,13 +56,27 @@ class Clicks(unittest.TestCase):
     def test_what_a_click_does(self):
         app = {"kind": "pin", "path": "C:/x.lnk", "windows": [11, 12]}
         self.assertEqual(dock.action({"kind": "start"}, None), ("start",))
-        self.assertEqual(dock.action({"kind": "search"}, None), ("search",))  # Windows' own search
+        self.assertEqual(dock.action({"kind": "search"}, None), ("search",))  # Flow Launcher's box, or Windows'
         self.assertEqual(dock.action(dict(app, windows=[]), None), ("open", "C:/x.lnk"))
         self.assertEqual(dock.action(app, 99), ("front", 11))  # brought to the front
         self.assertEqual(dock.action(app, 11), ("front", 12))  # in front: on to its next window
         self.assertEqual(dock.action(app, 12), ("front", 11))
         self.assertEqual(dock.action(dict(app, windows=[11]), 11), ("down", 11))  # its only one: put down
         self.assertIsNone(dock.action({"kind": "app", "path": "", "windows": []}, None))
+
+    def test_search_opens_flow_launchers_box_and_windows_search_without_it(self):
+        with tempfile.TemporaryDirectory() as d:
+            flow = os.path.join(d, "Flow.Launcher.exe")
+            open(flow, "w").close()
+            with mock.patch.object(dock, "FLOW", flow), mock.patch.object(dock.os, "startfile", create=True) as start, \
+                    mock.patch.object(dock._user32, "keybd_event") as keys:
+                dock.Dock._search()
+            start.assert_called_once_with(flow)
+            keys.assert_not_called()
+            with mock.patch.object(dock, "FLOW", os.path.join(d, "gone.exe")), \
+                    mock.patch.object(dock._user32, "keybd_event") as keys:
+                dock.Dock._search()  # not installed: Windows+S
+            self.assertEqual([c.args[0] for c in keys.call_args_list], [0x5B, 0x53, 0x53, 0x5B])
 
     def test_the_right_click_menu(self):
         pin = {"kind": "pin", "name": "Notepad", "path": "C:/n.lnk", "exe": "C:/notepad.exe", "windows": [1, 2]}

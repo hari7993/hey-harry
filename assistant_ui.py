@@ -18,6 +18,7 @@ from collections import namedtuple
 from tkinter import messagebox, ttk
 
 import activity
+import chat
 import glass
 import hearing
 import hermes_memory
@@ -35,13 +36,17 @@ import voices
 import winplatform as win
 from bubble import Bubble
 from dictation import HISTORY, read_vocab, save_vocab
+import ui_kit
+from ui_kit import ease, mix, motion_ok  # moved to ui_kit (22 November 2026), where Hedwig's curves are too
 from hermes_memory import skills
 from secrets_store import KEY_NAMES, OPTIONAL, get_secret, missing_secrets, save_secret
 
 TITLE = "Hey Harry"
 HERE = os.path.dirname(os.path.abspath(__file__))
 ICON = os.path.join(HERE, "assets", "icon.ico")
-W, H, SIDEBAR = 1060, 700, 220
+# 1060 by 700 with a sidebar of 220 till 22 November 2026: the owner's picture of Hedwig's window, "see how sizing
+# and view clean and the spaces", has a sidebar a fifth of its width and room round everything
+W, H, SIDEBAR = 1240, 800, 240
 HINTS = {"ptt": "Hold right Alt to talk", "wake": "Say \u201cHey Harry\u201d, \u201cHello Harry\u201d or just \u201cHarry\u201d, "
                                                  "then what you want. Right after she answers, just keep talking. "
                                                  "Holding right Alt works too."}
@@ -51,15 +56,35 @@ EARS_USES = {"all": "For commands and dictation", "dictation": "For dictation on
 SEP = "  \u00b7  "  # between a model's ID and what's known of it in the model list: "gpt-5.2  ·  400k"
 MODES = ("ptt", "wake")
 MODE_LABELS = {"ptt": "Hold Right Alt", "wake": "Hey Harry"}
-TABS = (("home", "Home"), ("todo", "To-do"), ("tasks", "Tasks"), ("contacts", "Contacts"), ("dict", "Dictionary"),
-        ("apps", "Apps"), ("hist", "Dictation history"), ("mem", "Memory"), ("priv", "Privacy"),
-        ("island", "Island"), ("settings", "Settings"), ("keys", "Keys"))
+# "home" is the chat (chat.py, 22 November 2026), her first page; what Home showed till then, her figures, is "stats"
+TABS = (("home", "Chat"), ("todo", "To-do"), ("tasks", "Tasks"), ("stats", "Activity"), ("contacts", "Contacts"),
+        ("dict", "Dictionary"), ("apps", "Apps"), ("hist", "Dictation history"), ("mem", "Memory"),
+        ("priv", "Privacy"), ("island", "Island"), ("settings", "Settings"), ("keys", "Keys"))
 # The sidebar, in groups by what goes together (20 November 2026, the owner: twelve tabs in one list were "too
 # overwhelming"): (its name, its tabs). The first has no name; one in NAV_FOLDS folds away under its name, shut till
 # you open it or go to a tab of its own
-NAV = ((None, ("home", "todo", "tasks")), ("What she knows", ("mem", "contacts", "dict", "apps")),
+NAV = ((None, ("home", "todo", "tasks", "stats")), ("What she knows", ("mem", "contacts", "dict", "apps")),
        ("Setup", ("settings", "island", "keys")), ("More", ("hist", "priv")))
 NAV_FOLDS = {"More"}
+# Since 22 November 2026 the sidebar is laid out as Hedwig's: the first group's tabs are top-level items, an icon and
+# their name in white; each other group is a section, its icon and name the same way, its tabs indented under it in
+# grey with no icon; and what you last asked is listed under Chat with how long ago, as Hedwig lists its chats
+GROUP_ICONS = {"What she knows": "\ue7be", "Setup": "\ue713", "More": "\ue712"}
+# the name each section shows (it was a small grey capital label for an evening, after a prompt that asked for one;
+# Hedwig's own has an icon and the name in white, its items indented in grey under it, and so does hers again)
+SECTION_LABELS = {"What she knows": "Knowledge"}
+# the sidebar's icons each a pale tint of its own on the dark, the words white as ever (22 November 2026, the owner:
+# "add minimum multi colors ... minimal light colors"): Chat a soft peach, To-do mint, Tasks sky, Activity lilac, and
+# the sections' own; on the light sidebar the same hues, deeper, so they still read
+SIDE_TINTS = {"home": ("#f6b98d", "#d9733a"), "todo": ("#93d6a7", "#2f8a4e"), "tasks": ("#97bff8", "#2f6fd6"),
+              "stats": ("#c6b4f8", "#6b4fd1"), "What she knows": ("#f2a9c1", "#c0477a"),
+              "Setup": ("#93d0df", "#2a7f96"), "More": ("#b9bdc6", "#6b7280")}
+
+
+def side_tint(key):
+    """A sidebar icon's own pale colour on the dark sidebar, or its deeper one on the light; None for one without."""
+    pair = SIDE_TINTS.get(key)
+    return None if pair is None else pair[0] if SIDE_BG == SIDES["dark"][0] else pair[1]
 # the Island tab's choices: what's saved, what it says
 POPUP_STYLES = {"island": "Her island at the top", "card": "The iPhone card at the top",
                 "pill": "The Siri pill at the bottom"}
@@ -221,7 +246,7 @@ KEY_ROWS = (
 )
 # the other answer model providers (providers.py), all optional: their models are picked in Settings > Answer model
 MODEL_USES = {"openrouter": "Hundreds of models from every lab, a few free", "openai": "GPT models, paid per request",
-              "google": "Gemini models", "xai": "Grok models, paid per request",
+              "google": "Gemini models, and Gemini Decision: was what's said without her name for her?", "xai": "Grok models, paid per request",
               "groq": "Open models, very fast", "deepseek": "DeepSeek models, paid per request",
               "mistral": "Mistral models", "cerebras": "Open models, very fast",
               "together": "Open models, paid per request", "nous": "Hermes models, Hermes Agent's own provider",
@@ -250,13 +275,36 @@ KEY_GROUPS = (
 # Her window's look (29 October 2026, the owner's pick, a designer's page: hero-03 on 21st.dev): white, with a faint
 # grid of dots behind the sidebar and the top, near-black words, the tabs grey till you're on one, each page's name in
 # big thin capitals, black for what's on, and one orange, for the tab you're on and the links
-BG, SIDE, LINE, EDGE = "#ffffff", "#fafafa", "#e5e5e5", "#d4d4d4"  # EDGE: round a box or a button
-FAINT, DOTS, ORANGE = "#99a1af", "#d9d9d9", "#f54a00"  # the tabs you're not on; the dots, black at 15% on white
+# white, as Hedwig's own app is (it was #fafafa for an evening, after a prompt that asked for one: the owner, sending
+# Hedwig's screenshots, said theirs looked far better, and it is white)
+BG, SIDE, LINE, EDGE = "#ffffff", "#fafafa", "#e5e7eb", "#d1d5db"  # EDGE: round a box or a button
+FAINT, DOTS, ORANGE = "#9ca3af", "#d9d9d9", "#f54a00"  # the tabs you're not on; the dots, black at 15% on white
 DOT_GAP = 20  # logical px from one dot to the next, as the page has them
 ACCENT_SOFT = "#f5f5f5"  # a button under the mouse
 # a tab you're not on, and a group's name over its tabs: grey that still reads on the frosted glass behind them
 # (FAINT, 2.6 to 1 on white, was too pale to read there), darker under the mouse
 NAV_IDLE, NAV_OVER = "#5b6472", "#262626"
+# The look since 22 November 2026 (the owner, after hedwig-ai.com: "completely in a different style, how they look"):
+# plain white pages with their names in ordinary letters; one blue for what you press; no dots and no frosted glass
+# behind any of it (DOTTED, GLASS: what drew them stays, for a look that wants them back); and the sidebar near
+# black with pale words, as Hedwig's is, or a pale grey with dark ones (SIDES, settings sidebar, switched from her
+# quick actions): the owner wrote "no dark light theme only" and then, shown the light one, that it wasn't the look
+# of the site, so dark is how it starts and light is a click away.
+# Each: its ground, her name and a timer's, a tab you're not on, the one you're on, a group's name and the times by
+# what you asked, the pill under the tab you're on, and the line down its side
+# dark: Hedwig's own, from its styles (#212121; white at 66% on it for an indented item, its times' grey, white at
+# 7% under the item you're on, white at 8% down its edge)
+SIDES = {"dark": ("#212121", "#fbfefd", "#b1b2b2", "#ffffff", "#7d828a", "#373737", "#343434"),
+         "light": ("#f6f6f7", "#0a0a0a", "#5f6368", "#0a0a0a", "#9a9fa6", "#e8e8ea", "#e5e5e5")}
+SIDE_BG, SIDE_TEXT, SIDE_IDLE, SIDE_OVER, SIDE_GROUP, SIDE_PILL, SIDE_EDGE = SIDES["dark"]
+BLUE = "#5090f7"  # Hedwig's Send (royal #2563eb for an evening, after a prompt; back to the original)
+TYPE = 0.9  # her window's sizes against Hedwig's in CSS px (see _setup_styles)
+# and its parts with it ("not only the dashboard, the components also"): a button and a box you type in are a soft
+# grey with no line round them, darker under the mouse, and the one button a box is for is black
+FIELD, FIELD_OVER, FIELD_DOWN = "#f3f3f4", "#e9e9eb", "#dddde0"
+DOTTED = GLASS = False
+COUNT_UP = False  # Activity's figures counting up to themselves: off, they're there at once (see _count_up)
+RECENT = 8  # of your chats, listed under Chat (_lay_recent); the rest are in her quick actions, Ctrl+K
 # her frosted glass (glass.py): how far towards white the blurred wallpaper is washed behind each panel
 GLASS_SIDE, GLASS_TOP, GLASS_OVER = 0.80, 0.87, 0.88  # the sidebar, the top, and her quick actions over the window
 GLASS_STEP = 4  # a panel's glass is made at one pixel in this many each way and drawn out by Tk (glass.pane)
@@ -265,9 +313,9 @@ GLASS_STEP = 4  # a panel's glass is made at one pixel in this many each way and
 TINTS = {"orange": ("#f54a00", "#fff1e8"), "blue": ("#2563eb", "#edf3ff"), "green": ("#16a34a", "#e9f9ef"),
          "violet": ("#7c3aed", "#f3eeff"), "rose": ("#e11d48", "#fff0f3"), "teal": ("#0891b2", "#e7f7fb"),
          "amber": ("#d97706", "#fff6e5"), "slate": ("#475569", "#f1f5f9")}
-TAB_TINTS = {"home": "orange", "todo": "green", "tasks": "blue", "contacts": "teal", "dict": "amber", "apps": "violet",
+TAB_TINTS = {"home": "orange", "stats": "violet", "todo": "green", "tasks": "blue", "contacts": "teal", "dict": "amber", "apps": "violet",
              "hist": "slate", "mem": "rose", "priv": "teal", "island": "violet", "settings": "blue", "keys": "amber"}
-ICONS = {"home": "\ue80f", "todo": "\ue9d5", "tasks": "\ue823", "contacts": "\ue716", "dict": "\ue82d",
+ICONS = {"home": "\ue8bd", "stats": "\ue9d2", "todo": "\ue9d5", "tasks": "\ue823", "contacts": "\ue716", "dict": "\ue82d",
          "apps": "\ue71d", "hist": "\ue81c", "mem": "\ue8f1", "priv": "\ue72e", "island": "\ue7f4",
          "settings": "\ue713", "keys": "\ue8d7"}  # Segoe Fluent Icons, Segoe MDL2 Assets on Windows 10
 STAT_ICONS = ("\ue916", "\ue720", "\ue70f", "\ue945", "\ue71d", "\ue897")  # the Home cards, in their order
@@ -281,7 +329,9 @@ KEY_PARTS = (("Needed", "amber", "\ue8d7"), ("Answer models", "green", "\ue99a")
 # while she's at one of these her dot pulses
 BUSY = {"Listening", "Still listening", "Transcribing", "Thinking", "Looking", "Doing it", "Speaking", "Dictating",
         "Finishing"}
-TEXT, MUTED, ACCENT, ERROR, TEAL = "#0a0a0a", "#737373", ORANGE, "#c42b1c", "#0f766e"
+# deep charcoal for what matters, slate for what's about it (22 November 2026, the owner's palette: "#111827 for primary
+# text and bolded anchor words, muted slate #6B7280 / #9CA3AF for metadata"; Hedwig's #1c1e21 and #5d646f till then)
+TEXT, MUTED, ACCENT, ERROR, TEAL = "#111827", "#6b7280", BLUE, "#c42b1c", "#0f766e"
 STATUS_COLORS = {
     "Starting": "#d97706", "Ready": "#16a34a", "Listening": "#dc2626", "Transcribing": "#2563eb",
     "Thinking": "#7c3aed", "Looking": "#0891b2", "Doing it": "#ea580c", "Speaking": "#0d9488",
@@ -289,6 +339,24 @@ STATUS_COLORS = {
     "Still listening": "#dc2626",
     "Time's up": "#ca8a04", "Dictating": "#dc2626", "Finishing": "#2563eb", "Phone": "#229ed9",
 }
+
+
+def load_type():
+    """Her window's type, loaded for this process only: Geist (Vercel's, SIL Open Font License, assets\\fonts),
+    which Hedwig's app is set in, since 22 November 2026 ("same fonts as theirs"); else Figtree, her island's; else
+    None, and Segoe UI, Windows' own. The family's name."""
+    try:
+        import bubble
+        add = ctypes.windll.gdi32.AddFontResourceExW
+        add.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.c_void_p]
+        for name in os.listdir(bubble.FONT_DIR):
+            if name.startswith(("Geist", "Figtree", "PlusJakarta")) and name.lower().endswith(".ttf"):
+                add(os.path.join(bubble.FONT_DIR, name), 0x10, None)  # FR_PRIVATE
+        have = tkfont.families()
+        return next((family for family in ("Geist", "Figtree") if family in have), None)
+    except Exception as exc:
+        print(f"  couldn't load her type: {exc!r}")
+        return None
 
 
 def app_key(name):
@@ -340,22 +408,56 @@ def todo_stamp():
         return None
 
 
-def mix(a, b, t):
-    """The colour t of the way from a to b, both "#rrggbb"."""
-    a, b = int(a[1:], 16), int(b[1:], 16)
-    return "#" + "".join(f"{round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t):02x}" for s in (16, 8, 0))
-
-
-def ease(t):
-    return 1 - (1 - t) ** 3  # quick, then settling
-
-
 def rounded(x1, y1, x2, y2, r):
     """The points of a rounded rectangle, for a smoothed canvas polygon."""
     r = min(r, (x2 - x1) / 2, (y2 - y1) / 2)
     return (x1 + r, y1, x1 + r, y1, x2 - r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y1 + r, x2, y2 - r, x2, y2 - r,
             x2, y2, x2 - r, y2, x2 - r, y2, x1 + r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y2 - r, x1, y1 + r,
             x1, y1 + r, x1, y1)
+
+
+class Glide:
+    """The wheel's scrolling eased out, as a web page's is (22 November 2026, the owner, of Hedwig's: "scroll
+    animation"): each notch adds its distance to what's left to go, and every frame goes a quarter of what's left,
+    so it starts quick and settles. scroll(px) moves its widget px pixels; after(ms, fn) runs fn later."""
+    NOTCH, SHARE, FRAME = 72, 0.24, 14  # logical px a notch; of what's left, the share each frame; ms a frame
+
+    def __init__(self, scroll, after, cancel=None):
+        self.scroll, self.after, self.cancel = scroll, after, cancel
+        self.left, self.job = 0.0, None
+
+    def wheel(self, delta, px=1.0):
+        """A turn of the wheel: delta as Windows gives it, 120 a notch, down negative. px: the window's scaling."""
+        self.left += -delta / 120 * self.NOTCH * px
+        if self.job is None:
+            self._frame()
+
+    def _frame(self):
+        self.job = None
+        step = int(self.left * self.SHARE) or (1 if self.left >= 1 else -1 if self.left <= -1 else 0)
+        if not step:
+            self.left = 0.0
+            return
+        self.left -= step
+        self.scroll(step)
+        self.job = self.after(self.FRAME, self._frame)
+
+
+def smooth_ppm(w, h, r, fill, back):
+    """A rounded rectangle w by h px with corners of radius r, fill over back, edges anti-aliased, as PPM bytes for
+    a Tk PhotoImage (22 November 2026, the owner: "our UI looks hard, not smooth": Tk's own polygons and ovals have
+    jagged edges, a browser's don't). r of half the height is a pill, of half both a circle."""
+    import numpy as np
+    w, h = max(1, int(w)), max(1, int(h))
+    r = max(0.0, min(float(r), w / 2, h / 2))
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32) + 0.5
+    qx = np.abs(xs - w / 2) - (w / 2 - r)
+    qy = np.abs(ys - h / 2) - (h / 2 - r)
+    dist = np.hypot(np.maximum(qx, 0), np.maximum(qy, 0)) + np.minimum(np.maximum(qx, qy), 0) - r
+    alpha = np.clip(0.5 - dist, 0.0, 1.0)[..., None]
+    rgb = lambda c: np.array([int(c[i:i + 2], 16) for i in (1, 3, 5)], np.float32)  # noqa: E731
+    pixels = rgb(back) * (1 - alpha) + rgb(fill) * alpha
+    return b"P6 %d %d 255 " % (w, h) + (pixels + 0.5).astype(np.uint8).tobytes()
 
 
 def caps(text):
@@ -723,8 +825,16 @@ class ModelPicker:
 Group = namedtuple("Group", "id name key key_url local")  # who makes what's down a picker's side: key None for none
 
 
+def saved_voice():
+    """The voice saved in Settings, hers if none is. One of the voices she had on this PC before (Woof's, Kokoro's,
+    Pocket's: voca.WAS) is her voice on this PC now, as siri.voice_id reads it, so it's shown as that."""
+    import voca
+    voice = settings.get("voice") or settings.VOICES[0][1]
+    return "voca:" + voca.DEFAULT if str(voice).startswith(voca.WAS) else voice
+
+
 class VoiceSource:
-    """Settings > Voice's picker (29 October 2026): her voice on this PC and Windows' own, Fish's, and ElevenLabs',
+    """Settings > Voice's picker (29 October 2026): her voice on this PC (tiny-voca's), Fish's, and ElevenLabs',
     Sarvam's and Deepgram's (voices.py), as the answer model's picker lists models. ElevenLabs' voices are your
     account's, read with your key; it alone has models to pick from, in the box under the list."""
     title, use_text, things = "Pick her voice", "Use voice", "voices"
@@ -738,8 +848,11 @@ class VoiceSource:
 
     def rows(self, g, model=None):
         if g.id == "pc":
-            return [{"value": v, "cols": (name, "This PC" if v.startswith("kokoro:") else "Windows", about)}
-                    for name, v, about in settings.VOICES if v.startswith(("kokoro:", "onecore:", "sapi:"))]
+            # her voices on this PC, tiny-voca's (voca.py), alone there since 20 November 2026 (the owner's ask),
+            # with who made it (voca.CREDIT)
+            import voca
+            return [{"value": v, "cols": (name, voca.CREDIT, about)} for name, v, about in settings.VOICES
+                    if v.startswith("voca:")]
         if g.id == "fish":
             return [{"value": v, "cols": (name, "Fish Audio", about)} for name, v, about in settings.VOICES
                     if re.fullmatch(r"[0-9a-f]{32}", v)]
@@ -761,7 +874,7 @@ class VoiceSource:
 
     def group_of(self, value):
         parsed = voices.parse(value)
-        on_pc = str(value).startswith(("kokoro:", "pocket:", "onecore:", "sapi:"))
+        on_pc = str(value).startswith(("voca:", "woof:", "kokoro:", "pocket:", "onecore:", "sapi:"))
         return parsed[0].id if parsed else "pc" if on_pc else "fish"
 
     def status(self, g):
@@ -778,7 +891,7 @@ class VoiceSource:
             voices.refresh(voices.BY_ID[g.id])
 
     def current(self):
-        return settings.get("voice") or settings.VOICES[0][1]
+        return saved_voice()
 
     def footer(self, picker, foot):
         ttk.Button(foot, text="Try it", command=lambda: self.app.try_voice(picker.chosen())).pack(
@@ -1100,17 +1213,6 @@ class ListPicker:
         self.app.list_picker = None
 
 
-def motion_ok():
-    """False if Windows is set to show no animations (Settings > Accessibility > Visual effects): hers that only
-    please then stay still."""
-    on = ctypes.c_int(1)
-    try:
-        ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(on), 0)  # SPI_GETCLIENTAREAANIMATION
-    except (AttributeError, OSError):
-        return True
-    return bool(on.value)
-
-
 class SendButton:
     """Home's Send, the one thing its box is for, drawn here so it can do more than a ttk button (20 November 2026,
     the owner's ask): her orange with a paper plane by its word; under the mouse the word turns to SENT and the plane
@@ -1240,7 +1342,7 @@ class Palette:
         c.create_window(pad + px(42), self.head_h // 2, anchor="w", window=self.entry,
                         width=self.w - 2 * pad - px(56), height=px(26))
         c.create_line(0, self.head_h, self.w, self.head_h, fill=LINE)
-        self.pick = c.create_polygon(0, 0, 0, 0, smooth=True, fill=TINTS["orange"][1], outline="")
+        self.pick = c.create_polygon(0, 0, 0, 0, smooth=True, fill=FIELD_OVER, outline="")
         self.rows = []
         for i in range(self.ROWS):
             cy = self.head_h + px(6) + i * self.row_h + self.row_h // 2
@@ -1364,6 +1466,7 @@ class AssistantWindow:
         self.named = []  # (label, its words as written): her name in them, said again with a new one (_renamed)
         self.glass_job = None
         self.glass = None  # her frosted glass once it's made: the wallpaper blurred, kept small (_glass_made)
+        self.set_sidebar(settings.get("sidebar"), paint=False)  # its colours, before anything of it is drawn
         self._setup_root()
         self._setup_styles()
         self.bubble = Bubble(root)
@@ -1373,11 +1476,17 @@ class AssistantWindow:
         self._build_sidebar()
         self._build_main()
         self.pages = {"home": self._build_home(), "todo": self._build_todo(), "tasks": self._build_tasks(),
+                      "stats": self._build_stats(),
                       "contacts": self._build_contacts(), "dict": self._build_dictionary(),
                       "apps": self._build_apps(), "hist": self._build_history(), "mem": self._build_memory(),
                       "priv": self._build_privacy(), "island": self._build_island(),
                       "settings": self._build_settings(), "keys": self._build_keys()}
         self._select_tab("keys" if missing_secrets() else "home")
+        if settings.get("sidebar_open") is False:  # left with the sidebar away: away again, at once
+            self.side_open = True
+            self.side.grid_remove()
+            self.side_open = False
+            self._lay_head()
         self._start_glass()
         if not settings.get("onboarded"):  # the first time: her walkthrough, over the window
             self.root.after(700, self.open_walkthrough)
@@ -1389,6 +1498,14 @@ class AssistantWindow:
             self._set_status("Starting", "Add your API keys to begin")
         else:
             self._start_worker()
+
+    def smooth(self, w, h, r, fill, back):
+        """A smooth rounded rectangle as a PhotoImage (smooth_ppm), made once for each size and colour and kept."""
+        key = (int(w), int(h), round(r, 1), fill, back)
+        cache = self.__dict__.setdefault("_smooth", {})
+        if key not in cache:
+            cache[key] = tk.PhotoImage(master=self.root, data=smooth_ppm(*key), format="ppm")
+        return cache[key]
 
     def px(self, n):
         return round(n * self.s)
@@ -1405,7 +1522,7 @@ class AssistantWindow:
         x = (root.winfo_screenwidth() - w) // 2
         y = max(0, (root.winfo_screenheight() - h) // 2 - self.px(30))
         root.geometry(f"{w}x{h}+{x}+{y}")
-        root.minsize(self.px(820), self.px(560))
+        root.minsize(self.px(940), self.px(600))
         root.attributes("-topmost", self.on_top)
         root.protocol("WM_DELETE_WINDOW", root.iconify)  # closing keeps her listening, the taskbar button brings it back
         root.bind("<Control-q>", lambda e: self.quit())
@@ -1419,23 +1536,38 @@ class AssistantWindow:
         root.grid_rowconfigure(0, weight=1)
 
     def _setup_styles(self):
-        self.f_body = ("Segoe UI", 10)
-        self.f_small = ("Segoe UI", 9)
-        self.f_bold = ("Segoe UI Semibold", 10)
-        self.f_h2 = ("Segoe UI Semibold", 11)
-        self.f_status = ("Segoe UI Semibold", 11)
-        self.f_title = ("Segoe UI Light", 24)  # a page's name at the top, in thin capitals (caps)
-        self.f_section = ("Segoe UI Light", 15)  # a part of a page, the same way
-        self.f_brand = ("Segoe UI", 14, "bold", "italic")  # her name by her island, as the page has its own
-        self.f_badge = ("Segoe UI Semibold", 9)
-        self.f_value = ("Segoe UI Light", 24)
-        self.f_mono = ("Consolas", 11)
+        # Hedwig's type and sizes since 22 November 2026, read off its site's styles ("same fonts as theirs"): Geist,
+        # its items 14 px, its chat 15, its times 12, "What can I help with?" 28 at weight 500. Each at TYPE of that,
+        # as its window is drawn a little smaller on its own page than it is in the app, and the owner judges by that
+        family = load_type()
+        face, medium, semi = (family, f"{family} Medium", f"{family} SemiBold") if family else \
+            ("Segoe UI", "Segoe UI Semibold", "Segoe UI Semibold")
+
+        def size(css):  # a CSS px size as Tk's, in pixels (negative) for this display's scaling
+            return -max(1, round(css * TYPE * self.s))
+        self.f_body = (face, size(14))
+        self.f_small = (face, size(12.5))
+        self.f_bold = (semi, size(14))
+        self.f_h2 = (semi, size(15))
+        self.f_status = (medium, size(13))
+        self.f_title = (semi, size(18))  # a page's name at the top: thin capitals till 22 November 2026
+        self.f_section = (semi, size(15))  # a part of a page, the same way
+        self.f_brand = (semi, size(16))  # her name by her island
+        self.f_badge = (medium, size(12))
+        self.f_value = (face, size(28))
+        self.f_mono = ("Consolas", size(13))
+        self.f_chat = (face, size(15))  # the chat's words, yours and hers (chat.py)
+        self.f_hero = (medium, size(24))  # "What can I help with?", 22 px at weight 500 on the page
+        self.f_you = (semi, size(13))  # your name on its card at the sidebar's foot
         icons = "Segoe Fluent Icons" if "Segoe Fluent Icons" in tkfont.families(self.root) else "Segoe MDL2 Assets"
-        self.f_icon, self.f_icon_big = (icons, 12), (icons, 15)
-        self.f_group, self.f_fold = ("Segoe UI Semibold", 8), (icons, 7)  # a group of tabs' name, and its arrow
-        self.f_key = ("Segoe UI Semibold", 8)  # a key's name on its cap: Ctrl K
+        self.f_icon, self.f_icon_big, self.f_icon_small = (icons, size(15)), (icons, size(19)), (icons, size(12))
+        self.f_group, self.f_fold = (semi, size(11)), (icons, size(9))  # a section's label, and its arrow
+        self.f_key = (medium, size(11))  # a key's name on its cap: Ctrl K
+        # the sidebar's own, all 14 px: an indented tab, a top-level one and a section's name, what you last asked
+        self.f_side, self.f_side_on = (face, size(13.5)), (medium, size(13.5))
+        self.f_side_group, self.f_side_small = (medium, size(13.5)), (face, size(13.5))
         for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):  # text boxes and lists in the same type as the rest
-            tkfont.nametofont(name).configure(family="Segoe UI", size=10)
+            tkfont.nametofont(name).configure(family=face, size=size(14))
         for key, value in (("font", self.f_body), ("background", BG), ("foreground", TEXT),
                            ("selectBackground", TEXT), ("selectForeground", BG)):  # a drop-down's list
             self.root.option_add(f"*TCombobox*Listbox.{key}", value)
@@ -1447,26 +1579,21 @@ class AssistantWindow:
                         darkcolor=BG, troughcolor=LINE, focuscolor=TEXT, fieldbackground=BG, insertcolor=TEXT,
                         selectbackground=TEXT, selectforeground=BG, arrowcolor=MUTED)
         style.map(".", foreground=[("disabled", FAINT)])
-        style.configure("TButton", padding=(px(12), px(4)))
-        style.map("TButton", background=[("pressed", LINE), ("active", ACCENT_SOFT)],
-                  lightcolor=[("pressed", LINE), ("active", ACCENT_SOFT)],
-                  darkcolor=[("pressed", LINE), ("active", ACCENT_SOFT)],
-                  bordercolor=[("active", TEXT), ("focus", TEXT)])
-        # her orange, for the button that does what its box is for: Send, Use model, Save keys
-        lit, down = mix(ACCENT, "#000000", 0.12), mix(ACCENT, "#000000", 0.24)
-        style.configure("Accent.TButton", foreground=BG, background=ACCENT, bordercolor=ACCENT, lightcolor=ACCENT,
-                        darkcolor=ACCENT)
-        style.map("Accent.TButton", background=[("pressed", down), ("active", lit)],
-                  lightcolor=[("pressed", down), ("active", lit)], darkcolor=[("pressed", down), ("active", lit)],
-                  bordercolor=[("focus", TEXT)])
-        style.configure("Pick.TButton", anchor="w", padding=(px(8), px(4)))  # the answer model, as a box
-        style.configure("TEntry", padding=(px(6), px(3)))
-        style.map("TEntry", bordercolor=[("focus", ACCENT)], lightcolor=[("focus", BG)])
+        # buttons, boxes you type in and drop-downs are soft grey with round corners (22 November 2026, the owner: "the
+        # common elements ... smooth, like Hedwig's": clam's are square, and so were her cards beside her round box):
+        # pictures that ttk stretches, below (_round_elements). Padding is what's left to say here.
+        lit, down = mix(TEXT, "#ffffff", 0.22), mix(TEXT, "#ffffff", 0.34)
+        style.configure("TButton", padding=(px(14), px(6)), relief="flat")
+        # black, for the button that does what its box is for: Use model, Save keys, Approve
+        style.configure("Accent.TButton", foreground=BG, padding=(px(14), px(6)), relief="flat")
+        style.configure("Pick.TButton", anchor="w", padding=(px(10), px(6)))  # the answer model, as a box
+        style.configure("TEntry", padding=(px(8), px(5)), fieldbackground=FIELD)  # what's typed in is painted on the grey
         style.configure("Hint.TEntry", foreground=FAINT)
-        style.configure("TCombobox", padding=(px(6), px(2)), arrowsize=px(12))
-        style.map("TCombobox", fieldbackground=[("readonly", BG)], selectbackground=[("readonly", BG)],
-                  selectforeground=[("readonly", TEXT)], background=[("active", BG), ("pressed", BG)],
-                  bordercolor=[("focus", ACCENT), ("active", TEXT)], arrowcolor=[("active", TEXT)])
+        style.configure("TCombobox", padding=(px(8), px(4)), fieldbackground=FIELD, background=FIELD,
+                        selectbackground=FIELD, selectforeground=TEXT)
+        style.map("TCombobox", fieldbackground=[("readonly", FIELD)], selectbackground=[("readonly", FIELD)],
+                  selectforeground=[("readonly", TEXT)])
+        self._round_elements(style, lit, down)
         # a box, orange with a white tick once it's on, drawn here (_tick_box): clam's own has a cross, which reads
         # as off ("what is this x", the owner, 29 October 2026)
         self.ticks = [self._tick_box(on, hot) for on, hot in ((False, False), (False, True), (True, False))]
@@ -1478,20 +1605,94 @@ class AssistantWindow:
             ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
                 ("Checkbutton.label", {"sticky": "nswe"})]})]})])
         style.map("TCheckbutton", background=[("active", BG)])
-        style.configure("Treeview", rowheight=px(30), font=self.f_body, fieldbackground=BG, bordercolor=LINE)
-        style.map("Treeview", background=[("selected", TINTS["orange"][1])], foreground=[("selected", TEXT)])
-        style.configure("Treeview.Heading", font=self.f_bold, foreground=MUTED, bordercolor=LINE,
-                        padding=(px(6), px(4)))
-        style.map("Treeview.Heading", background=[("active", SIDE)])
-        style.configure("Horizontal.TScale", background=TEXT, bordercolor=TEXT, lightcolor=TEXT, darkcolor=TEXT)
-        for side in ("Vertical", "Horizontal"):  # a grey bar with no arrows, darker under the mouse
+        style.configure("Treeview", rowheight=px(34), font=self.f_body, fieldbackground=BG, bordercolor=BG,
+                        lightcolor=BG, darkcolor=BG)
+        style.map("Treeview", background=[("selected", FIELD_OVER)], foreground=[("selected", TEXT)])
+        style.configure("Treeview.Heading", font=self.f_small, foreground=MUTED, background=BG, bordercolor=BG,
+                        lightcolor=BG, darkcolor=LINE, padding=(px(6), px(6)))
+        style.map("Treeview.Heading", background=[("active", FIELD)])
+        style.configure("TScrollbar", troughcolor=BG, bordercolor=BG, lightcolor=BG, darkcolor=BG, gripcount=0)
+
+    def _round_elements(self, style, lit, down):
+        """Her buttons, boxes you type in, drop-downs, scrollbars and sliders as soft pictures: one small picture for each
+        state the mouse and keyboard can put one in, which ttk stretches (a nine-patch: its corners kept, its straight
+        parts tiled). They sit on her white, which is in their corners. What names end in, field, downarrow, thumb and
+        slider, is as clam's do: ttk's own bindings find them by that, a click on a drop-down's arrow opens its list."""
+        px, root, s, kit = self.px, self.root, self.s, ui_kit
+        r, ring = px(8), max(1.5, 1.5 * s)
+
+        def patch(fill, line=None):
+            return kit.nine(root, r, fill, BG, line, ring)
+
+        def element(name, *states, **opts):
+            # width and height are an element's least size, and left out they're the picture's own: a big middle to
+            # tile made every box 74 px tall (22 November 2026). A box is as tall as what's in it, never under a circle
+            opts.setdefault("width", 2 * r)
+            opts.setdefault("height", 2 * r)
+            style.element_create(name, "image", *states, **opts)
+        # a button: grey, darker under the mouse and when pressed, a blue line round it with the keyboard on it
+        for name, rest, over, press in (("Round.Button.border", FIELD, FIELD_OVER, FIELD_DOWN),
+                                        ("Round.Accent.border", TEXT, lit, down)):
+            element(name, patch(rest), ("pressed", patch(press)), ("focus active", patch(over, ACCENT)),
+                    ("focus", patch(rest, ACCENT)), ("active", patch(over)), border=r + 1, padding=0, sticky="nswe")
+        for style_name, border in (("TButton", "Round.Button.border"), ("Accent.TButton", "Round.Accent.border")):
+            style.layout(style_name, [(border, {"sticky": "nswe", "children": [
+                ("Button.padding", {"sticky": "nswe", "children": [("Button.label", {"sticky": "nswe"})]})]})])
+        # a box you type in, and a drop-down: the same grey with the chevron inside it, a blue line while you're in it
+        inset = (px(2), px(1))
+        element("Round.Entry.field", patch(FIELD), ("focus", patch(FIELD, ACCENT)), border=r + 1, padding=inset,
+                sticky="nswe")
+        element("Round.Combobox.field", patch(FIELD), ("focus", patch(FIELD, ACCENT)), ("pressed", patch(FIELD_OVER)),
+                ("active", patch(FIELD_OVER)), border=r + 1, padding=inset, sticky="nswe")
+        wide, tall = px(30), px(12)
+
+        def arrow(colour, back):
+            return kit.picture(root, ("chevron", wide, tall, colour, back), lambda: kit.pad(
+                kit.chevron(tall, colour, back, stroke=1.6 * s), back, left=(wide - tall) // 2,
+                right=wide - tall - (wide - tall) // 2))
+        element("Round.Combobox.downarrow", arrow(MUTED, FIELD), ("disabled", arrow(FAINT, FIELD)),
+                ("focus", arrow(MUTED, FIELD)), ("pressed", arrow(TEXT, FIELD_OVER)), ("active", arrow(TEXT, FIELD_OVER)),
+                sticky="", width=wide, height=tall)
+        style.layout("TEntry", [("Round.Entry.field", {"sticky": "nswe", "border": "1", "children": [
+            ("Entry.padding", {"sticky": "nswe", "children": [("Entry.textarea", {"sticky": "nswe"})]})]})])
+        style.layout("TCombobox", [("Round.Combobox.field", {"sticky": "nswe", "children": [
+            ("Round.Combobox.downarrow", {"side": "right", "sticky": ""}),
+            ("Combobox.padding", {"expand": "1", "sticky": "nswe", "children": [
+                ("Combobox.textarea", {"sticky": "nswe"})]})]})])
+        # a scrollbar is a thin pill, which fattens under the mouse; with no arrows and no trough you can see
+        thick, thin, fat = px(12), px(5), px(8)
+        press = mix(FAINT, MUTED, 0.5)
+
+        cap = (fat + 1) // 2  # the ends of a thumb: kept as they are, with a long straight between them to tile
+
+        def thumb(colour, wide, vertical):
+            def make():
+                bar = kit.rrect(wide, 2 * cap + ui_kit.TILE[0], wide / 2, colour, BG)
+                bar = kit.pad(bar, BG, left=(thick - wide) // 2, right=thick - wide - (thick - wide) // 2)
+                return bar if vertical else bar.transpose(1, 0, 2)
+            return kit.picture(root, ("thumb", vertical, wide, colour, thick), make)
+        for side, vertical in (("Vertical", True), ("Horizontal", False)):
+            element(f"Round.{side}.Scrollbar.thumb", thumb(EDGE, thin, vertical), ("pressed", thumb(press, fat, vertical)),
+                    ("active", thumb(FAINT, fat, vertical)),
+                    border=(0, cap, 0, cap) if vertical else (cap, 0, cap, 0), sticky="nswe",
+                    width=thick if vertical else 1, height=1 if vertical else thick)  # as short as a page is long
             style.layout(f"{side}.TScrollbar", [(f"{side}.Scrollbar.trough", {
-                "sticky": "ns" if side == "Vertical" else "ew",
-                "children": [(f"{side}.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
-        style.configure("TScrollbar", background=LINE, troughcolor=BG, bordercolor=BG, lightcolor=LINE,
-                        darkcolor=LINE, arrowsize=px(9), gripcount=0)
-        style.map("TScrollbar", background=[("pressed", FAINT), ("active", EDGE)],
-                  lightcolor=[("pressed", FAINT), ("active", EDGE)], darkcolor=[("pressed", FAINT), ("active", EDGE)])
+                "sticky": "ns" if vertical else "ew",
+                "children": [(f"Round.{side}.Scrollbar.thumb", {"expand": "1", "sticky": "nswe"})]})])
+        # a slider: a thin track and a round black knob, which lightens under the mouse
+        knob, track = px(18), px(4)
+        round_knob = lambda fill: kit.picture(root, ("knob", knob, fill), lambda: kit.rrect(knob, knob, knob / 2, fill, BG))  # noqa: E731
+        end = track // 2 + 1
+        element("Round.Scale.slider", round_knob(TEXT), ("pressed", round_knob(lit)), ("active", round_knob(lit)),
+                sticky="", width=knob, height=knob)
+        line = kit.picture(root, ("track", knob, track), lambda: kit.pad(
+            kit.rrect(2 * end + ui_kit.TILE[0], track, track / 2, LINE, BG), BG, top=(knob - track) // 2,
+            bottom=knob - track - (knob - track) // 2))
+        element("Round.Scale.trough", line, border=(end, 0, end, 0), padding=0, sticky="ew", width=1, height=knob)
+        style.layout("Horizontal.TScale", [("Horizontal.Scale.focus", {"sticky": "nswe", "children": [
+            ("Horizontal.Scale.padding", {"sticky": "nswe", "children": [
+                ("Round.Scale.trough", {"sticky": "nswe", "children": [
+                    ("Round.Scale.slider", {"side": "left", "sticky": ""})]})]})]})])
 
     def _tick_box(self, on, hot):
         """A checkbox's box as a picture, over the white it sits on, drawn smooth: a hairline square with round
@@ -1510,9 +1711,10 @@ class AssistantWindow:
                 if on:
                     colour = mix(BG, ACCENT, max(0.0, min(1.0, 0.5 - sd)))
                     tick = max(0.0, min(1.0, half + 0.5 - min(_to_line(cx, cy, a, b), _to_line(cx, cy, b, c))))
-                    colour = mix(colour, BG, tick)
-                else:
-                    colour = mix(BG, line, max(0.0, min(1.0, 0.5 - (abs(sd + lw / 2) - lw / 2))))
+                    colour = mix(colour, "#ffffff", tick)  # white, not the page's ground, since that's #fafafa
+                else:  # white inside its hairline, as a field is, on the page's ground outside it
+                    inside = mix(BG, "#ffffff", max(0.0, min(1.0, 0.5 - sd)))
+                    colour = mix(inside, line, max(0.0, min(1.0, 0.5 - (abs(sd + lw / 2) - lw / 2))))
                 row.append(colour)
             rows.append("{" + " ".join(row) + "}")
         box = tk.PhotoImage(master=self.root, width=n, height=n)
@@ -1555,11 +1757,7 @@ class AssistantWindow:
         outer, at = str(page.outer), str(under)
         if not page.bar.winfo_ismapped() or (at != outer and not at.startswith(outer + ".")):
             return
-        self.wheel_rest = getattr(self, "wheel_rest", 0.0) - event.delta / 40
-        units = int(self.wheel_rest)
-        self.wheel_rest -= units
-        if units:
-            canvas.yview_scroll(units, "units")
+        page.glide.wheel(event.delta, self.s)  # eased out, not a jump of 60 px a notch (Glide)
 
     def _label(self, parent, text="", font=None, fg=TEXT, bg=BG, **kw):
         anchor = "nw" if "wraplength" in kw else "w"  # if a long text runs out of room, lose the end, not the start
@@ -1603,50 +1801,81 @@ class AssistantWindow:
         words, grey till you're on one, on a pill of its colour, and the timers, the hint and Quit at the bottom. Up
         and Down go through the tabs from the keyboard."""
         px = self.px
-        side = self.side = tk.Canvas(self.root, bg=BG, width=px(SIDEBAR), highlightthickness=0, bd=0, takefocus=1)
+        side = self.side = tk.Canvas(self.root, bg=SIDE_BG, width=px(SIDEBAR), highlightthickness=0, bd=0,
+                                     takefocus=1)
         side.grid(row=0, column=0, sticky="ns")
-        pad, mid = px(22), px(38)  # in from the left, and the middle of her name's row
+        pad, mid = px(16), px(30)  # in from the left, and the middle of her logo's row
         self.logo_photo, self.logo_off = tk.PhotoImage(master=self.root), False
         side.create_image(pad, mid, image=self.logo_photo, anchor="w")
         self._draw_logo(1.0)
         self.root.after(2500, self._blink)
-        brand = side.create_text(pad + (self.logo_photo.width() or px(52)) + px(10), mid, anchor="w",
-                                 text=identity.named("Hey Harry"), font=self.f_brand, fill=TEXT)
+        brand = self.side_brand = side.create_text(pad + (self.logo_photo.width() or px(52)) + px(10), mid,
+                                                   anchor="w", text=identity.named("Hey Harry"), font=self.f_brand,
+                                                   fill=SIDE_TEXT, state="hidden")  # her logo alone, as Hedwig's
         self.named.append((Item(side, brand), "Hey Harry"))
-        self.nav_top, self.nav_h, self.nav_gap = mid + px(30), px(33), px(34)  # a tab's row, a group's name's
+        # search in its top corner, as Hedwig's is: her quick actions (Palette), Ctrl+K as before
+        self.side_search = side.create_text(px(SIDEBAR) - pad - px(32), mid, anchor="e", text="\ue721",
+                                            font=self.f_icon, fill=SIDE_IDLE)
+        # and the panel icon at the corner, which slides the sidebar away and gives the page the window (the owner,
+        # 22 November 2026, sending Hedwig's own: "add this sidebar also"); Ctrl+B does too, and it's kept
+        self.side_pane = side.create_text(px(SIDEBAR) - pad, mid, anchor="e", text="\ue89f", font=self.f_icon,
+                                          fill=SIDE_IDLE)
+        self.nav_top, self.nav_h, self.nav_gap = mid + px(30), px(28), px(28)  # a tab's row, a section's name's
         self.tab_buttons, self.side_over, self.leave_hot = {}, None, False
         titles = dict(TABS)
         # the tabs in their groups (NAV), each under its group's name; a group that folds has an arrow by its name
         was = settings.get("nav_open")
         self.nav_open = {name for name in NAV_FOLDS if name in (was if isinstance(was, list) else ())}
-        self.nav_y, self.nav_groups, self.group_over = {}, {}, None
+        self.nav_y, self.nav_groups, self.group_over, self.nav_group_icons = {}, {}, None, {}
         for name, keys in NAV:
             if name:
-                words = side.create_text(pad, 0, anchor="w", text=name.upper(), font=self.f_group, fill=NAV_IDLE)
-                arrow = side.create_text(px(SIDEBAR) - pad, 0, anchor="e", font=self.f_fold, fill=NAV_IDLE,
+                self.nav_group_icons[name] = side.create_text(pad, 0, anchor="w", text=GROUP_ICONS.get(name, ""),
+                                                              font=self.f_icon, fill=side_tint(name) or SIDE_TEXT)
+                words = side.create_text(pad + px(26), 0, anchor="w", text=SECTION_LABELS.get(name, name),
+                                         font=self.f_side_on, fill=SIDE_TEXT)
+                arrow = side.create_text(px(SIDEBAR) - pad, 0, anchor="e", font=self.f_fold, fill=SIDE_GROUP,
                                          state="normal" if name in NAV_FOLDS else "hidden")
                 self.nav_groups[name] = (words, arrow)
             for key in keys:
-                icon = side.create_text(pad, 0, anchor="w", text=ICONS.get(key, ""), font=self.f_icon, fill=NAV_IDLE)
-                text = side.create_text(pad + px(28), 0, anchor="w", text=titles[key], font=self.f_body,
-                                        fill=NAV_IDLE)
+                icon = side.create_text(pad, 0, anchor="w", text=ICONS.get(key, ""), font=self.f_icon, fill=SIDE_IDLE)
+                text = side.create_text(pad + px(26), 0, anchor="w", text=titles[key], font=self.f_side,
+                                        fill=SIDE_IDLE)
                 self.tab_buttons[key] = (icon, text)
+        # your chats under Chat, newest first with how long ago, as ChatGPT and Claude list theirs: a click opens one,
+        # the bin that takes the place of its time under the mouse deletes it, and the pencil at the end of Chat's
+        # own row starts a new one (_lay_recent, chat.Chats)
+        self.recent_head = side.create_text(pad, 0, anchor="w", text="Recent", font=self.f_side_group,
+                                            fill=SIDE_GROUP, state="hidden")
+        self.recent_rows, self.recent_y, self.chat_over = [], {}, None
+        for _ in range(RECENT):
+            self.recent_rows.append((side.create_text(pad + px(26), 0, anchor="w", font=self.f_side_small,
+                                                      fill=SIDE_IDLE, state="hidden"),
+                                     side.create_text(px(SIDEBAR) - pad, 0, anchor="e", font=self.f_small,
+                                                      fill=SIDE_GROUP, state="hidden")))
+        self.chat_bin = side.create_text(px(SIDEBAR) - pad, 0, anchor="e", text="", font=self.f_icon_small,
+                                         fill=SIDE_IDLE, state="hidden")
+        self.side_new = side.create_text(px(SIDEBAR) - pad, 0, anchor="e", text="", font=self.f_icon,
+                                         fill=SIDE_IDLE)
         self._lay_nav()
         # a soft pill of its own colour behind the tab you're on, sliding to the next
-        self.nav_bar = side.create_polygon(0, 0, 0, 0, smooth=True, fill=ACCENT_SOFT, outline="")
+        self.nav_bar = side.create_image(0, 0, anchor="nw")  # a smooth pill (smooth), not Tk's jagged polygon
         side.tag_lower(self.nav_bar)
-        self.nav_ring = side.create_rectangle(0, 0, 0, 0, outline=TEXT, state="hidden")  # round it, from the keyboard
-        self.side_line = side.create_line(0, 0, 0, 0, fill=LINE)  # down its right side, by the page
+        self.nav_ring = side.create_rectangle(0, 0, 0, 0, outline=SIDE_OVER, state="hidden")  # round it, from the keyboard
+        self.side_line = side.create_line(0, 0, 0, 0, fill=SIDE_EDGE)  # down its right side, by the page
         self.timer_rows, self.timers_shown = [], 0
         for _ in range(3):  # up to 3 timers, soonest on top
-            name = side.create_text(pad, 0, anchor="w", font=self.f_small, fill=TEXT, state="hidden")
+            name = side.create_text(pad, 0, anchor="w", font=self.f_small, fill=SIDE_TEXT, state="hidden")
             left = side.create_text(0, 0, anchor="e", font=self.f_mono, fill=ACCENT, state="hidden")
             self.timer_rows.append((Item(side, name), Item(side, left)))
         self.hint = Item(side, side.create_text(pad, 0, anchor="sw", width=px(SIDEBAR) - 2 * pad, font=self.f_small,
-                                                fill=NAV_IDLE, text=identity.named(HINTS[self.mode])), self._lay_bottom)
-        self.leave = side.create_text(pad, 0, anchor="sw", text=identity.named("\u23fb  Quit Hey Harry"),
-                                      font=self.f_small, fill=NAV_IDLE)
-        self.named.append((Item(side, self.leave), "\u23fb  Quit Hey Harry"))  # "Quit Hey Friday" once she's Friday
+                                                fill=SIDE_GROUP, text=identity.named(HINTS[self.mode])), self._lay_bottom)
+        # at its foot, a card as Hedwig has one for whose it is: the first letter of your name on a disc, your name,
+        # and Quit at its end, the power sign alone (Ctrl+Q and her quick actions say it in words)
+        self.you_card = side.create_image(0, 0, anchor="nw")
+        self.you_disc = side.create_image(0, 0, anchor="nw")
+        self.you_letter = side.create_text(0, 0, font=self.f_badge, fill="#ffffff")
+        self.you_name = side.create_text(0, 0, anchor="w", font=self.f_you, fill=SIDE_TEXT)
+        self.leave = side.create_text(0, 0, anchor="e", text="\ue76c", font=self.f_icon_small, fill=SIDE_IDLE)
         side.bind("<Configure>", lambda e: self._lay_side())
         side.bind("<Motion>", self._side_motion)
         side.bind("<Leave>", lambda e: self._side_motion(None))
@@ -1656,6 +1885,45 @@ class AssistantWindow:
         side.bind("<FocusIn>", lambda e: self._ring_tab())
         side.bind("<FocusOut>", lambda e: side.itemconfigure(self.nav_ring, state="hidden"))
 
+    def set_sidebar(self, name, paint=True):
+        """Her sidebar dark, as Hedwig's is, or light (SIDES): its colours for all that draws it, and with paint all
+        of it drawn again in them and the choice kept."""
+        global SIDE_BG, SIDE_TEXT, SIDE_IDLE, SIDE_OVER, SIDE_GROUP, SIDE_PILL, SIDE_EDGE
+        self.sidebar = name if name in SIDES else "dark"
+        SIDE_BG, SIDE_TEXT, SIDE_IDLE, SIDE_OVER, SIDE_GROUP, SIDE_PILL, SIDE_EDGE = SIDES[self.sidebar]
+        if not paint:
+            return
+        settings.put("sidebar", self.sidebar)
+        c = self.side
+        c.configure(bg=SIDE_BG)
+        c.itemconfigure(self.side_brand, fill=SIDE_TEXT)
+        c.itemconfigure(self.side_search, fill=SIDE_IDLE)
+        c.itemconfigure(self.side_pane, fill=SIDE_IDLE)
+        for words, arrow in self.nav_groups.values():
+            c.itemconfigure(words, fill=SIDE_TEXT)
+            c.itemconfigure(arrow, fill=SIDE_GROUP)
+        for name, icon in self.nav_group_icons.items():
+            c.itemconfigure(icon, fill=side_tint(name) or SIDE_TEXT)
+        for key in self.tab_buttons:
+            self._paint_tab(key, key == self.current_tab)
+        self._slide_nav_bar()  # its pill made again in these colours
+        c.itemconfigure(self.nav_ring, outline=SIDE_OVER)
+        c.itemconfigure(self.side_line, fill=SIDE_EDGE)
+        for name_row, _ in self.timer_rows:
+            c.itemconfigure(name_row.item, fill=SIDE_TEXT)
+        c.itemconfigure(self.hint.item, fill=SIDE_GROUP)
+        c.itemconfigure(self.leave, fill=SIDE_IDLE)
+        c.itemconfigure(self.you_name, fill=SIDE_TEXT)
+        self._lay_bottom()  # your card made again in these colours
+        c.itemconfigure(self.recent_head, fill=SIDE_GROUP)
+        for words, when in self.recent_rows:
+            c.itemconfigure(words, fill=SIDE_IDLE)
+            c.itemconfigure(when, fill=SIDE_GROUP)
+        c.itemconfigure(self.chat_bin, fill=SIDE_IDLE)
+        c.itemconfigure(self.side_new, fill=SIDE_IDLE)
+        self._lay_recent()  # the open chat lit again in these colours
+        self._draw_logo(1.0)
+
     def _lay_side(self):
         """The dots and the line down its side for the sidebar's size now, and its bottom."""
         c = self.side
@@ -1664,18 +1932,38 @@ class AssistantWindow:
             return
         self._dots(c, w, h)
         c.coords(self.side_line, w - 1, 0, w - 1, h)
-        self._lay_bottom()
+        self._lay_nav()  # as many chats as its height has room for, and its bottom
         self._glass_soon()
 
     def _lay_bottom(self):
-        """Quit at the bottom of the sidebar, the hint over it and the timers over that, soonest on top."""
+        """Your card at the foot of the sidebar with Quit at its end, the hint over it and the timers over that,
+        soonest on top."""
         c, px = self.side, self.px
-        w, h, pad = c.winfo_width(), c.winfo_height(), px(22)
+        w, h, pad = c.winfo_width(), c.winfo_height(), px(18)
         if w < 2:
             return
-        c.coords(self.leave, pad, h - px(16))
-        c.coords(self.hint.item, pad, c.bbox(self.leave)[1] - px(8))
-        y, row_h = c.bbox(self.hint.item)[1] - px(6), px(22)
+        top, bottom = h - px(50), h - px(8)
+        cy = (top + bottom) // 2
+        c.itemconfigure(self.you_card, image=self.smooth(w - px(16), bottom - top, px(13), SIDE_PILL, SIDE_BG))
+        c.coords(self.you_card, px(8), top)
+        c.itemconfigure(self.you_disc, image=self.smooth(px(22), px(22), px(11), "#e8663c", SIDE_PILL))
+        c.coords(self.you_disc, px(16), cy - px(11))
+        name = " ".join(str(settings.get("name") or "").split()) or "You"
+        c.itemconfigure(self.you_letter, text=name[:1].upper())
+        c.coords(self.you_letter, px(27), cy)
+        c.itemconfigure(self.you_name, text=name if len(name) <= 20 else name[:19] + "\u2026")
+        c.coords(self.you_name, px(46), cy)
+        c.coords(self.leave, w - px(20), cy)
+        # the hint over it, unless the tabs come down that far (a short window): then it's left out, as the switch
+        # at the top says how she's listening too
+        c.itemconfigure(self.hint.item, state="normal")
+        c.coords(self.hint.item, pad, top - px(12))
+        hint_top = c.bbox(self.hint.item)[1]
+        # no hint at all since 22 November 2026: Hedwig's sidebar has nothing over its foot, and the switch at the top
+        # says how she's listening
+        tight = True or hint_top < getattr(self, "nav_end", 0) + px(10)
+        c.itemconfigure(self.hint.item, state="hidden" if tight else "normal")
+        y, row_h = (top if tight else hint_top) - px(6), px(22)
         for i, (name, left) in enumerate(self.timer_rows):
             cy = y - (self.timers_shown - i) * row_h + row_h // 2
             c.coords(name.item, pad, cy)
@@ -1687,6 +1975,8 @@ class AssistantWindow:
         """The faint dots behind the sidebar and the top, the page's: one every DOT_GAP px, in step across the window,
         under all else on the canvas c, w by h."""
         c.delete("dots")
+        if not DOTTED:
+            return
         gap, d = self.px(DOT_GAP), max(2, self.px(1.5))
         ox, oy = c.winfo_rootx() - self.root.winfo_rootx(), c.winfo_rooty() - self.root.winfo_rooty()
         for y in range((gap // 2 - oy) % gap, h, gap):
@@ -1709,7 +1999,8 @@ class AssistantWindow:
             return
         # premultiplied, over the white, or over the frosted glass behind it once that's there (_lay_glass)
         back = getattr(self, "logo_back", None)
-        rgb = rgba[..., :3] + (1 - rgba[..., 3:]) * (1.0 if back is None or back.shape != rgba[..., :3].shape else back)
+        dark = tuple(int(SIDE_BG[i:i + 2], 16) / 255 for i in (1, 3, 5))  # the sidebar's own colour behind it
+        rgb = rgba[..., :3] + (1 - rgba[..., 3:]) * (dark if back is None or back.shape != rgba[..., :3].shape else back)
         h, w = rgb.shape[:2]
         pixels = (rgb * 255 + 0.5).astype("uint8").tobytes()
         self.logo_photo.configure(data=b"P6 %d %d 255 " % (w, h) + pixels, format="ppm")
@@ -1718,43 +2009,136 @@ class AssistantWindow:
         self.animate("blink", 220, lambda t: self._draw_logo(abs(1 - 2 * t)),
                      lambda: self.root.after(random.randint(3500, 8000), self._blink))
 
+    @staticmethod
+    def _top_level(key):
+        """True for a tab of the first group, a top-level item in the sidebar; the rest are indented in sections."""
+        return key in NAV[0][1]
+
     def _paint_tab(self, key, on, colour=None):
-        """A tab in black words with its icon in its colour while you're on it, else grey, or colour while the mouse
-        fades it."""
+        """A tab bright while you're on it; else a top-level one in white and an indented one in grey, or colour
+        while the mouse fades it."""
         icon, text = self.tab_buttons[key]
-        colour = TEXT if on else colour or NAV_IDLE
-        self.side.itemconfigure(icon, fill=TINTS[TAB_TINTS[key]][0] if on else colour)
-        self.side.itemconfigure(text, fill=colour, font=self.f_bold if on else self.f_body)
+        top = self._top_level(key)
+        colour = SIDE_OVER if on else colour or (SIDE_TEXT if top else SIDE_IDLE)
+        self.side.itemconfigure(icon, fill=side_tint(key) or colour)  # its own pale tint, whatever its words do
+        self.side.itemconfigure(text, fill=colour, font=self.f_side_on if on or top else self.f_side)
 
     def _hover_tab(self, key, inside):
-        start, end = self.side.itemcget(self.tab_buttons[key][1], "fill"), NAV_OVER if inside else NAV_IDLE
+        start = self.side.itemcget(self.tab_buttons[key][1], "fill")
+        end = SIDE_OVER if inside else (SIDE_TEXT if self._top_level(key) else SIDE_IDLE)
         self.animate(f"hover {key}", 140, lambda t: self._paint_tab(key, False, mix(start, end, t)))
 
     def _lay_nav(self):
+        """The tabs down the sidebar, with as many of your chats under Chat as leave the rest clear of your card at its
+        foot (22 November 2026, the owner: six chats ran the tabs under it); the rest are in her quick actions. The
+        pill behind the tab you're on follows it if it moved."""
+        self.recent_most = RECENT
+        while True:
+            self._lay_nav_rows()
+            h = self.side.winfo_height()
+            over = self.nav_end - (h - self.px(54))  # your card's top is 50 up
+            if h < 2 or over <= 0 or self.recent_most == 0:
+                break
+            self.recent_most = max(0, self.recent_most - -(-over // self.px(28)))
+        if hasattr(self, "you_card"):  # a group opened or shut: the hint at the foot has its room, or hasn't
+            self._lay_bottom()
+        tab = getattr(self, "current_tab", None)
+        if tab in self.nav_y and getattr(self, "nav_at", None) not in (None, self.nav_y[tab] + self.px(1)) and \
+                "nav bar" not in getattr(self, "_anims", {}):
+            self._slide_nav_bar()
+
+    def _lay_nav_rows(self):
         """The tabs down the sidebar, group by group: each group's name over its tabs with room above it, and a
         group that's folded shut (NAV_FOLDS, not in nav_open) as its name alone, unless you're on a tab of its own.
-        Where each is kept: nav_y a tab's top, group_y a group's name's."""
+        Where each is kept: nav_y a tab's top, group_y a group's name's, nav_end the foot of the last."""
         c, px = self.side, self.px
-        pad, y = px(22), self.nav_top
+        pad, y = px(16), self.nav_top
         self.nav_y, self.group_y = {}, {}
         for name, keys in NAV:
             shown = True
             if name:
-                y += px(8)
+                y += px(14)
                 shown = name not in NAV_FOLDS or name in self.nav_open or getattr(self, "current_tab", None) in keys
                 words, arrow = self.nav_groups[name]
-                c.coords(words, pad, y + self.nav_gap // 2 + px(2))
-                c.coords(arrow, px(SIDEBAR) - pad, y + self.nav_gap // 2 + px(2))
+                mid = y + self.nav_gap // 2
+                c.coords(self.nav_group_icons[name], pad, mid)
+                c.coords(words, pad + px(26), mid)
+                c.coords(arrow, px(SIDEBAR) - pad, mid)
                 c.itemconfigure(arrow, text="" if shown else "")  # down while open, along while shut
                 self.group_y[name] = y
                 y += self.nav_gap
             for key in keys:
-                for item, x in zip(self.tab_buttons[key], (pad, pad + px(28))):
-                    c.coords(item, x, y + self.nav_h // 2)
-                    c.itemconfigure(item, state="normal" if shown else "hidden")
+                icon, text = self.tab_buttons[key]
+                c.coords(icon, pad, y + self.nav_h // 2)
+                c.coords(text, pad + px(26), y + self.nav_h // 2)
+                c.itemconfigure(icon, state="normal" if shown and not name else "hidden")  # indented: no icon
+                c.itemconfigure(text, state="normal" if shown else "hidden")
                 if shown:
                     self.nav_y[key] = y
                     y += self.nav_h
+                if key == "home":  # New chat's pencil at the end of its row, and your chats under it (_lay_recent)
+                    c.coords(self.side_new, px(SIDEBAR) - pad, y - self.nav_h + self.nav_h // 2)
+                    c.itemconfigure(self.side_new, state="normal" if shown else "hidden")
+                    y = self._lay_recent(y)
+        self.nav_end = y
+
+    def _lay_recent(self, y=None):
+        """Your chats, under Chat in the sidebar as ChatGPT and Claude list theirs: each indented, cut to the room it
+        has, the open one lit, with how long ago at the right, or its bin while the mouse is on it. y: where they
+        start, under Chat's row; None to lay out the whole sidebar again, which puts them there. recent_y: a row's
+        top and its chat's id, for a click. Where they end."""
+        if y is None:
+            if hasattr(self, "nav_y"):
+                self._lay_nav()
+            return None
+        c, px = self.side, self.px
+        page = getattr(self, "chat", None)
+        most = getattr(self, "recent_most", RECENT)
+        chats = page.listed(most) if page is not None and hasattr(self, "measures") and most else []
+        row = px(28)
+        c.itemconfigure(self.recent_head, state="hidden")
+        c.itemconfigure(self.chat_bin, state="hidden")
+        self.recent_y = {}
+        for i, (words, when) in enumerate(self.recent_rows):
+            if i < len(chats):
+                cid, text, at = chats[i]
+                over, now = cid == self.chat_over, cid == page.chats.current
+                ago = chat.ago(time.time() - at)
+                wide = px(SIDEBAR) - px(58) - self._measure(self.f_small, ago) - px(10)
+                c.itemconfigure(words, text=self._fit(text, self.f_side_small, wide), state="normal",
+                                fill=SIDE_OVER if now or over else SIDE_IDLE)
+                c.itemconfigure(when, text=ago, state="hidden" if over else "normal")
+                c.coords(words, px(42), y + row // 2)
+                c.coords(when, px(SIDEBAR) - px(16), y + row // 2)
+                if over:
+                    c.coords(self.chat_bin, px(SIDEBAR) - px(16), y + row // 2)
+                    c.itemconfigure(self.chat_bin, state="normal")
+                self.recent_y[y] = cid
+                y += row
+            else:
+                c.itemconfigure(words, state="hidden")
+                c.itemconfigure(when, state="hidden")
+        return y
+
+    def _recent_at(self, y):
+        """The id of the chat whose row is at y down the sidebar, or None."""
+        return next((cid for top, cid in self.recent_y.items() if top <= y < top + self.px(28)), None)
+
+    def new_chat(self):
+        """A new chat, on the Chat page (chat.Page.new_chat)."""
+        self._select_tab("home")
+        self.chat.new_chat()
+
+    def open_chat(self, cid):
+        self._select_tab("home")
+        self.chat.open_chat(cid)
+
+    def delete_chat(self, cid):
+        """A chat deleted from the list, once you've said yes, as ChatGPT asks first."""
+        name = next((text for c, text, _ in self.chat.listed() if c == cid), "this chat")
+        if messagebox.askyesno(TITLE, f"Delete “{name[:60]}”? It goes from your chats for good. What she "
+                                      "remembers of it stays.", parent=self.root):
+            self.chat.delete_chat(cid)
 
     def _fold_group(self, name):
         """A group that folds (NAV_FOLDS), opened or shut from its name, and kept that way."""
@@ -1765,6 +2149,68 @@ class AssistantWindow:
         self._lay_nav()
         if hasattr(self, "current_tab"):
             self._slide_nav_bar()
+
+    def toggle_sidebar(self, open_=None):
+        """The sidebar slid away (the page has the window, the top's panel icon brings it back) or back in, kept
+        (settings sidebar_open). Its picture slides, 260 ms, while the page is laid out once: at its end going, at
+        its start coming."""
+        open_ = (not getattr(self, "side_open", True)) if open_ is None else bool(open_)
+        if open_ == getattr(self, "side_open", True):
+            return
+        self.side_open = open_
+        settings.put("sidebar_open", open_)
+        c, w = self.side, int(self.side.cget("width"))
+        moved = [0.0]
+
+        def slide(to):
+            c.move("all", to - moved[0], 0)
+            moved[0] = to
+
+        def gone():
+            c.grid_remove()
+            slide(0)  # where everything was, for the next time it's shown
+            self._lay_head()
+            recentre()
+
+        def recentre():  # the chat's column in the middle of the room it has now
+            page = getattr(self, "chat", None)
+            if page is not None:
+                self.root.after_idle(page._centre)
+        if not chat.animations_on():
+            (c.grid() if open_ else c.grid_remove())
+            self._lay_head()
+            recentre()
+            return
+        if open_:
+            slide(-w)
+            c.grid()
+            self._lay_head()
+            recentre()
+            self.animate("sidebar", 260, lambda t: slide(-w * (1 - t)), lambda: slide(0))
+        else:
+            self.animate("sidebar", 220, lambda t: slide(-w * t), gone)
+
+    def _you_menu(self):
+        """Your card's menu, opening up from it as Hedwig's account menu does: how she listens, Full access while
+        it's on, Settings, and Quit."""
+        menu = tk.Menu(self.side, tearoff=0, font=self.f_body, bg="#ffffff", fg=TEXT, activebackground=FIELD,
+                       activeforeground=TEXT, relief="flat", bd=0, activeborderwidth=0)
+        self.mode_var = tk.StringVar(master=self.root, value=self.mode)
+        for mode in MODES:
+            menu.add_radiobutton(label="  " + identity.named(MODE_LABELS[mode]), value=mode, variable=self.mode_var,
+                                 command=lambda m=mode: self.set_mode(m))
+        menu.add_separator()
+        if self.badge_on:
+            menu.add_command(label="  Turn Full access off", command=lambda: self.set_full_access(False))
+        menu.add_command(label="  Settings", command=lambda: self._select_tab("settings"))
+        menu.add_command(label="  Use the new window", command=lambda: self.use_window("qt"))
+        menu.add_command(label="  " + identity.named("Quit Hey Harry"), command=self.quit)
+        menu.update_idletasks()
+        x0, y0 = self.side.winfo_rootx() + self.px(8), self.side.winfo_rooty() + self.side.winfo_height() - self.px(56)
+        try:
+            menu.tk_popup(x0, y0 - menu.winfo_reqheight())
+        finally:
+            menu.grab_release()
 
     def _side_row(self, y):
         """The tab at y down the sidebar, or None."""
@@ -1790,22 +2236,55 @@ class AssistantWindow:
             self.side_over = key
         if group != self.group_over:
             for name, inside in ((self.group_over, False), (group, True)):
-                for item in self.nav_groups.get(name, ()):
-                    c.itemconfigure(item, fill=NAV_OVER if inside else NAV_IDLE)
+                words, arrow = self.nav_groups.get(name, (None, None))
+                if words is not None:
+                    c.itemconfigure(words, fill=SIDE_OVER if inside else SIDE_TEXT)
+                    c.itemconfigure(arrow, fill=SIDE_OVER if inside else SIDE_GROUP)
             self.group_over = group
         if leave != self.leave_hot:
             self.leave_hot = leave
-            c.itemconfigure(self.leave, fill=TEXT if leave else NAV_IDLE)
-        c.configure(cursor="hand2" if leave or key or group else "")
+            c.itemconfigure(self.leave, fill=SIDE_OVER if leave else SIDE_IDLE)
+        again = event is not None and not (leave or key or group) and self._recent_at(event.y)
+        if (again or None) != self.chat_over:  # a chat's bin in the place of its time while the mouse is on it
+            self.chat_over = again or None
+            self._lay_recent()
+        binned = bool(again) and self._on_bin(event)
+        c.itemconfigure(self.chat_bin, fill=SIDE_OVER if binned else SIDE_IDLE)
+        search = bool(over) and over[0] == self.side_search
+        c.itemconfigure(self.side_search, fill=SIDE_OVER if search else SIDE_IDLE)
+        pane = bool(over) and over[0] == self.side_pane
+        c.itemconfigure(self.side_pane, fill=SIDE_OVER if pane else SIDE_IDLE)
+        pencil = self._on_pencil(event)
+        c.itemconfigure(self.side_new, fill=SIDE_OVER if pencil else SIDE_IDLE)
+        c.configure(cursor="hand2" if leave or key or group or again or search or pencil or pane else "")
+
+    def _on_bin(self, event):
+        """True if event is on the right end of a chat's row, where its bin is."""
+        return event.x >= self.px(SIDEBAR) - self.px(40)
+
+    def _on_pencil(self, event):
+        """True if event is on the right end of Chat's own row, where New chat's pencil is: the end of the row, not
+        just the glyph, which a click had to land on exactly (22 November 2026)."""
+        top = getattr(self, "nav_y", {}).get("home")
+        return event is not None and top is not None and top <= event.y < top + self.nav_h and self._on_bin(event)
 
     def _side_click(self, event):
         over = self.side.find_withtag("current")
-        if over and over[0] == self.leave:
-            self.quit()
+        if over and (over[0] in (self.leave, self.you_card, self.you_name, self.you_disc, self.you_letter)):
+            self._you_menu()
+        elif over and over[0] == self.side_search:
+            self.open_palette()
+        elif over and over[0] == self.side_pane:
+            self.toggle_sidebar(False)
+        elif self._on_pencil(event):
+            self.new_chat()
         elif self._side_row(event.y):
             self._select_tab(self._side_row(event.y))
         elif self._side_group(event.y):
             self._fold_group(self._side_group(event.y))
+        elif self._recent_at(event.y):  # one of your chats: deleted from its bin, else open again
+            cid = self._recent_at(event.y)
+            self.delete_chat(cid) if self._on_bin(event) else self.open_chat(cid)
 
     def _tab_step(self, step):
         keys = [key for _, group in NAV for key in group if key in self.nav_y]  # the ones shown, top to bottom
@@ -1826,15 +2305,15 @@ class AssistantWindow:
 
     def _slide_nav_bar(self):
         c, px = self.side, self.px
-        y, h = self.nav_y[self.current_tab] + px(3), self.nav_h - px(6)
-        x0, x1 = px(10), int(c.cget("width")) - px(12)
+        y, h = self.nav_y[self.current_tab] + px(1), self.nav_h - px(2)
+        x0, x1 = px(6), int(c.cget("width")) - px(6)
         start = getattr(self, "nav_at", y)  # the first time it's just there
-        c.itemconfigure(self.nav_bar, fill=TINTS[TAB_TINTS[self.current_tab]][1])
+        c.itemconfigure(self.nav_bar, image=self.smooth(x1 - x0, h, px(9), SIDE_PILL, SIDE_BG))
 
         def step(t):
             self.nav_at = top = start + (y - start) * t
-            c.coords(self.nav_bar, *rounded(x0, top, x1, top + h, px(9)))
-        self.animate("nav bar", 260, step)
+            c.coords(self.nav_bar, x0, top)
+        self.animate("nav bar", 150, step)  # the page is there at once; its pill no longer trails it by a quarter second
         self._ring_tab()
 
     def _build_main(self):
@@ -1850,9 +2329,17 @@ class AssistantWindow:
         # Full access while it's on (Settings > Safety), an orange dot on black as the page's badge is; a click turns
         # it off
         self.badge_on = False
-        self.full_badge = head.create_rectangle(0, 0, 0, 0, fill=TEXT, width=0, state="hidden", tags="badge")
+        # grey, as the rest of the top is quiet (22 November 2026; black till then), and a round pill as the mode
+        # switch by it is, not the square it was (22 November 2026, the owner: "fix the layout")
+        self.full_badge = head.create_image(0, 0, anchor="nw", state="hidden", tags="badge")
+        self.badge_line = head.create_line(0, 0, 0, 0, fill=LINE, state="hidden", tags="badge")  # between it and the mode
+        # Full access and the mode in one pill with a hairline round it, the top's one group (the owner: "condense the
+        # right-side badges into a single, subtle compact pill group, low-contrast border")
+        self.head_group = (head.create_image(0, 0, anchor="nw"), head.create_image(0, 0, anchor="nw"))
+        for item in self.head_group:
+            head.tag_lower(item)
         self.badge_dot = head.create_oval(0, 0, 0, 0, fill=ACCENT, width=0, state="hidden", tags="badge")
-        self.badge_text = head.create_text(0, 0, anchor="w", text="Full access", font=self.f_badge, fill=BG,
+        self.badge_text = head.create_text(0, 0, anchor="w", text="Full access", font=self.f_badge, fill=MUTED,
                                            state="hidden", tags="badge")
         # her quick actions, a small box by the mode with its keys on it (20 November 2026): a click or Ctrl+K opens
         # them over the window (Palette)
@@ -1869,6 +2356,7 @@ class AssistantWindow:
         head.tag_bind("search", "<Enter>", lambda e: head.itemconfigure(self.search_box, outline=TEXT), add="+")
         head.tag_bind("search", "<Leave>", lambda e: head.itemconfigure(self.search_box, outline=EDGE), add="+")
         self.root.bind("<Control-k>", lambda e: self.open_palette())
+        self.root.bind("<Control-Shift-O>", lambda e: self.new_chat())  # ChatGPT's own keys for a new chat
         for cls in ("TEntry", "TCombobox", "Text"):  # Ctrl+K cuts to a line's end in a text box: hers wins
             self.root.bind_class(cls, "<Control-k>", lambda e: self.open_palette())
         head.tag_bind("badge", "<Button-1>", lambda e: self.set_full_access(False))
@@ -1877,10 +2365,47 @@ class AssistantWindow:
             head.tag_bind(tag, "<Enter>", lambda e: head.configure(cursor="hand2"))
             head.tag_bind(tag, "<Leave>", lambda e: head.configure(cursor=""))
         self.dot_colour, self.dot_busy, self.dot_job = STATUS_COLORS["Starting"], False, None
-        self.status = Item(head, head.create_text(0, 0, anchor="w", text="Starting", font=self.f_status, fill=TEXT),
+        self.status = Item(head, head.create_text(0, 0, anchor="w", text="Starting", font=self.f_small, fill=MUTED),
                            self._lay_status)
+        # Hedwig's top: "Expand frames" at the left (the chat's context frames, chat.Page.toggle_frames), the page's
+        # name there on the other pages; a pencil (a new chat) and a bell (what she's done) at the right
+        self.frames_icon = head.create_text(0, 0, anchor="w", text="\ue80a", font=self.f_icon_small, fill=MUTED,
+                                            tags="frames")
+        self.frames_words = head.create_text(0, 0, anchor="w", text="Expand frames", font=self.f_small, fill=MUTED,
+                                             tags="frames")
+        self.frames_arrow = head.create_text(0, 0, anchor="w", text="\ue76c", font=self.f_fold, fill=MUTED,
+                                             tags="frames")
+        head.tag_bind("frames", "<Button-1>", lambda e: self._frames_click())
+        self.head_pane = head.create_text(0, 0, anchor="w", text="\ue8a0", font=self.f_icon, fill=MUTED,
+                                          tags="pane", state="hidden")  # the sidebar back, while it's away
+        head.tag_bind("pane", "<Button-1>", lambda e: self.toggle_sidebar(True))
+        head.tag_bind("pane", "<Enter>", lambda e: (head.configure(cursor="hand2"),
+                                                    head.itemconfigure(self.head_pane, fill=TEXT)))
+        head.tag_bind("pane", "<Leave>", lambda e: (head.configure(cursor=""),
+                                                    head.itemconfigure(self.head_pane, fill=MUTED)))
+        self.root.bind("<Control-b>", lambda e: self.toggle_sidebar() or "break")
+        for cls in ("TEntry", "Text"):  # Ctrl+B is back a letter in a text box: hers wins, as Ctrl+K's does
+            self.root.bind_class(cls, "<Control-b>", lambda e: self.toggle_sidebar() or "break")
+        self.status_pill = head.create_image(0, 0, anchor="w")  # her state's soft pill, behind its dot and word
+        self.badge_pill = head.create_image(0, 0, anchor="w", tags="badge", state="hidden")  # Full access's
+        self.pencil_back = head.create_image(0, 0, anchor="center", tags="pencil")  # an icon button's square
+        self.bell_back = head.create_image(0, 0, anchor="center", tags="bell")
+        self.head_pencil = head.create_text(0, 0, anchor="center", text="\ue70f", font=self.f_icon_small, fill=MUTED,
+                                            tags="pencil")
+        self.head_bell = head.create_text(0, 0, anchor="center", text="\uea8f", font=self.f_icon_small, fill=MUTED,
+                                          tags="bell")
+        head.tag_bind("pencil", "<Button-1>", lambda e: self.new_chat())
+        head.tag_bind("bell", "<Button-1>", lambda e: self._select_tab("stats"))
+        for tag, item, back in (("frames", self.frames_words, None), ("pencil", self.head_pencil, self.pencil_back),
+                                ("bell", self.head_bell, self.bell_back)):
+            head.tag_bind(tag, "<Enter>", lambda e, i=item, b=back: (
+                head.configure(cursor="hand2"), head.itemconfigure(i, fill=TEXT),
+                b and head.itemconfigure(b, image=self.smooth(self.px(30), self.px(30), self.px(8), "#f1f1f2", BG))))
+            head.tag_bind(tag, "<Leave>", lambda e, i=item, b=back: (
+                head.configure(cursor=""), head.itemconfigure(i, fill=MUTED),
+                b and head.itemconfigure(b, image=self.smooth(self.px(30), self.px(30), self.px(8), BG, BG))))
         self.detail_text = "Loading speech models\u2026"
-        self.detail = head.create_text(0, 0, anchor="w", font=self.f_body, fill=MUTED)
+        self.detail = head.create_text(0, 0, anchor="w", font=self.f_small, fill=MUTED)
         self.head_title = head.create_text(0, 0, anchor="nw", font=self.f_title, fill=TEXT)
         self.head_mark = head.create_rectangle(0, 0, 0, 0, fill=ACCENT, width=0)  # under it, in the tab's colour
         self.head_sub = head.create_text(0, 0, anchor="nw", font=self.f_small, fill=MUTED)
@@ -1895,68 +2420,101 @@ class AssistantWindow:
         self._show_full_badge()
 
     def _lay_head(self):
-        """All at the top for its width: the mode at the right with Full access by it, how she's doing along the left,
-        and under them the page's name, with what it's for beside it or, short of room, under it. As tall as they
-        need, with a line under it."""
+        """The top, one short row as Hedwig's: "Expand frames" (or the page's name) at the left; how she's doing,
+        then the pencil and the bell at the right; Full access, while it's on, before them. 44 px tall, nothing drawn
+        under it."""
         c, px = self.head, self.px
         w = c.winfo_width()
         if w < 2:  # not on screen yet
             return
-        pad, top = px(28), px(16)
-        (mw, mh), (ox, oy) = self.mode_size, self.mode_at
-        mx = w - pad - mw
-        c.move("mode", mx - ox, top - oy)
-        self.mode_at, right = (mx, top), mx
-        # the quick actions' box left of the mode, as tall as it: a glass, "Search", and its keys on a cap
-        cy, x1 = top + mh / 2, mx - px(12)
-        kw = self._measure(self.f_key, "Ctrl K") + px(12)
-        x0 = x1 - (px(34) + self._measure(self.f_body, "Search") + px(14) + kw + px(7))
-        c.coords(self.search_box, *rounded(x0, top, x1, top + mh, px(8)))
-        c.coords(self.search_icon, x0 + px(11), cy + px(1))
-        c.coords(self.search_words, x0 + px(34), cy)
-        c.coords(self.search_cap, *rounded(x1 - px(7) - kw, cy - px(10), x1 - px(7), cy + px(10), px(5)))
-        c.coords(self.search_keys, x1 - px(7) - kw / 2, cy)
-        right = mx = x0
-        if self.badge_on:
-            cy, bh, x1 = top + mh / 2, px(26), mx - px(12)
-            x0 = x1 - self._measure(self.f_badge, "Full access") - px(32)
-            c.coords(self.full_badge, x0, cy - bh / 2, x1, cy + bh / 2)
-            c.coords(self.badge_dot, x0 + px(11), cy - px(3), x0 + px(17), cy + px(3))
-            c.coords(self.badge_text, x0 + px(22), cy)
-            right = x0
-        self.status_room = right - px(24)
+        pad, mid = px(20), px(22)
+        c.itemconfigure("mode", state="hidden")  # her mode is in your card's menu (_you_menu)
+        c.itemconfigure("search", state="hidden")
+        c.itemconfigure(self.head_group[0], state="hidden")
+        c.itemconfigure(self.head_group[1], state="hidden")
+        on_chat = getattr(self, "current_tab", "home") == "home"
+        page = getattr(self, "pages", {}).get(getattr(self, "current_tab", "home"))
+        words = ("Expand frames" + (f" \u00b7 {self.frames_n}" if getattr(self, "frames_n", 0) else "")) if on_chat \
+            else identity.named(getattr(page, "head", ("", ""))[0] or "")
+        c.itemconfigure(self.frames_words, text=words)
+        c.itemconfigure(self.frames_icon, state="normal" if on_chat else "hidden")
+        c.itemconfigure(self.frames_arrow, state="normal" if on_chat else "hidden",
+                        text="\ue70d" if getattr(self, "frames_open", False) else "\ue76c")
+        x = pad
+        away = not getattr(self, "side_open", True)
+        c.itemconfigure(self.head_pane, state="normal" if away else "hidden")
+        if away:  # the panel icon first, to bring the sidebar back
+            c.coords(self.head_pane, x, mid)
+            x += px(36)
+        if on_chat:
+            c.coords(self.frames_icon, x, mid)
+            x += px(20)
+        c.coords(self.frames_words, x, mid)
+        c.coords(self.frames_arrow, c.bbox(self.frames_words)[2] + px(6), mid + px(1))
+        c.coords(self.head_bell, w - pad - px(8), mid)
+        c.coords(self.bell_back, w - pad - px(8), mid)
+        c.coords(self.head_pencil, w - pad - px(44), mid)
+        c.coords(self.pencil_back, w - pad - px(44), mid)
+        for back in (self.pencil_back, self.bell_back):
+            if not c.itemcget(back, "image"):
+                c.itemconfigure(back, image=self.smooth(px(30), px(30), px(8), BG, BG))
+        right = w - pad - px(66)
+        if self.badge_on:  # Full access while it's on: a pale blue pill with a shield, before how she's doing
+            words_w = self._measure(self.f_small, "Full access")
+            pw, ph = words_w + px(36), px(26)
+            x0 = right - pw
+            c.itemconfigure(self.badge_pill, image=self.smooth(pw, ph, ph / 2, "#eef4ff", BG), state="normal")
+            c.coords(self.badge_pill, x0, mid)
+            c.itemconfigure(self.badge_dot, state="hidden")
+            if not hasattr(self, "badge_icon"):  # its shield, in the icon font
+                self.badge_icon = c.create_text(0, 0, text="\uea18", font=self.f_icon_small, fill="#3b6fd6",
+                                                tags="badge")
+            c.itemconfigure(self.badge_text, font=self.f_small, fill="#3b6fd6", text="Full access")
+            c.coords(self.badge_icon, x0 + px(16), mid)
+            c.coords(self.badge_text, x0 + px(28), mid)
+            c.tag_raise(self.badge_icon)
+            c.tag_raise(self.badge_text)  # over its pill, which was made after them
+            c.itemconfigure(self.badge_line, state="hidden")
+            right = x0 - px(8)
+        self.status_right = right
         self._lay_status()
-        ty = top + mh + px(10)
-        c.coords(self.head_title, pad - px(3), ty)
-        tb = c.bbox(self.head_title) or (pad, ty, pad, ty + px(44))
-        base = tb[1] + self._font(self.f_title).metrics("ascent")  # the foot of its capitals
-        c.coords(self.head_mark, pad, base + px(8), pad + px(36), base + px(11))
-        room = w - pad - tb[2] - px(40)
-        if room >= px(220):  # beside it, as the page has its small words by its big ones
-            c.itemconfigure(self.head_sub, anchor="ne", width=min(px(340), room))
-            c.coords(self.head_sub, w - pad, ty + px(10))
-        else:
-            c.itemconfigure(self.head_sub, anchor="nw", width=w - 2 * pad)
-            c.coords(self.head_sub, pad, tb[3])
-        sb = c.bbox(self.head_sub) or tb
-        height = int(max(base + px(11), sb[3]) + px(16))
+        for item in (self.head_title, self.head_mark, self.head_sub, self.head_line):
+            c.itemconfigure(item, state="hidden")
+        height = px(44)
         if int(c.cget("height")) != height:
             c.configure(height=height)
-        c.coords(self.head_line, 0, height - 1, w, height - 1)
         self._dots(c, w, height)
         self._glass_soon()  # the glass behind it, for its size now
 
     def _lay_status(self):
-        """How she's doing along the top: her dot, what she's at, and the rest in grey, cut short to the room it has."""
+        """How she's doing, at the right of the top before the pencil: her dot and a word, and what she's at only
+        while it's worth reading (starting up, or something wrong), cut short. Her last words aren't repeated here:
+        the chat has them."""
         c, px = self.head, self.px
-        x, y = px(28), px(32)  # level with the middle of the mode switch
-        self.dot_at = (x + px(5), y)
+        right, y = getattr(self, "status_right", c.winfo_width() - px(80)), px(22)
+        state = c.itemcget(self.status.item, "text")
+        detail = self.detail_text if state in ("Starting", "Something went wrong") else ""
+        c.itemconfigure(self.detail, text=self._fit(detail, self.f_small, px(220)) if detail else "")
+        dw = self._measure(self.f_small, c.itemcget(self.detail, "text")) + px(8) if detail else 0
+        sw = self._measure(self.f_small, state)
+        pw, ph = px(12) + px(14) + sw + dw + px(12), px(26)  # her state in a soft pill: dot, word, what she's at
+        x = right - pw
+        c.itemconfigure(self.status_pill, image=self.smooth(pw, ph, ph / 2, "#f4f4f5", BG))
+        c.coords(self.status_pill, x, y)
+        c.tag_lower(self.status_pill)
+        self.dot_at = (x + px(14), y)
         if not self.dot_busy:
             self._draw_dot()
-        c.coords(self.status.item, x + px(18), y)
-        after = c.bbox(self.status.item)[2] + px(12)
-        c.itemconfigure(self.detail, text=self._fit(self.detail_text, self.f_body, self.status_room - after))
-        c.coords(self.detail, after, y)
+        c.coords(self.status.item, x + px(24), y)
+        c.coords(self.detail, x + px(24) + sw + px(8), y)
+
+    def _frames_click(self):
+        """"Expand frames": the chat's context frames open or shut (on another page, the chat first)."""
+        if getattr(self, "current_tab", "home") != "home":
+            self._select_tab("home")
+        page = getattr(self, "chat", None)
+        if page is not None:
+            page.toggle_frames()
 
     def _font(self, font):
         if font not in self.measures:
@@ -1983,12 +2541,13 @@ class AssistantWindow:
         """The page's name and what it's for at the top, fading in as the page comes up."""
         title, sub = self.pages[key].head
         c = self.head
-        c.itemconfigure(self.head_title, text=caps(identity.named(title)))
+        c.itemconfigure(self.head_title, text=identity.named(title))
         c.itemconfigure(self.head_sub, text=identity.named(sub))
-        c.itemconfigure(self.head_mark, fill=TINTS[TAB_TINTS[key]][0])
+        c.itemconfigure(self.head_mark, fill=BG)  # the line of the tab's colour under its name: gone with the capitals
         self._lay_head()
-        self.animate("head", 260, lambda t: (c.itemconfigure(self.head_title, fill=mix(BG, TEXT, t)),
-                                             c.itemconfigure(self.head_sub, fill=mix(BG, MUTED, t))))
+        # in their colours at once: they faded in over a quarter of a second, and are hidden in this look anyway
+        c.itemconfigure(self.head_title, fill=TEXT)
+        c.itemconfigure(self.head_sub, fill=MUTED)
 
     def _show_full_badge(self):
         on = bool(settings.get("full_access"))
@@ -2022,10 +2581,9 @@ class AssistantWindow:
         c, px, colour = self.head, self.px, self.dot_colour
         c.delete("sdot")
         x, y = self.dot_at
-        if phase is not None:
-            r = px(4) + px(6) * phase
-            c.create_oval(x - r, y - r, x + r, y + r, outline=mix(colour, BG, phase), width=px(2), tags="sdot")
-        c.create_oval(x - px(5), y - px(5), x + px(5), y + px(5), fill=colour, outline="", tags="sdot")
+        r = px(3.2)
+        fill = colour if phase is None else mix(colour, "#f4f4f5", 0.45 * (0.5 - 0.5 * math.cos(phase * 2 * math.pi)))
+        c.create_oval(x - r, y - r, x + r, y + r, fill=fill, outline="", tags="sdot")  # breathing while she's at it
 
     def _set_dot(self, colour, busy):
         self.dot_colour, self.dot_busy = colour, busy
@@ -2047,39 +2605,38 @@ class AssistantWindow:
         Drawn again with a new name of hers (_renamed)."""
         c, px = self.head, self.px
         c.delete("mode")
-        measure = tkfont.Font(root=self.root, font=self.f_bold).measure
-        pad, h, x = px(3), px(32), px(3)
+        measure = tkfont.Font(root=self.root, font=self.f_badge).measure
+        pad, h, x = px(3), px(26), px(3)
         self.mode_spans = {}
         for mode in MODES:
-            w = measure(identity.named(MODE_LABELS[mode])) + px(28)
+            w = measure(identity.named(MODE_LABELS[mode])) + px(20)
             self.mode_spans[mode] = (x, x + w)
             x += w
         self.mode_size = (x + pad, h)
         ox, oy = self.mode_at
-        c.create_polygon(rounded(ox, oy, ox + x + pad, oy + h, h / 2), smooth=True, fill=ACCENT_SOFT, outline="",
-                         tags="mode")
+        c.create_image(ox, oy, anchor="nw", image=self.smooth(x + pad, h, h / 2, BG, BG), tags="mode")
         # round it while it has the keyboard, when Left and Right pick
         self.mode_ring = c.create_polygon(rounded(ox - px(3), oy - px(3), ox + x + pad + px(3), oy + h + px(3),
                                                   h / 2 + px(3)), smooth=True, fill="", outline=TEXT,
                                           state="hidden", tags="mode")
         a, b = self.mode_spans[self.mode]
-        self.mode_thumb = c.create_polygon(rounded(ox + a, oy + pad, ox + b, oy + h - pad, (h - 2 * pad) / 2),
-                                           smooth=True, fill=ACCENT, outline="", tags="mode")
+        self.mode_thumb = c.create_image(ox + a, oy + pad, anchor="nw", tags="mode")  # white on the grey (_paint_mode)
         self.mode_texts = {m: c.create_text(ox + (a + b) / 2, oy + h / 2, text=identity.named(MODE_LABELS[m]),
-                                            font=self.f_bold, tags="mode") for m, (a, b) in self.mode_spans.items()}
+                                            font=self.f_badge, tags="mode") for m, (a, b) in self.mode_spans.items()}
         self._paint_mode(slide=False)
 
     def _paint_mode(self, slide=True):
         c, pad, h = self.head, self.px(3), self.mode_size[1]
         for mode, item in self.mode_texts.items():
-            c.itemconfigure(item, fill=BG if mode == self.mode else MUTED)
+            c.itemconfigure(item, fill=TEXT if mode == self.mode else MUTED)
         a2, b2 = self.mode_spans[self.mode]
         a1, b1 = getattr(self, "mode_thumb_at", (a2, b2)) if slide else (a2, b2)
 
         def step(t):
             self.mode_thumb_at = a, b = a1 + (a2 - a1) * t, b1 + (b2 - b1) * t
             ox, oy = self.mode_at
-            c.coords(self.mode_thumb, *rounded(ox + a, oy + pad, ox + b, oy + h - pad, (h - 2 * pad) / 2))
+            c.itemconfigure(self.mode_thumb, image=self.smooth(b - a, h - 2 * pad, (h - 2 * pad) / 2, FIELD, BG))
+            c.coords(self.mode_thumb, ox + a, oy + pad)
         if slide:
             self.animate("mode", 240, step)
         else:
@@ -2090,7 +2647,7 @@ class AssistantWindow:
         self.set_mode(next((m for m, (a, b) in self.mode_spans.items() if a <= x < b), self.mode))
 
     def _page(self, title, subtitle, scroll=False):
-        page = tk.Frame(self.page_area, bg=BG, padx=self.px(28), pady=self.px(20))
+        page = tk.Frame(self.page_area, bg=BG, padx=self.px(28), pady=self.px(12))
         page.place(x=0, y=0, relwidth=1, relheight=1)  # placed, not gridded, so it can slide in
         if scroll:  # a page taller than the window scrolls, with the mouse wheel too
             outer, canvas = page, tk.Canvas(page, bg=BG, highlightthickness=0, bd=0)
@@ -2111,8 +2668,9 @@ class AssistantWindow:
                     canvas.yview_moveto(0)
             page.bind("<Configure>", fit)
             canvas.bind("<Configure>", fit)
-            canvas.configure(yscrollincrement=self.px(20))  # the wheel moves it 3 of these a notch (_wheel)
+            canvas.configure(yscrollincrement=1)  # a pixel a unit, so the wheel can glide it (Glide, _wheel)
             page.outer, page.canvas, page.bar = outer, canvas, bar  # what the tabs raise, and what the wheel scrolls
+            page.glide = Glide(lambda n, c=canvas: c.yview_scroll(n, "units"), self.root.after)
         page.head = (title, subtitle)  # at the top of the window while it's open, over the dots (_show_head)
         return page
 
@@ -2147,13 +2705,13 @@ class AssistantWindow:
         its rows are gridded in)"""
         px = self.px
         colour, soft = TINTS[tint]
-        card = tk.Frame(parent, bg=BG, highlightthickness=1, highlightbackground=LINE, highlightcolor=LINE,
-                        padx=px(20), pady=px(14))
+        card = tk.Frame(parent, bg=BG, padx=px(20), pady=px(14))
+        ui_kit.Backdrop(card, px(14), BG, LINE, BG)  # round corners and a hairline, drawn behind what's in it
         top = tk.Frame(card, bg=BG, cursor="hand2", takefocus=1, highlightthickness=1, highlightbackground=BG,
                        highlightcolor=TEXT)
         top.pack(fill="x")
-        tk.Label(top, text=icon, font=self.f_icon, fg=colour, bg=soft, width=2, pady=px(4)).pack(side="left")
-        self._label(top, caps(title), self.f_section).pack(side="left", padx=(px(12), 0))
+        tk.Label(top, text=icon, font=self.f_icon, fg=MUTED, bg=BG, width=2, pady=px(4)).pack(side="left")
+        self._label(top, title, self.f_section).pack(side="left", padx=(px(12), 0))
         arrow = tk.Label(top, font=self.f_fold, fg=MUTED, bg=BG)
         arrow.pack(side="right", padx=(0, px(2)))
         rows = tk.Frame(card, bg=BG)
@@ -2191,17 +2749,22 @@ class AssistantWindow:
         bar = tk.Frame(page.outer, bg=BG)
         bar.pack(side="top", fill="x", pady=(0, px(14)), before=page.canvas)
         for name, tint, card in parts:
-            chip = tk.Frame(bar, bg=BG, highlightthickness=1, highlightbackground=LINE, cursor="hand2")
-            chip.pack(side="left", padx=(0, px(6)))
-            dot = tk.Label(chip, text="\u25cf", font=self.f_small, fg=TINTS[tint][0], bg=BG, cursor="hand2")
-            dot.pack(side="left", padx=(px(9), px(3)), pady=px(2))
-            words = tk.Label(chip, text=name, font=self.f_small, fg=TEXT, bg=BG, cursor="hand2")
-            words.pack(side="left", padx=(0, px(11)), pady=px(2))
-            for w in (chip, dot, words):
-                w.bind("<Button-1>", lambda e, c=card: self._jump(page, c))
-            chip.bind("<Enter>", lambda e, ws=(chip, dot, words): [w.configure(bg=ACCENT_SOFT) for w in ws])
-            chip.bind("<Leave>", lambda e, ws=(chip, dot, words): None if self.root.winfo_containing(
-                e.x_root, e.y_root) in ws else [w.configure(bg=BG) for w in ws])
+            self._chip(bar, name, lambda c=card: self._jump(page, c)).pack(side="left", padx=(0, px(6)))
+
+    def _chip(self, parent, words, command):
+        """A soft grey pill with words in it, a shade darker under the mouse: the parts along the top of Settings, Island
+        and Keys, round as her buttons are now (22 November 2026: they were square frames). One picture and its words,
+        the other shade a picture made once: nothing runs."""
+        px = self.px
+        w, h = self._measure(self.f_small, words) + px(26), px(28)
+        c = tk.Canvas(parent, width=w, height=h, bg=BG, highlightthickness=0, bd=0, cursor="hand2")
+        rest, over = self.smooth(w, h, h / 2, FIELD, BG), self.smooth(w, h, h / 2, FIELD_OVER, BG)
+        back = c.create_image(0, 0, anchor="nw", image=rest)
+        c.create_text(w / 2, h / 2, text=words, font=self.f_small, fill=TEXT)
+        c.bind("<Enter>", lambda e: c.itemconfigure(back, image=over))
+        c.bind("<Leave>", lambda e: c.itemconfigure(back, image=rest))
+        c.bind("<Button-1>", lambda e: command())
+        return c
 
     def _jump(self, page, card):
         """A long page scrolled till card is at its top, quickly, then settling."""
@@ -2312,21 +2875,20 @@ class AssistantWindow:
 
     # ------------------------------------------------------------------ home
     def _build_home(self):
-        """Home, in the order you'd use it (20 November 2026, the owner: "base the whole hierarchy on the order of
-        operations"): first the box to ask her in, with its Send; then what she's done for you, your dictation's
-        figures together and her commands' together, where there were six cards alike; then what you use most; and
-        how to use her last, folded shut till you want it."""
+        """Her first page, a chat (chat.py, 22 November 2026, the owner, after Hedwig's): the thread of what was said
+        and what she did, the one box for everything under it, and what stays down its side. Its box and its Send
+        are the ones Home had (ask_box, send), so right Alt tapped twice still lands in it."""
+        page = self._page("Chat", "Ask her anything or tell her what to do, here or out loud.")
+        self.chat = chat.Page(self, page, sys.modules[__name__])
+        self.ask_box = self.chat.box
+        return page
+
+    def _build_stats(self):
+        """Activity, what Home showed under its box till the chat took its place (22 November 2026): what she's done
+        for you, your dictation's figures together and her commands' together; then what you use most; and how to
+        use her last, folded shut till you want it."""
         px = self.px
-        page = self._page("Home", "Ask her here or out loud, then see what she's done for you.", scroll=True)
-        ask = tk.Frame(page, bg=BG)  # typing to her instead of talking (28 October 2026)
-        ask.pack(fill="x")
-        self.ask_box = HintEntry(ask, "Ask Harry anything, or tell her what to do", width=64)
-        self.ask_box.pack(side="left", fill="x", expand=True, ipady=px(6))
-        self.ask_box.bind("<Return>", lambda e: self.ask_typed())
-        self.send = SendButton(self, ask, self.ask_typed)
-        self.send.canvas.pack(side="left", padx=(px(10), 0))
-        self._label(page, "Or just say it. Tap right Alt twice, anywhere, to type to her.", self.f_small,
-                    MUTED).pack(anchor="w", pady=(px(7), px(22)))
+        page = self._page("Activity", "What she's done for you, and what you use most.", scroll=True)
         self.stat_cards = []
         for name, tint, icon, first in (("Dictation", "blue", "\ue720", 0), ("Commands", "green", "\ue945", 3)):
             card, box = self._part(page, name, tint, icon)
@@ -2359,15 +2921,13 @@ class AssistantWindow:
         return page
 
     def ask_typed(self):
-        """Home's typing box: what you typed goes to her as a turn of yours, as if said with her name."""
-        text = " ".join(self.ask_box.get().split())
-        if text:
-            self.controls.put(("typed", text))
-            self.ask_box.clear()
+        """The chat's box: what you typed goes to her as a turn of yours, as if said with her name (chat.Page.send)."""
+        self.chat.send()
 
     def _count_up(self, key, label, text):
-        """A number counts up to itself, from where it was; any other text just shows."""
-        if not re.fullmatch(r"[\d,]+", text):
+        """A figure as it is, at once. It counted up to itself over 0.7 s till 22 November 2026, the owner: "why do they
+        appear one by one, very late ... remove that completely". COUNT_UP puts it back."""
+        if not COUNT_UP or not re.fullmatch(r"[\d,]+", text):
             label.configure(text=text)
             return
         end = int(text.replace(",", ""))
@@ -3255,24 +3815,30 @@ class AssistantWindow:
             side="left", padx=(self.px(8), 0))
         # in parts, each a card with its colour and its name along the top to jump to (29 October 2026, the owner:
         # one long list was hard to find things in and to scroll): (name, colour, icon, its rows by number below)
-        parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14)),
+        parts = (("Safety", "orange", "\uea18", ()), ("Her", "violet", "\uf4a5", (7, 8, 14, 26)),
                  ("Hearing you", "blue", "\ue720", (0, 2, 3, 10, 11, 15, 18)), ("Seeing", "teal", "\ue890", (9, 20, 23, 24)),
                  ("Models", "green", "\ue99a", (1,)), ("Speaking up", "amber", "\uea8f", (12, 13, 25)),
                  ("Phone", "rose", "\ue8ea", (16,)), ("Window", "slate", "\ue737", (4, 5, 6, 19)))
-        cards, where, form = {}, {}, None
+        cards, where, form, part_of = {}, {}, None, {}
         for name, tint, icon, rows in parts:
             cards[name] = self._part(page, name, tint, icon)
             cards[name][0].pack(fill="x", pady=(0, self.px(14)))
             where.update((r, cards[name][1]) for r in rows)
+            part_of.update((r, cards[name][0]) for r in rows)
         tops = {rows[0] for name, _, _, rows in parts if rows and name != "Her"}  # Her name is over Her's first
         self._jumps(page, [(name, tint, cards[name][0]) for name, tint, _, _ in parts])
+        # each row by its name too, for her quick actions (20 November 2026: the owner typed "voice" in Ctrl+K and
+        # found nothing, as only the parts' names were in it): (its name, its part's card, its name's label)
+        page.rows = []
 
         def row(r, title, sub):
             nonlocal form
             form = where[r]  # its part's card: what's made for the row after this goes in it too
             if r not in tops:  # a thin line above, but at the top of its card
                 tk.Frame(form, bg=LINE, height=1).grid(row=r * 2, column=0, columnspan=2, sticky="new")
-            self._label(form, title, self.f_h2).grid(row=r * 2, column=0, sticky="w", pady=(self.px(14), 0))
+            name = self._label(form, title, self.f_h2)
+            name.grid(row=r * 2, column=0, sticky="w", pady=(self.px(14), 0))
+            page.rows.append((title, part_of[r], name))
             label = self._label(form, sub, self.f_small, MUTED, wraplength=self.px(310))
             label.grid(row=r * 2 + 1, column=0, sticky="w")
             return label
@@ -3362,6 +3928,14 @@ class AssistantWindow:
         self.voice_info = self._label(voice, "", self.f_small, MUTED, wraplength=self.px(330))
         self.voice_info.grid(row=1, column=0, columnspan=2, sticky="w", pady=(self.px(4), 0))
         self._show_voice()
+        # how her voice on this PC says a name it gets wrong (9 November 2026: the voice then said the owner's name as another)
+        self._label(voice, "Say names as, for her voice on this PC (Saoirse = Seersha; ...)", self.f_small,
+                    MUTED).grid(row=2, column=0, columnspan=2, sticky="w", pady=(self.px(8), 0))
+        say_box = ttk.Entry(voice, width=34)
+        say_box.insert(0, "; ".join(f"{k} = {v}" for k, v in (settings.get("voice_say_as") or {}).items()))
+        say_box.grid(row=3, column=0, columnspan=2, sticky="ew")
+        for event in ("<Return>", "<FocusOut>"):
+            say_box.bind(event, lambda e: self.say_as_changed(say_box.get()), add="+")
 
         row(9, "Vision", "When you ask about the screen, or for something she has to see like \u201cclick the "
                          "second video\u201d, she looks at a screenshot of it and acts on it. Watching, she also reads "
@@ -3498,6 +4072,13 @@ class AssistantWindow:
         self.chatty_menu.bind("<<ComboboxSelected>>", lambda e: settings.put(
             "chattiness", next(k for k, v in CHATTY.items() if v == self.chatty_menu.get())))
         self.chatty_menu.grid(row=50, column=1, rowspan=2, sticky="e")
+        row(26, "Speak chat answers", "What you type in the chat is answered in words only, so she never talks over "
+                                      "you while you type. On, she says it out loud as well, as she does when you "
+                                      "talk to her. The speaker in the chat's box switches it too.")
+        self.chat_speaks_var = tk.BooleanVar(value=bool(settings.get("chat_speaks")))
+        ttk.Checkbutton(form, text="Say them out loud", variable=self.chat_speaks_var,
+                        command=lambda: self.chat.box.speak(self.chat_speaks_var.get())).grid(
+            row=52, column=1, rowspan=2, sticky="e")
         self.settings_note = self._label(page, "", self.f_small, MUTED, wraplength=self.px(660))
         self.settings_note.pack(fill="x", pady=(self.px(18), 0))
         self.models_loaded = False
@@ -3619,7 +4200,7 @@ class AssistantWindow:
 
     def _show_voice(self):
         """Her voice on its box, and under it who makes it."""
-        voice = settings.get("voice") or settings.VOICES[0][1]
+        voice = saved_voice()
         label = self._voice_label(voice)
         self.voice_button.configure(text=(label if len(label) <= 30 else label[:29] + "…") + "  ▾")
         parsed = voices.parse(voice)
@@ -3628,8 +4209,23 @@ class AssistantWindow:
         elif parsed:
             self.voice_info.configure(text=f"{parsed[0].name}, with your key. Each line is kept once said, and her "
                                            f"voice on this PC fills in if it fails.", fg=MUTED)
+        elif str(voice).startswith("voca:"):  # who made her voice on this PC (voca.CREDIT)
+            import voca
+            self.voice_info.configure(text=f"{voca.CREDIT}. Made on this PC, nothing sent anywhere.", fg=MUTED)
         else:
             self.voice_info.configure(text="", fg=MUTED)
+
+    def say_as_changed(self, text):
+        """"Saoirse = Seersha; Siobhan = Shivawn" from the Voice row's box, as voice_say_as: how her voice on this PC
+        says the names it gets wrong (voca.said_as)."""
+        pairs = {}
+        for part in str(text).split(";"):
+            word, _, sound = part.partition("=")
+            if word.strip() and sound.strip():
+                pairs[word.strip()] = sound.strip()
+        if pairs != (settings.get("voice_say_as") or {}):
+            settings.put("voice_say_as", pairs)
+            self._note("Saved. Her voice on this PC says those names that way from now on.")
 
     def set_voice(self, voice):
         """Saves her voice from the picker."""
@@ -3649,7 +4245,7 @@ class AssistantWindow:
 
     def try_voice(self, voice=None):
         """A line in voice, or her voice now, played to hear how it sounds; what happened is said under it."""
-        voice = voice or settings.get("voice") or settings.VOICES[0][1]
+        voice = voice or saved_voice()
         name = settings.get("name")
         line = f"Hi{' ' + name if name else ''}, this is how I'd sound. Anything you'd like me to do?"
         self._tell("Playing a line…")
@@ -3960,8 +4556,10 @@ class AssistantWindow:
             self._load_history()
         if key == "mem":
             self._load_memory()
-        if key == "home":
+        if key == "stats":
             self._load_stats()
+        if key == "home":
+            self.chat.shown()
         if key == "island":
             self._load_island_apps()
         if key == "settings":
@@ -4001,7 +4599,7 @@ class AssistantWindow:
 
     def quick_actions(self):
         """What her quick actions offer, as (icon, its name, its kind, what does it): every tab, every part of the
-        long pages by name, and the few things the window itself does."""
+        long pages by name, each of Settings' rows by its name, and the few things the window itself does."""
         titles, out = dict(TABS), []
         for _, keys in NAV:
             out += [(ICONS[key], titles[key], "Go to", lambda key=key: self._select_tab(key)) for key in keys]
@@ -4013,13 +4611,25 @@ class AssistantWindow:
                         self._select_tab(key)
                         self.root.after(300, lambda: self._jump(page, card))
                     out.append((ICONS[key], f"{titles[key]}: {name}", "Section", go))
+                for name, card, label in getattr(page, "rows", ()):  # and each of Settings' rows, as "Voice"
+                    def go(key=key, page=page, card=card, label=label):
+                        self._select_tab(key)
+                        getattr(card, "unfold", lambda: None)()  # its part opened first, or the row isn't there
+                        self.root.after(300, lambda: self._jump(page, label))
+                    out.append((ICONS[key], f"{titles[key]}: {name}", "Setting", go))
         other = MODES[1 - MODES.index(self.mode)]
         listen = {"wake": "Listen for \u201cHey Harry\u201d", "ptt": "Hold right Alt to talk"}[other]
+        # a new chat, and each of yours by its title, those the sidebar hasn't room for too
+        out.append(("\ue70f", "New chat", "Chat", self.new_chat))
+        out += [("\ue8bd", text, "Chat", lambda cid=cid: self.open_chat(cid)) for cid, text, _ in self.chat.chats.listed()]
         out += [("\ue720", identity.named(listen), "Mode", lambda: self.set_mode(other)),
                 ("\ue718", "Stop keeping this window on top" if self.on_top else "Keep this window on top", "Window",
                  self.toggle_on_top),
-                ("\ue706", "Turn frosted glass off" if settings.get("glass") else "Turn frosted glass on", "Window",
-                 lambda: self.set_glass(not settings.get("glass"))),
+                ("\ue89f", "Hide the sidebar" if getattr(self, "side_open", True) else "Show the sidebar", "Window",
+                 lambda: self.toggle_sidebar()),
+                ("\ue790", "Make the sidebar light" if self.sidebar == "dark" else "Make the sidebar dark", "Window",
+                 lambda: self.set_sidebar("light" if self.sidebar == "dark" else "dark")),
+                ("\ue7f4", "Use the new window", "Window", lambda: self.use_window("qt")),
                 ("\ue897", "Show the walkthrough", "Help", self.open_walkthrough),
                 ("\ue921", "Minimise to the taskbar", "Window", self.root.iconify),
                 ("\ue7e8", identity.named("Quit Hey Harry"), "Window", self.quit)]
@@ -4035,7 +4645,7 @@ class AssistantWindow:
             canvas.create_image(0, 0, image=photo, anchor="nw", tags="glass")
             canvas.tag_lower("glass")
         self.root.bind("<Configure>", lambda e: e.widget is self.root and self._glass_soon(), add="+")
-        if settings.get("glass"):
+        if GLASS and settings.get("glass"):  # none in the plain look (22 November 2026)
             self._make_glass()
 
     def _make_glass(self):
@@ -4155,6 +4765,11 @@ class AssistantWindow:
     def _set_status(self, state, detail):
         if self.walkthrough is not None:  # Try it now: the key lights up as she listens, green once she's heard
             self.walkthrough.status(state, detail)
+        chat_page = getattr(self, "chat", None)
+        if chat_page is not None:  # what was said and what she did, into the chat's thread (chat.py)
+            chat_page.event(state, detail)
+        if state in ("Box words", "Context"):  # for the chat page alone: what was said into its box's mic
+            return  # (chat.Box.voice_words), and what a look-up found, for its context canvas (chat.Bento)
         if state == "Heard":  # what she heard you say, on its own line above the popup: nothing else changes
             if self.popup:
                 self.bubble.caption(detail)
@@ -4221,6 +4836,7 @@ class AssistantWindow:
             self._lay_bottom()
         self._todo_tick()
         self._tasks_tick()
+        self.chat.tick()  # what stays down the chat's side: the timers, and the lists every few seconds
         self._show_full_badge()  # said off by voice or the phone, or run out: the pill goes too
         self.root.after(500, self._tick)
 
@@ -4240,7 +4856,25 @@ class AssistantWindow:
         self.root.attributes("-topmost", self.on_top)
         self.on_top_var.set(self.on_top)
 
+    def use_window(self, which):
+        """Her window as Qt draws it (qtwindow), or this one again: kept in settings, and she starts again in it
+        (start_again)."""
+        settings.put("window", which)
+        try:
+            self.chat.save()
+        except Exception as exc:
+            print(f"  couldn't keep the chat: {exc!r}")
+        for part in (self.edges, self.dock):
+            if part is not None:
+                part.close()
+        self.bubble.close()
+        start_again()
+
     def quit(self):
+        try:
+            self.chat.save()  # the last second of the open chat, which would have been kept a moment later
+        except Exception as exc:
+            print(f"  couldn't keep the chat: {exc!r}")
         for part in (self.edges, self.dock):  # the dock first puts Windows' taskbar back, if it hid it
             if part is not None:
                 part.close()
@@ -4270,6 +4904,46 @@ def _native_faults():
         print(f"  no native fault log: {exc!r}")
 
 
+RESTART = 75  # her keeper's exit code for "start me again" (app.py): she's started again in a moment
+
+
+def start_again():
+    """She quits and starts again at once: by her keeper (RESTART), or, started without one, by starting one that
+    waits for this one to go (app.py --after)."""
+    sys.stdout.flush()
+    if "--child" not in sys.argv:
+        import subprocess
+        exe = os.path.join(HERE, ".venv", "Scripts", "pythonw.exe")
+        subprocess.Popen([exe if os.path.exists(exe) else sys.executable, os.path.join(HERE, "app.py"), "--after",
+                          str(os.getpid())], cwd=HERE, creationflags=0x08000000, close_fds=True)  # no console
+        os._exit(0)
+    os._exit(RESTART)
+
+
+def gc_here(after):
+    """Python's collector run on this thread, the window's, and never on another (22 November 2026). Left to itself it
+    runs on whichever thread happens to allocate at the time, and frees what it finds there whatever thread made it:
+    a Windows audio object (comtypes) let go on the wrong thread crashed her with an access violation, its stack
+    "Garbage-collecting" over comtypes' Release on 7 November (native-faults.log), and the same way the first time her
+    Qt window started. after(ms, fn): the window's own timer. Once a second, as much as Python's own would do when
+    its count says so."""
+    import gc
+    young = gc.get_threshold()[0] or 700
+    gc.disable()
+    ticks = [0]
+
+    def check():
+        ticks[0] += 1
+        try:
+            if gc.get_count()[0] > young:
+                gc.collect(1)  # the young, and from Python 3.14 a step through the old, as its own would
+            if sys.version_info < (3, 14) and ticks[0] % 300 == 0:
+                gc.collect(2)  # before 3.14 the oldest only by asking: every five minutes
+        finally:
+            after(1000, check)
+    after(1000, check)
+
+
 def run_app():
     _native_faults()
     win.prepare_gui()  # before Tk starts, so text is sharp on scaled screens
@@ -4278,12 +4952,21 @@ def run_app():
         return
     win.move_start_entry()  # Hey Jev's, if you had one: she starts when you sign in as before
     identity.moved_on()  # the first start as Harry: her notes say her name where they said Jev
+    if settings.get("window") == "qt":  # her window drawn by Qt (qtwindow, the owner's choice, 22 November 2026)
+        try:
+            import qtwindow
+            qtwindow.run()  # till she's quit; it ends the process itself
+            return
+        except Exception as exc:  # Qt missing, or her window wouldn't build: the classic window, never none
+            traceback.print_exc()
+            print(f"  her Qt window couldn't start ({exc!r}), so it's the classic one")
     root = tk.Tk()
 
     def callback_error(kind, exc, tb):  # a button or a timer of her window went wrong: in the log
         traceback.print_exception(kind, exc, tb)
     root.report_callback_exception = callback_error
     AssistantWindow(root)
+    gc_here(root.after)  # what Python collects is let go here, on the window's thread
     if "--startup" in sys.argv:  # started as you signed in: on the taskbar, she says hello and listens
         root.after(300, root.iconify)
     root.mainloop()

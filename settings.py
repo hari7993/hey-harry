@@ -22,8 +22,26 @@ DEFAULTS = {
     # and what they're for: "all" (commands and dictation) or "dictation"
     "ears": "",
     "ears_use": "all",
+    # what's said without her name that her decider wasn't sure of, asked of Gemini Decision before the model, with
+    # a Gemini key saved (decisions.py, 18 November 2026)
+    "gemini_decides": True,
     # how long she waits for you to finish before answering: patient, even or quick (speech.Listener.WAITS)
     "turn_wait": "patient",
+    # "type ..." and "write ..." said without her name, typed straight away. Off, they wait on the answer model to
+    # decide the words were for her (siri.handle), about 1.3 s, because the mic is always open and a video's or a
+    # visitor's "type ..." would be typed into your window too. On is the owner's choice for their own PC (20 November
+    # 2026, "type straight away"). Only plain typing: Enter, closing and the rest still wait, and she still never
+    # types into a command window. No row in Settings yet: it's set in settings.json
+    "type_unnamed": False,
+    # her window's sidebar: "dark", as Hedwig's is, or "light" (assistant_ui.SIDES), switched from her quick actions
+    "sidebar": "dark",
+    # which window she opens in: "tk", the classic one (assistant_ui), or "qt", the same window drawn by Qt
+    # (qtwindow, 22 November 2026, the owner's choice after the Tk one kept breaking), switched from either's menu
+    "window": "tk",
+    # what's typed in the chat is answered in words only, so she never talks over you while you type (22 November 2026,
+    # the owner: "when I chat, the voice assistant interrupts"). On, she says it out loud as well, as when it's spoken
+    # to her: the speaker in the chat's box, or Settings > Window
+    "chat_speaks": False,
     "echo_cancel": True,  # the mic in Windows' speech mode, so she hears you over videos and music
     "talk_over": True,  # in speech mode the mic stays on while she talks, so what you say over her is heard
     "popup": True,  # the pill at the bottom of the screen while she listens, thinks and talks
@@ -44,6 +62,7 @@ DEFAULTS = {
     # from 27 October until her log shows where the bar should be) or on, see siri.paraphrased
     "paraphrase_routines": "shadow",
     "voice": "",  # her Fish Audio voice, an ID from VOICES or a pasted fish.audio link. Empty: the first in VOICES
+    "voice_say_as": {},  # how her voice on this PC (voca.py) says a name it gets wrong: {"a name": "as said"}
     "vision": True,  # she may look at the screen when you ask about it, see siri.see()
     # her own browser (herbrowser.py, 31 October 2026): her jobs on websites work in a Chrome of her own, out of your
     # way, signed in wherever you've signed it in. Off since that evening, the owner's call: Google wouldn't sign in
@@ -158,20 +177,11 @@ VOICES = (  # the first is the default when none is picked, so Hannah stays firs
     ("Miku", "75cea27272464f8e8a529c9105d40297", "Indian accent"),
     ("Assistant", "fa97330bb80549fbb3cf84a1c421d70c", "crisp, American"),
     ("Ethan", "536d3a5e000945adb7038665781a4aca", "calm, a man"),
-    # Her voice made on this PC (kokoro.py): free for good, used for Fish voices too once Fish's free model ends
-    ("Harry on this PC", "kokoro:af_heart", "warm, American, offline, free for good"),
-    ("Harry on this PC, Bella", "kokoro:af_bella", "American, offline, free for good"),
-    ("Harry on this PC, Emma", "kokoro:bf_emma", "British, offline, free for good"),
-    ("Harry on this PC, Alpha", "kokoro:hf_alpha", "an Indian voice, offline, free for good"),
-    ("Harry on this PC, Beta", "kokoro:hf_beta", "an Indian voice, offline, free for good"),
-    ("Harry on this PC, a man", "kokoro:am_michael", "American, offline, free for good"),
-    ("Harry on this PC, a British man", "kokoro:bm_george", "British, offline, free for good"),
-    # Windows' own voices: offline, instant, no Fish account needed
-    ("Windows Heera", "onecore:MSTTS_V110_enIN_HeeraM", "offline, Indian English"),
-    ("Windows Ravi", "onecore:MSTTS_V110_enIN_RaviM", "offline, Indian English, a man"),
-    ("Windows Mark", "onecore:MSTTS_V110_enUS_MarkM", "offline, American, a man"),
-    ("Windows Zira", "onecore:MSTTS_V110_enUS_ZiraM", "offline, American"),
-    ("Windows David", "onecore:MSTTS_V110_enUS_DavidM", "offline, American, a man"),
+    # Her voice made on this PC (voca.py), tiny-voca's two: free for good, used for Fish voices too once Fish's free
+    # model ends. The only ones on this PC since 20 November 2026 (the owner's ask, in Woof's place, which had been
+    # alone there since 9 November); Windows' own stays only as the last thing she falls back on
+    ("Harry on this PC", "voca:F2", "tiny-voca's F2: clear, quick, offline"),
+    ("Harry on this PC, a man", "voca:M2", "tiny-voca's M2: clear, quick, offline"),
 )
 ENV = {"llm_model": "OPENCODE_MODEL"}  # a value in .env wins, like the keys do
 

@@ -8,7 +8,7 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # Windows without
 import subprocess
 import numpy as np, psutil, requests, sounddevice as sd, soundfile as sf
 from dotenv import load_dotenv
-import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, humanize, installer, kokoro, longmem, messaging, opencode, outcomes, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win
+import activity, agent, coder, decider, fast_intent, filesearch, hermes_memory, history, humanize, installer, longmem, messaging, opencode, outcomes, providers, settings, shortcuts, telegram_bot, todo, speech, sysinfo, tasks as tasking, vision, voiceid, watch, watchers, web, winplatform as win, voca
 import toolbox
 import screen_watch
 import timeline  # each window you were in, kept a week on this PC for "what did I do?" (7 November 2026)
@@ -25,6 +25,8 @@ import dream
 # only when picked in Settings (29 October 2026): voices.py and hearing.py
 import hearing
 import voices
+# Gemini Decision, asked if what's said without her name is for her before the model is (18 November 2026)
+import decisions
 # what she sees or hears that starts something (29 October 2026): you back at the laptop, your glasses on, two claps,
 # a snap while music plays; only with Settings > Let her see you on (cues.py, camera.py, claps.py)
 import cues
@@ -70,24 +72,27 @@ CATCH_UP = 20.0  # what was said while she thought and acted is caught up on, bu
 TAP_TWICE = 0.6  # right Alt tapped twice inside this, each too short to be words: the typing box (askbox) opens
 
 
-POCKET_WAS = {"p248": "af_heart", "p251": "am_michael"}  # Pocket's voices, as Kokoro's
 FISH_ENDS = (2026, 12, 1)  # Fish's free voice model is free "through November 30, 2026" (fish.audio, 7 Oct 2026)
 
 
 def voice_id(voice=None):
-    """The voice to speak with: her voice on this PC (kokoro:af_heart), a Windows OneCore / SAPI voice, a provider's
+    """The voice to speak with: her voice on this PC (voca:F2), a Windows OneCore / SAPI voice, a provider's
     (voices.py: "elevenlabs:<model>/<voice>"), or a Fish Audio ID from Settings, else the default. Once Fish's free
     model has ended, a Fish voice becomes her one on this PC."""
     val = str(voice or settings.get("voice") or "").strip()
-    if val.startswith("pocket:"):  # Pocket's, saved before Kokoro took its place (31 October 2026)
-        val = "kokoro:" + POCKET_WAS.get(val.split(":", 1)[1], kokoro.DEFAULT)
-    if val.startswith(("onecore:", "sapi:", "kokoro:")) or voices.parse(val):
+    if val.startswith(voca.WAS):  # Pocket's, Kokoro's or Woof's, saved before tiny-voca took their place (voca.py)
+        val = "voca:" + voca.DEFAULT
+    if val.startswith(("onecore:", "sapi:", "voca:")) or voices.parse(val):
         return val
     m = re.search(r"[0-9a-f]{32}", val.lower())
     if time.localtime()[:3] >= FISH_ENDS:
-        return "kokoro:" + kokoro.DEFAULT if kokoro.available() else "onecore:MSTTS_V110_enIN_HeeraM"
+        return "voca:" + voca.DEFAULT  # fetched the first time it speaks, if it isn't here yet
     return m[0] if m else DEFAULT_VOICE
 MIC_LEVELS = collections.deque(maxlen=40)  # mic loudness, 10 a second, for the popup's bars
+# and every 32 ms while the mic records a press or the chat box's dictation, for the box's waveform (chat.Box)
+BOX_LEVELS = collections.deque(maxlen=400)
+# the chat box's dictation (box_voice): on while it records, and the press's live session if her ears write as it goes
+BOX_VOICE = {"on": False, "press": None}
 SPEAK_LEVELS = collections.deque(maxlen=40)  # her voice's loudness while she talks, for the popup
 # Hermes Agent's memory (hermes_memory, MIT): USER.md is who you are, MEMORY.md her own notes, both small and read into
 # every request. Conversations are kept apart, in history.py, where she can search them.
@@ -501,6 +506,8 @@ def could_be_request(text):
 # Plain and calm, no [cheerful] or [sighing] tags: acted sighs and chuckles made her sound put on
 REPLIES = {
     "app_open": ["Here you go.", "Opening it now.", "Sure, opening it."],
+    # said once it's open, in place of a line that only says she's opening it (run_plan, 20 November 2026)
+    "app_opened": ["It's open.", "Opened it.", "There, it's open."],
     "app_quit": ["Okay, I've closed {app}.", "Closing {app}.", "Done, {app} is closed."],
     "app_minimise": ["Okay, {app} is minimised.", "Minimising {app}."],
     "site_open": ["Opening {site}.", "Sure, here's {site}."],
@@ -1786,6 +1793,8 @@ DEFAULT_SITES = {  # "open youtube": what she calls it, and where it is, for an 
     "youtube": ("YouTube", "https://www.youtube.com"), "gmail": ("Gmail", "https://mail.google.com"),
     "google": ("Google", "https://www.google.com"), "google maps": ("Google Maps", "https://maps.google.com"),
     "maps": ("Google Maps", "https://maps.google.com"), "github": ("GitHub", "https://github.com"),
+    # "Open map something", "AWS tab open" went to the model on 9 November 2026
+    "map": ("Google Maps", "https://maps.google.com"), "aws": ("AWS", "https://console.aws.amazon.com"),
     "chatgpt": ("ChatGPT", "https://chatgpt.com"), "chat gpt": ("ChatGPT", "https://chatgpt.com"),
     "facebook": ("Facebook", "https://www.facebook.com"), "instagram": ("Instagram", "https://www.instagram.com"),
     "linkedin": ("LinkedIn", "https://www.linkedin.com"), "netflix": ("Netflix", "https://www.netflix.com"),
@@ -2570,11 +2579,24 @@ SHARE = re.compile(rf"(?:copy\s+(?:(?:this|these|that|those|the|my)\s+)?(?:selec
                    rf"(?:copied|selected|picked)\s+)?(?:(?:to|with)\s+)(?P<who>{WHO})(?:\s+on\s+(?P<app>{APP_WORDS}))?"
                    rf"(?:,?\s+(?:saying|with (?:the )?caption|and say)\s+(?P<caption>.+))?", re.I)
 PHONE_FILES = {}  # chat -> ([paths], when): what you sent her from your phone, kept to send on
+# what you attached in her window's chat (attach.py, 22 November 2026), and when: what "this" means on a chat turn for
+# FILES_FOR seconds or till New chat, looked at, read and sent on as the phone's are
+CHAT_FILES = {"paths": [], "at": 0.0}
+
+
+def chat_files():
+    """The files you attached in the chat a moment ago, on a chat turn and still where they were; else []."""
+    if not CHAT_TURN.get() or time.time() - CHAT_FILES["at"] >= FILES_FOR:
+        return []
+    return [p for p in CHAT_FILES["paths"] if os.path.isfile(p)]
 
 
 def given_files():
-    """The files you gave her for this turn: sent from your phone a moment ago, or selected in File Explorer in
-    front of you. [] if neither."""
+    """The files you gave her for this turn: attached in the chat or sent from your phone a moment ago, or selected
+    in File Explorer in front of you. [] if none."""
+    attached = chat_files()
+    if attached:
+        return attached
     if origin() == "phone":
         got = PHONE_FILES.get(PHONE_CHAT.get())
         return [p for p in got[0] if os.path.isfile(p)] if got and time.time() - got[1] < FILES_FOR else []
@@ -3073,7 +3095,9 @@ QUICK = [(re.compile(p), make) for p, make in (
     (r"(?:scroll(?: (?:up|down))?(?: (?:a bit|a little|a lot|more|again|some))?(?: (?:up|down))? ?)+", _scroll),
     (r"(?:scroll|go|jump)(?: all the way)?(?: up| down)? to the (?:top|bottom)(?: of (?:the|this) page)?|page (?:up|down)", _scroll),
     # how Nemotron heard these here: "New term", "clone the tab"
-    (r"(?:open )?(?:a |another )?new (?:browser )?(?:tab|term|tap|tub)", _step(do="new_tab")),
+    # "New tab on Chrome" went to the model, 1.4 s, on 9 November 2026
+    (rf"(?:open )?(?:a |another )?new (?:browser )?(?:tab|term|tap|tub)(?: (?:on|in) (?:the |my )?(?:browser|"
+     rf"{BROWSER_WORDS}))?", _step(do="new_tab")),
     (r"(?:close|clone|clothes)(?: this| the| that| current)? tab", _step(do="keys", keys="ctrl+w")),
     (r"(?:go )?back(?: a page)?|previous page", _step(do="keys", keys="alt+left")),
     (r"(?:go )?forward(?: a page)?|next page", _step(do="keys", keys="alt+right")),
@@ -3605,6 +3629,17 @@ NOT_LITERAL = re.compile(
     r"|full ?screen\b|.*\bmode$", re.I)
 
 
+def _text_only(text):
+    """text without where it's to go, said before it: "on Notepad, I'm very fast" is "I'm very fast" (20 November
+    2026: typed as said, the app's name went in too). Only for an app she knows by that name, with words after it."""
+    m = re.match(r"(?:on|in|into)\s+(?:the\s+|my\s+)?(.+)", text, re.I)
+    words = m[1].split() if m else []
+    for n in (3, 2, 1):  # the longest name first: "Google Chrome" before "Google"
+        if len(words) > n and known_app(" ".join(words[:n]).rstrip(",:")):
+            return " ".join(words[n:])
+    return text
+
+
 def _literal(t):
     """A literal type/write command, optional Enter/Tab afterwards. No model changes the text. Requests to compose
     something (a mail, poem, reply) or fill something in (today's date) go to the model instead."""
@@ -3613,7 +3648,7 @@ def _literal(t):
                      t, re.I)
     if not m or NOT_LITERAL.match(m[1]):
         return None
-    steps = [{"do": "type", "text": m[1]}]
+    steps = [{"do": "type", "text": _text_only(m[1])}]
     if m[2]:
         steps.append({"do": "keys", "keys": m[2].lower()})
     return make_plan(steps)
@@ -6807,7 +6842,23 @@ def run_info(steps, links=False, pool=None):
             entry = look_one(s, links)
         out.append(entry)
         print(f"  {s['do']}: {json.dumps(entry, ensure_ascii=False)[:160]}")
+        if pool is LOOKUPS:
+            show_context(s, entry)
     return json.dumps(out, ensure_ascii=False)
+
+
+def show_context(step, entry):
+    """What a look-up of her turn found, to her window's context canvas (chat.Bento, 22 November 2026, the owner:
+    "a dynamic bento grid of miniature app window cards that open when the AI retrieves context"): the step in a few
+    words and what came back, cut short. Only shown there, as text: what's in it is someone else's words."""
+    notify = NOTIFY[0]
+    if notify is None or step.get("do") in ("skill_view",):
+        return
+    try:
+        notify("Context", json.dumps({"do": step.get("do"), "label": step_label(step), "found": entry},
+                                     ensure_ascii=False, default=str)[:6000])
+    except Exception as exc:  # the window's, never her turn's
+        print(f"  couldn't show what was found: {exc!r}")
 
 
 def combo(keys):
@@ -6990,7 +7041,8 @@ def _think(text, gate, notify=None, sure=1.0):
     if SCREEN and settings.get("vision") and screen_watch.about_screen(plain(text)):
         SCREEN[0].fresh()  # what you did in the window since its last read is read before she answers about it
     known = skills_block(text)
-    recent = history.recent(3, 1800)  # the last half hour, for follow-ups like "close it"
+    # the last half hour, for follow-ups like "close it", since the chat on screen began (CHAT_FROM)
+    recent = [turn for turn in history.recent(3, 1800) if turn[0] >= CHAT_FROM[0]]
     _, _, more = gated_blocks(text, recent)  # after skills_block, which works out what the words mean first
     fixed = soul() + "\n\n" + prompt()  # the same turn after turn: Haiku reads it back from its cache (opencode.Cached)
     # and her newer look-ups after it, outside the cache, only for words that may ask for one (LOOK_STEPS)
@@ -7047,14 +7099,18 @@ def _think(text, gate, notify=None, sure=1.0):
     if chosen:
         print(f"  skill asked for: {chosen}")
         said += SKILL_ASKED.format(name=chosen) + run_info([{"do": "skill_view", "name": chosen}])
-    pictures = phone_picture()  # sent from your phone a moment ago: what "this" and "these" mean
-    messages.append({"role": "user", "content": [{"type": "text", "text": said + PICTURE_NOTE}]
+    pictures, note, attached = phone_picture(), PICTURE_NOTE, chat_files()
+    if attached:  # attached in the chat (attach.py): its pictures to look at and its documents' words to read
+        import attach
+        pictures, read = attach.for_model(attached)
+        said, note = said + read, ""
+    messages.append({"role": "user", "content": [{"type": "text", "text": said + note}]
                      + [{"type": "image_url", "image_url": {"url": p}} for p in pictures] if pictures else said})
     # a picture goes up with each request, to the one model that sees: the timing vision mode has (see), so a slow
     # upload isn't sent twice more to the same server
     slow = {"hedge_after": 20, "cap": 40} if pictures else {}
     # what's written in a picture is someone else's words, like a web page's: a change it asks for gets a yes first
-    used = {"picture"} if pictures else set()  # what was looked up, for the asking-first rule below
+    used = {"picture"} if pictures or attached else set()  # what was looked up, for the asking-first rule below
     if chosen and skill_as_data({"do": "skill_view", "name": chosen}):
         used.add("read")  # one dropped in by hand steers like a page read
     needs_task, task_retry = bool(TASK_REQUEST.search(text) and TASK_ASKED.match(plain(text))), False
@@ -7064,7 +7120,7 @@ def _think(text, gate, notify=None, sure=1.0):
     # a plain answer is said as it's written (LiveSay), without her name once the reply shows it's for her, and not
     # while something plays that the mic hears, as let_go would keep quiet then. 0 of 113 turns were streamed when it
     # took her name. A task's claim is checked before she says it's done
-    stream = STREAM_SAY and not needs_task and origin() == "voice"
+    stream = STREAM_SAY and not needs_task and origin() == "voice" and not CHAT_TURN.get()  # a chat turn: in words
     hold = None
     if stream and gate and not (MIC[0] is not None and MIC[0].echo_cancelled):
         # Windows' media controls are asked alongside the request, not ahead of it: 149 of 150 turns had no name
@@ -8384,12 +8440,16 @@ def tool(name, effect, asks_for, confirm, **more):
 # it runs: she said "Closed Messages." with Messages not running, and "Sent to Mum." for a message to Ravi before it
 # was sent, or refused. All quick, closing an app takes longest. wait_after: seconds before the next step
 ASK, GO = toolbox.BUILT, toolbox.GO_AHEAD
-tool("open", "reversible", None, None, read_safe=True, routine_ok=True, procedure_ok=True, wait_after=0.8)
+# open and website were said while they opened ("Opening it now.") till 20 November 2026, the owner: just open it, and
+# say it's open once it is. Nothing waits on her line either way; what's said is now what happened
+tool("open", "reversible", None, None, read_safe=True, routine_ok=True, procedure_ok=True, speak="after",
+     wait_after=0.8)
 tool("close", "acts", CLOSE_WORDS, "Should I close {app}?", routine_ok=True, speak="after")
 tool("minimise", "reversible", MINIMISE_WORDS, "Should I minimise {app}?", routine_ok=True, speak="after")
 # a window by name on a side or a screen (WINDOW_STEPS, placed): moved, never closed or typed in, so like open
 tool("place", "reversible", None, None, read_safe=True, routine_ok=True, speak="after", wait_after=0.3)
-tool("website", "reversible", None, None, read_safe=True, routine_ok=True, procedure_ok=True, wait_after=3.0)
+tool("website", "reversible", None, None, read_safe=True, routine_ok=True, procedure_ok=True, speak="after",
+     wait_after=3.0)
 tool("youtube", "reversible", None, None, read_safe=True, routine_ok=True, wait_after=3.0)
 tool("google", "reversible", None, None, read_safe=True, routine_ok=True, wait_after=2.5)
 tool("media", "reversible", None, None, read_safe=True, routine_ok=True)
@@ -8884,6 +8944,11 @@ CHATS = {"whatsapp.exe", "whatsapp.root.exe", "telegram.exe", "signal.exe", "sla
 IDES = {"code.exe", "code - insiders.exe", "cursor.exe", "kiro.exe", "windsurf.exe", "vscodium.exe", "trae.exe",
         "pycharm64.exe", "idea64.exe", "webstorm64.exe", "rider64.exe", "studio64.exe", "clion64.exe", "goland64.exe",
         "phpstorm64.exe", "rubymine64.exe", "datagrip64.exe", "devenv.exe", "zed.exe"}
+# Programs with no terminal in them, where what's typed is only ever text: for these the focused control isn't read.
+# That read is a whole snapshot of the window by agent-desktop, 0.9 to 1.8 s each time here (20 November 2026, the
+# owner: typing in Notepad was slow; the 9 characters of "Type hello world" landed 1.2 s after the plan came). Only
+# these: a browser can show a web terminal, and anything not named here is read as before
+PLAIN = {"notepad.exe", "wordpad.exe", "winword.exe", "excel.exe", "powerpnt.exe", "onenote.exe"}
 TERMINAL_BOX = re.compile(r"\s*terminal\b(?!\.)", re.I)
 # xterm.js's box (VS Code's, Hyper's, Tabby's), Windows Terminal's, a console's and ConPTY's windows
 TERMINAL_CLASS = re.compile(r"xterm|terminal|termcontrol|consolewindowclass|pseudoconsole|conpty", re.I)
@@ -8895,6 +8960,8 @@ def in_terminal(exe, focus=False):
     if known."""
     if exe in SHELLS:
         return True
+    if exe in PLAIN:
+        return False  # no terminal in it, so no need to read what has the focus
     focus = win.ui_focused() if focus is False else focus
     if focus is None:
         return exe in IDES
@@ -9428,10 +9495,13 @@ def memory_trouble(error):
 SCREENSHOT_WIDTH = 1920  # a screenshot for your phone: sharp there, and well under Telegram's 10 MB for a photo
 
 
+OPENING = re.compile(r"\bopening\b", re.I)  # a line that only says she's opening it, see run_plan
+
+
 def default_line(steps):
     """A scripted line for steps the model said nothing about, so opening things isn't silent. Scroll, keys, media
     and volume stay quiet, they show for themselves."""
-    lines = {"open": "app_open", "website": "app_open", "google": "google", "close": "closed", "type": "typed",
+    lines = {"open": "app_opened", "website": "app_opened", "google": "google", "close": "closed", "type": "typed",
              "timer": "timer_set", "new_tab": None, "task_queued": None, "send_screenshot": "screenshot_sent"}
     for s in steps:
         if s["do"] == "device":  # what each one did (device_step), or before Wi-Fi goes off, what she's about to do
@@ -9679,6 +9749,8 @@ def run_plan(plan, notify):
         line = (line or default_line(steps)) if wait(reported.is_set, 60) and not failed else ""
         if line and all(s["do"] == "device" for s in steps):  # what each setting is now ("Bluetooth's already on."),
             line = default_line(steps) or line  # not the model's guess at it ("Turning Bluetooth on.")
+        if line and OPENING.search(line) and all(s["do"] in ("open", "website") for s in steps):
+            line = default_line(steps) or line  # it's open now: "Opened it.", not "Opening it now." after the fact
     if line:  # while the (other) steps run, so she answers as soon as she can
         voice_error = talk(line)
     if looks is not None and worker.is_alive():
@@ -9735,8 +9807,9 @@ def fish(text, fmt, stream=False, voice=None):
     return r
 
 
-def fetch_tts(text, voice=None):
-    """A wav for this line, made once and kept in cache\\tts. Returns (path, ms, cached)."""
+def fetch_tts(text, voice=None, ahead=False):
+    """A wav for this line, made once and kept in cache\\tts. Returns (path, ms, cached). ahead: made before it's
+    needed (warm_cache), so her voice on this PC makes it only when it isn't making what she's saying."""
     os.makedirs(CACHE_DIR, exist_ok=True)
     v = voice_id(voice)
     path = tts_path(text, v)
@@ -9747,8 +9820,8 @@ def fetch_tts(text, voice=None):
         win.native_to_wav(text, path, voice=v)
         return path, int((time.time() - t) * 1000), False
     try:
-        if str(v).startswith("kokoro:"):  # made on this PC
-            kokoro.to_wav(text, path + ".part.wav", v.split(":", 1)[1])
+        if str(v).startswith("voca:"):  # made on this PC
+            voca.to_wav(text, path + ".part.wav", v.split(":", 1)[1], ahead=ahead)
             os.replace(path + ".part.wav", path)
             return path, int((time.time() - t) * 1000), False
         if voices.parse(v):  # a provider's voice (voices.py)
@@ -9774,12 +9847,12 @@ VOICE = threading.RLock()  # one line at a time: a "One moment" and the answer a
 def voice_name(v):
     """Who makes voice v, for the log: "fish", "her voice on this PC" or a provider's name."""
     parsed = voices.parse(v)
-    return parsed[0].name if parsed else "her voice on this PC" if str(v).startswith("kokoro:") else "fish"
+    return parsed[0].name if parsed else "her voice on this PC" if str(v).startswith("voca:") else "fish"
 
 
 class Line:
     """One line of her voice, under way from the moment it's made: Fish's or a provider's stream opened (voices.py),
-    or her voice on this PC being made (kokoro.py). play() says it. So while one sentence plays the next is already
+    or her voice on this PC being made (voca.py). play() says it. So while one sentence plays the next is already
     being made, and a line streamed from the model as it's written has no gaps between its sentences (LiveSay)."""
 
     def __init__(self, text, voice=None):
@@ -9788,8 +9861,8 @@ class Line:
         self.audio = None  # pieces of her voice as they're made, then None; an exception if it failed
         if str(self.v).startswith(("onecore:", "sapi:")) or os.path.exists(self.path):
             return
-        if str(self.v).startswith("kokoro:"):
-            self.audio = kokoro.stream(text, self.v.split(":", 1)[1], stop=HER.stopper())
+        if str(self.v).startswith("voca:"):
+            self.audio = voca.stream(text, self.v.split(":", 1)[1], stop=HER.stopper())
         else:
             self.audio = queue.Queue()
             threading.Thread(target=self._cloud if voices.parse(self.v) else self._fish, daemon=True).start()
@@ -9852,7 +9925,7 @@ class Line:
                 done.set()
                 SPEAK_LEVELS.clear()
             return 0
-        local, started = str(self.v).startswith("kokoro:"), [None]
+        local, started = str(self.v).startswith("voca:"), [None]
         try:
             if local:
                 self._play_local(started)
@@ -9867,9 +9940,9 @@ class Line:
             if started[0] is not None:  # it broke off partway: what's said is said
                 print(f"  her voice broke off ({exc!r})")
                 return started[0]
-            if not local and kokoro.available():
+            if not local and voca.available():
                 print(f"  {voice_name(self.v)} speak failed ({exc}), falling back to her voice on this PC")
-                return Line(self.text, "kokoro:" + kokoro.DEFAULT).play()
+                return Line(self.text, "voca:" + voca.DEFAULT).play()
             print(f"  {voice_name(self.v)} speak failed ({exc}), falling back to Windows native speech")
             win.speak_native(self.text, wait=True)
             return int((time.time() - self.t) * 1000)
@@ -9916,11 +9989,11 @@ class Line:
                 if piece is None:
                     break
                 if out is None:
-                    out = sd.OutputStream(samplerate=kokoro.RATE, channels=1, dtype="float32")
+                    out = sd.OutputStream(samplerate=voca.RATE, channels=1, dtype="float32")
                     out.start()
                     started[0] = int((time.time() - self.t) * 1000)
                 SPEAK_LEVELS.append(float(np.sqrt(np.mean(piece * piece))) if len(piece) else 0.0)
-                if not _write(out, piece.reshape(-1, 1), kokoro.RATE):
+                if not _write(out, piece.reshape(-1, 1), voca.RATE):
                     out.abort()
                     return
             if out is not None:
@@ -9964,8 +10037,10 @@ _warmed = 0.0
 
 def warm():
     """When someone starts talking: open the HTTPS connections while they're still at it, so the model and Fish don't
-    wait on a handshake. At most once a minute, since a video in the room starts talking all the time."""
+    wait on a handshake. At most once a minute, since a video in the room starts talking all the time. Every time,
+    her voice on this PC stops making lines ahead for a few seconds, so the answer isn't made behind one."""
     global _warmed
+    voca.hold()
     if time.time() - _warmed < 60:
         return
     _warmed = time.time()
@@ -10022,7 +10097,7 @@ def warm_cache():
                     keep.add(os.path.basename(tts_path(line, voice)))
                     continue
                 try:
-                    path, _, cached = fetch_tts(line, voice)
+                    path, _, cached = fetch_tts(line, voice, ahead=True)
                     keep.add(os.path.basename(path))
                     made += 0 if cached else 1
                 except Exception as e:
@@ -10336,6 +10411,23 @@ def asks_back(text):
 AGAIN_WITHIN = 45.0
 MISSED = collections.deque(maxlen=6)  # (when, words) of what she let go lately, cleared once she answers anything
 AGAIN = [None]  # this turn's earlier tries, oldest first, while act_on runs it (think, handle)
+JUDGED = [None]  # the decider's (chance, verdict) for this turn, said without her name, while it runs (not_for_her)
+
+
+def not_for_her(words):
+    """True if Gemini Decision is sure words said without her name weren't for her (decisions.py), so the model isn't
+    asked with her whole prompt to find that out: only for what her decider gave less than decisions.LEAN, and never
+    for what's said again, a greeting with words after it, or what asks something of her in so many words
+    (asks_something), as with the decider's own no. False on any doubt or failure, and the model decides as before."""
+    judged = JUDGED[0]
+    if not judged or judged[0] >= decisions.LEAN or AGAIN[0] or asks_something(words, "cold") or \
+            CALLED.match(str(words)) or HAILED.fullmatch(str(words)) or not decisions.available():
+        return False
+    p = decisions.chance_for_her(str(words), HER_SAID[-1] if HER_SAID else None)
+    if p is None or p > decisions.NO:
+        return False
+    print("  (Gemini Decision is sure that wasn't for her: staying quiet, the model not asked)")
+    return True
 AGAIN_STOP = set("the and but for with from your our you she they its are was were can could will would should "
                  "please hey hello okay just now this that there here what why how who when where which yes yeah "
                  "not don't can't it's that's".split())
@@ -10678,6 +10770,12 @@ PENDING = {"plan": None, "until": 0.0, "soon": 0.0, "origin": "voice", "id": "",
 # question asked on the phone, or the other way round. id: which question, for the phone's buttons. words: what you
 # said that it's for, so the yes turn's agent.SAID is still that and not "yes"
 REPLY_TO = contextvars.ContextVar("reply_to", default=None)  # a turn from your phone: her lines go here, not out loud
+# typed in her window's chat (chat.py, 22 November 2026, the owner: "when I chat, the voice assistant interrupts"): her
+# lines go to the chat, not out loud, as Hedwig's chat answers; spoken to her, or by the chat's mic button, out loud
+CHAT_TURN = contextvars.ContextVar("chat_turn", default=False)
+# when her window's New chat was last pressed, or an old chat opened (chat.Page._fresh): her follow-ups ("close it")
+# don't reach back past it, as a new chat in ChatGPT starts with nothing before it
+CHAT_FROM = [0.0]
 PHONE_CHAT = contextvars.ContextVar("phone_chat", default=None)  # and the chat it came from, for a task's result
 PHONE = {"send": None, "buttons": None, "photo": None, "progress": None, "document": None, "control": None}  # set by
 # run_voice_assistant once Telegram is there: send(chat, line), buttons(chat, question, key) with Yes and No for a
@@ -11020,9 +11118,10 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
         # name, the model decides it was for her first, as for anything that leaves the PC
         # a retry goes to the model: the shortcut, routine or procedure that answered it before was the wrong one
         plan = None if retry else (None if gate else phone_screenshot(words)) or quick(words, gate, sure)
-        if plan and phone_picture() and any(s.get("do") == "screen" for s in plan["steps"]) and \
+        if plan and (phone_picture() or chat_files()) and any(s.get("do") == "screen" for s in plan["steps"]) and \
                 POINTS_AT_PICTURE.search(plain(words)) and not NAMES_THE_PC.search(plain(words)):
-            plan = None  # "what's this?" about the picture you just sent from your phone: the model sees it (think)
+            plan = None  # "what's this?" about the picture you just sent from your phone, or attached in the chat: the
+            # model sees it (think)
         # Always-on mic: typing, Enter, closing apps and other consequential changes need the model to decide the
         # words were for her first. Safe opens, sites, volume, media, scrolling and tab navigation stay instant, and
         # so do shutdown and restart, which always get a yes or no first (below): asked instead, the model said it
@@ -11031,8 +11130,10 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
         # undoing what she did, so it goes ahead like playback (let_go)
         # Dark mode and night light go straight, as Hari says them: put back in a moment, and sent to the model said
         # cold they came back with no line ("Light mode", 25 October), or as "not for me" ("Nightlight")
-        if plan and gate == "cold" and any((s.get("do") in {"type", "close", "minimise", "lock", "sleep", "screen",
-                                                            "procedure"} and not own_close(s))
+        # Typing alone goes straight where the owner has said so (settings type_unnamed, 20 November 2026)
+        waits = {"type", "close", "minimise", "lock", "sleep", "screen", "procedure"} - \
+            ({"type"} if settings.get("type_unnamed") else set())
+        if plan and gate == "cold" and any((s.get("do") in waits and not own_close(s))
                                            or (s.get("do") == "keys" and combo(s.get("keys")) not in SAFE_KEYS)
                                            # "approve task 3" from a video or the room released a job's held send
                                            or (s.get("do") == "task_control" and s.get("action") == "approve")
@@ -11050,6 +11151,9 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
             plan = None  # without her name, and the words don't ask for it in so many words: the model decides
         if plan:
             print(f"  quick: {json.dumps(plan['steps']) if plan['steps'] else 'reply'}")
+        elif gate == "cold" and not retry and not_for_her(words or text):
+            emit(notify, "Ready", "That didn't sound like it was for me")
+            return False
         else:
             # what you typed on your phone isn't shown on the PC's screen for the room to read, nor her answer (below)
             emit(notify, "Thinking", (words or text) if origin() == "voice" else PHONE_SHOWN[0])
@@ -11057,7 +11161,7 @@ def handle(text, words=None, stt_ms=None, notify=None, gate=False):
             TURN_SPOKE.clear()
             if gate:
                 FOR_HER.clear()  # without her name, only once the model's reply shows it was for her (LiveSay)
-            if STREAM_SAY and origin() == "voice":  # "One moment" if slow
+            if STREAM_SAY and origin() == "voice" and not CHAT_TURN.get():  # "One moment" if slow, out loud only
                 threading.Thread(target=fill_silence, args=(words or text, notify), daemon=True).start()
             try:  # without her name: with it misheard in them, as a person's, the model took you for that person
                 plan = think(words or text, gate, notify, sure)
@@ -11295,6 +11399,11 @@ def say(line, notify):
         return None
     if HER.stop.is_set():  # you talked over her: the rest of her turn isn't said
         print(f"  (not said, she was stopped: {line})")
+        return None
+    if CHAT_TURN.get():  # typed in the chat: answered there, in words, not over you
+        print(f"  say (in the chat): {line}")
+        emit(notify, "Speaking", line)
+        HER_SAID.append((time.time(), line))
         return None
     print(f"  say: {line}")
     emit(notify, "Speaking", line)
@@ -11651,6 +11760,8 @@ class Recorder:
         if self._level[1] >= 1600:  # 10 a second, for the popup's bars
             MIC_LEVELS.append((self._level[0] / self._level[1]) ** 0.5)
             self._level[:] = [0.0, 0]
+        if self.on and len(block):  # each block's loudness while it records, for the chat box's waveform
+            BOX_LEVELS.append(float(np.sqrt(np.dot(block, block) / len(block))))
         if self.on:  # right Alt is held, so this is a command, not something to listen for "Hey Harry" in
             self.frames.append(indata.copy())
         elif (self.wake or self.dictating) and (not self._paused or self._soft):
@@ -11683,9 +11794,10 @@ def ready_text(wake):
 
 
 def in_use():
-    """Her memory now (the working set, on Windows), for the log as each part loads: 1,090 MB at start against a
-    917-1,002 MB target, and only the PC itself can say which part to cut."""
-    return f"{psutil.Process().memory_info().rss / 2 ** 20:,.0f} MB in use"
+    """Her memory now, for the log as each part loads: her own (the private working set, Task Manager's Memory
+    column), not the working set, which since 20 November 2026 also counts her models' weights mapped from disk, 620 MB
+    of Windows' file cache (speech.mapped_model). 1,090 MB at start till then; about 250 since."""
+    return f"{psutil.Process().memory_full_info().uss / 2 ** 20:,.0f} MB in use"
 
 
 def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
@@ -12141,11 +12253,11 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 her.update(asked=getattr(listener, "pos", 0), start=None, spoke=None, done=None)
             if again:
                 print(f"  (said again, so it's to her: {' / '.join(w[:60] for w in again)!r})")
-            AGAIN[0] = again or None
+            AGAIN[0], JUDGED[0] = again or None, judged if what[2] == "cold" else None
             try:
                 result = run_turn(what[0], what[1], ms, gate=what[2], carried=strict and what[2] is True)
             finally:
-                AGAIN[0] = None
+                AGAIN[0] = JUDGED[0] = None
             if again and result:  # they were tries at this, not room talk for the next turn to be shown
                 for entry in [e for e in ROOM if e[1] in again]:
                     ROOM.remove(entry)
@@ -12501,8 +12613,51 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             if enrolling[0] is None:
                 emit(notify, "Listening", "Let go of right Alt when you\u2019re done")
 
+    def box_voice(action):
+        """The chat box's mic (chat.Box, 22 November 2026, the owner: "add voice input and a waveform"): as ChatGPT's
+        dictation, what you say is written into the box for you to look over and send, not run as a turn. "start"
+        opens the mic, "done" writes down what was said ("Box words" to the window), "cancel" throws it away."""
+        if action == "start":
+            if rec.on or rec.dictating or BOX_VOICE["on"]:  # right Alt held, or a dictation: the mic is taken
+                emit(notify, "Box words", "")
+                return
+            BOX_LEVELS.clear()
+            rec.start()
+            BOX_VOICE.update(on=True, press=None)
+            if ears.live:  # written as you go, as a press is, so it's there the moment you stop
+                press = BOX_VOICE["press"] = {"session": ears.session(), "frames": rec.frames, "fed": 0}
+                press["feeder"] = threading.Thread(target=feed_ptt, args=(press,), daemon=True)
+                press["feeder"].start()
+            print("\n[chat box listening]", end="", flush=True)
+        elif action in ("done", "cancel") and BOX_VOICE["on"]:
+            press = BOX_VOICE["press"]
+            BOX_VOICE.update(on=False, press=None)
+            audio = rec.stop()
+            if action == "cancel" or len(audio) < SAMPLE_RATE * 0.3:
+                emit(notify, "Box words", "")
+                return
+            threading.Thread(target=box_words, args=(audio, press), daemon=True).start()
+
+    def box_words(audio, press):
+        """What was said into the chat box's mic, written down and handed to the box."""
+        try:
+            if press is None:
+                text, _ = transcribe(audio)
+            else:
+                press["feeder"].join()
+                frames = press["frames"]
+                if len(frames) > press["fed"]:
+                    press["session"].feed(np.concatenate(frames[press["fed"]:])[:, 0])
+                text, _ = press["session"].finish()
+            text = " ".join(str(text or "").split())
+        except Exception as exc:
+            print(f"\n  chat box: couldn't write down what was said ({exc!r})")
+            text = ""
+        print(f"\n> chat box heard: {text!r}")
+        emit(notify, "Box words", text)
+
     def stop_recording():
-        if rec.on:
+        if rec.on and not BOX_VOICE["on"]:  # the chat box's dictation is stopped from the box, not by right Alt
             press, pressed[0] = pressed[0], None
             audio = rec.stop()
             if len(audio) > SAMPLE_RATE * 0.3:
@@ -12514,6 +12669,22 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 emit(notify, "Type", "")
             else:
                 taps[0] = time.time()
+
+    def chat_turn(text, files=None):
+        """A turn typed in the chat (CHAT_TURN): as one typed anywhere, with her lines in the chat, not out loud.
+        files: what you attached with it, which "this" means from now (CHAT_FILES); with no words, she says she has
+        them and what she can do with them, as she does for the phone's."""
+        CHAT_TURN.set(True)
+        if files:
+            CHAT_FILES.update(paths=list(files), at=time.time())
+        if not text:
+            n = len(files or ())
+            it = "them" if n > 1 else "it"
+            emit(notify, "Speaking", f"Got {'them' if n > 1 else 'it'}. Ask me anything about {it}, or tell me who "
+                                     f"to send {it} to, like \u201csend {it} to Amma\u201d.")
+            emit(notify, "Ready", "")
+            return
+        run_turn(text, text, None)
 
     def wait_her_turn(most=10.0):
         """Waits while a turn goes on or you're in the middle of saying something, up to most seconds, so a timer, a
@@ -12919,8 +13090,8 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
             if isinstance(command, tuple) and command[0] == "mode":
                 PAUSE.update(until=0.0, mode=None)  # a mode picked in the window: her break, if any, is over
                 set_mode(command[1])
-            elif isinstance(command, tuple) and command[0] == "mic":
-                rec.set_device(command[1])
+            elif isinstance(command, tuple) and command[0] == "mic" and len(command) > 1:  # Settings' picker: a device
+                rec.set_device(command[1])  # (the chat's mic button is ("mic",) alone, below: 22 November 2026 it ended here)
             elif isinstance(command, tuple) and command[0] == "island tap":  # off this loop, which right Alt needs
                 threading.Thread(target=island_tap, args=command[1:3], daemon=True).start()
             elif isinstance(command, tuple) and command[0] == "again":  # Try again on the answer card: your words
@@ -12931,6 +13102,21 @@ def run_voice_assistant(notify=None, controls=None, mode="ptt", mic=""):
                 print(f"\n> typed: {command[1]!r}")  # with her name, and sure of every word
                 emit(notify, "Asked", command[1])
                 threading.Thread(target=run_turn, args=(command[1], command[1], None), daemon=True).start()
+            elif isinstance(command, tuple) and command[0] == "chat":  # typed in her window's chat: answered there
+                files = list(command[2]) if len(command) > 2 else []  # and what you attached with it (attach.py)
+                print(f"\n> chat: {command[1]!r}" + (f" with {len(files)} file(s)" if files else ""))
+                if command[1]:
+                    emit(notify, "Asked", command[1])
+                threading.Thread(target=chat_turn, args=(command[1], files), daemon=True).start()
+            elif isinstance(command, tuple) and command[0] == "box voice":  # the chat box's dictation (box_voice)
+                box_voice(command[1])
+            elif command == ("mic",):  # the chat's mic button: as right Alt is held, a click to start and one to stop
+                if rec.on:
+                    stop_recording()
+                else:
+                    start_recording()
+                    if rec.on:
+                        emit(notify, "Listening", "Click the mic again when you\u2019re done")
             elif isinstance(command, tuple) and command[0] == "cue":  # a rule of yours she saw or heard start (cues)
                 print(f"\n> {command[2]}: {command[1]!r}")  # as if you'd said its words to her by name
                 emit(notify, "Asked", command[1])

@@ -27,3 +27,5 @@ PyYAML==6.0.3
 python-telegram-bot==22.8
 # her eyes on you through the laptop's camera (camera.py): the webcam, and YuNet's face finder, all on this PC
 opencv-python-headless==4.14.0.94
+# her window in Qt (22 November 2026, the owner's choice over Tk): the Essentials wheel only, no add-ons, LGPL-3.0
+PySide6-Essentials==6.12.0

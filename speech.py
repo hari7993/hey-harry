@@ -21,6 +21,7 @@ Parakeet wrote them as "Hey Joe" and "Hey Jim".
 sherpa-onnx runs the speech models and onnxruntime Smart Turn. The models download once on first use into
 HEYHARRY_MODELS (D:\\HeyJev\\models on this PC, set in .env), or %LOCALAPPDATA%\\Hey Harry\\models.
 """
+import contextlib
 import hashlib
 import os
 import shutil
@@ -51,9 +52,6 @@ MODELS = {  # name: (file or folder once downloaded, where it comes from, size f
     # your hand in front of the camera, for a snap seen (hands.py): MediaPipe's palm finder and its 21 points
     "palm": ("palm_detection_mediapipe_2023feb.onnx", "https://github.com/opencv/opencv_zoo/raw/main/models/"
              "palm_detection_mediapipe/palm_detection_mediapipe_2023feb.onnx", "3.9 MB"),
-    # her voice on this PC (kokoro.py): Kokoro-82M v1.0, Apache 2.0
-    "kokoro": ("kokoro-multi-lang-v1_0", "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
-               "kokoro-multi-lang-v1_0.tar.bz2", "333 MB"),
     "hand": ("handpose_estimation_mediapipe_2023feb.onnx", "https://github.com/opencv/opencv_zoo/raw/main/models/"
              "handpose_estimation_mediapipe/handpose_estimation_mediapipe_2023feb.onnx", "4.1 MB"),
 }
@@ -62,7 +60,12 @@ SHA256 = {"turn": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967
           "face": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",  # checked 29 Oct 2026
           "palm": "78ff51c38496b7fc8b8ebdb6cc8c1abb02fa6c38427c6848254cdaba57fcce7c",  # and these two
           "hand": "db0898ae717b76b075d9bf563af315b29562e11f8df5027a1ef07b02bef6d81c"}
-PARAKEET_THREADS = 2  # as quick as 4 on this 12th gen i5 (315 vs 294 ms a command), and half the CPU; 6+ was slower
+# Parakeet's threads. 2 till 20 November 2026, when 4 had measured as quick on a bare command (315 against 294 ms).
+# It isn't on a sentence, with her running as she does now: the owner said hearing was sometimes slow, and in 1,735
+# turns of her log a turn of 8 to 14 words took 0.6 s at the median and over a second a quarter of the time. Timed
+# that day on room recordings beside her: 6 s of speech written in 1,129 ms on 2 threads, 883 on 3, 708 on 4 (8 times
+# real time against 5) and 1,066 on 6, which is more than its 4 fast cores
+PARAKEET_THREADS = 4
 # Nemotron while someone talks, fed in real time, and its last words once they stop: 4.5 cores and 174 ms at 3
 # threads, 2.3 cores and 222 ms at 2, 0.34 cores and 342 ms at 1. Most of it is sherpa-onnx's own onnxruntime
 # keeping its helper threads spinning between pieces, which it has no setting for (Turn turns it off for Smart Turn).
@@ -213,6 +216,147 @@ def end_of_speech(notify=None):
     return Voice(notify)
 
 
+# Parakeet's weights mapped from disk (20 November 2026, the owner: she took 1,000 to 2,000 MB). Its encoder is 652
+# MB, and ONNX Runtime copied all of it into her memory, then packed the weights it multiplies by into a second form
+# and let the first go: 694 MB of her own for as long as she ran. ONNX Runtime can save a model with its weights, and
+# those packed ones, in a file beside it (session.save_external_prepacked_constant_initializers), and maps that file
+# when it loads it rather than copying it: the pages are Windows' file cache, shared, and dropped and read again
+# with no page file. Measured here with sherpa-onnx loading it: 62 MB of her own after loading against 694, loaded in
+# 3.5 s against 4.6, the same words and the same sureness to four places on 22 recordings from this room, and the
+# same time to hear one (1,104 ms a clip against 1,110). Made once, 14 s and 1.1 GB beside the model
+MAPPED = "mapped"  # the folder in Parakeet's, with encoder.onnx, its encoder.onnx.data and made.json
+MAPPED_ROOM = 2 ** 30  # bytes free on the models' drive, over three times the model's size, before one's made
+
+
+def _mapped_stamp(source, threads):
+    """What a mapped model was made from and for: remade when the model, ONNX Runtime or the processor changes
+    (ONNX Runtime says the saved model is for the PC it was made on)."""
+    import platform
+
+    import onnxruntime as ort
+    return {"size": os.path.getsize(source), "mtime": int(os.path.getmtime(source)), "onnxruntime": ort.__version__,
+            "cpu": platform.processor(), "threads": threads}
+
+
+def mapped_model(source, folder, name="model.onnx", threads=1, notify=None, what="a model"):
+    """folder, holding the ONNX model source saved as `name` with its weights in a file of their own beside it, to
+    be mapped (see MAPPED), made the first time; None if it can't be (no room, or ONNX Runtime wouldn't), and the
+    model is loaded the old way. ONNX Runtime given folder\\name by its path maps the weights itself; sherpa-onnx
+    hands it the model as bytes, and then she must be in the folder as it loads (in_folder)."""
+    import json
+    made = os.path.join(folder, "made.json")
+    if os.getenv("HEYHARRY_UNMAPPED"):
+        return None
+    try:
+        stamp = _mapped_stamp(source, threads)
+        with contextlib.suppress(OSError, ValueError):
+            with open(made, encoding="utf-8") as f:
+                if json.load(f) == stamp and os.path.getsize(os.path.join(folder, name + ".data")) > 2 ** 10:
+                    return folder
+        if shutil.disk_usage(os.path.dirname(source)).free < 3 * stamp["size"] + MAPPED_ROOM:
+            print(f"  no room to map {what}'s weights from disk, loading them into memory")
+            return None
+        import onnxruntime as ort
+        if notify:
+            notify(f"Getting {what} ready, one time\u2026")
+        t = time.time()
+        shutil.rmtree(folder, ignore_errors=True)
+        os.makedirs(folder)
+        so = ort.SessionOptions()
+        so.intra_op_num_threads = threads
+        so.log_severity_level = 3  # it warns that the model's for this PC only, which is what's wanted
+        so.optimized_model_filepath = os.path.join(folder, name)
+        so.add_session_config_entry("session.optimized_model_external_initializers_file_name", name + ".data")
+        so.add_session_config_entry("session.optimized_model_external_initializers_min_size_in_bytes", "1024")
+        so.add_session_config_entry("session.save_external_prepacked_constant_initializers", "1")
+        ort.InferenceSession(source, so, providers=["CPUExecutionProvider"])  # saved as it's made, then let go
+        with open(made, "w", encoding="utf-8") as f:
+            json.dump(stamp, f)
+        print(f"  {what}'s weights put in a file to map, {time.time() - t:.0f} s, "
+              f"{os.path.getsize(os.path.join(folder, name + '.data')) / 2 ** 20:,.0f} MB")
+        return folder
+    except Exception as exc:
+        print(f"  couldn't put {what}'s weights in a file to map ({exc!r}), loading them into memory")
+        shutil.rmtree(folder, ignore_errors=True)
+        return None
+
+
+def mapped_encoder(d, notify=None):
+    """The folder holding Parakeet's encoder to be mapped (mapped_model), made the first time from d's
+    encoder.int8.onnx; None if it can't be, and the encoder is loaded the old way."""
+    return mapped_model(os.path.join(d, "encoder.int8.onnx"), os.path.join(d, MAPPED), "encoder.onnx",
+                        PARAKEET_THREADS, notify, "Parakeet")
+
+
+@contextlib.contextmanager
+def in_folder(folder):
+    """She's in folder while a mapped model loads through sherpa-onnx, and back after: sherpa-onnx hands ONNX Runtime
+    the model as bytes, which then looks for the weights' file in the folder the process is in."""
+    was = os.getcwd()
+    os.chdir(folder)
+    try:
+        yield
+    finally:
+        os.chdir(was)
+
+
+def unmade(folder, what, exc):
+    """A mapped model that wouldn't load (a file cut short, or an ONNX Runtime that reads it another way): said, and
+    made again next time."""
+    print(f"  couldn't load {what}'s mapped weights ({exc!r}), loading them into memory")
+    with contextlib.suppress(OSError):
+        os.remove(os.path.join(folder, "made.json"))
+
+
+def _parakeet(d, notify=None):
+    """sherpa-onnx's recognizer for Parakeet in folder d: its encoder mapped from disk where that's been made
+    (mapped_encoder), else loaded into memory as before. She's in the mapped folder while it loads (in_folder), 3 to
+    4 s, and back after."""
+    import sherpa_onnx
+
+    def load(encoder):
+        return sherpa_onnx.OfflineRecognizer.from_transducer(
+            encoder=encoder, decoder=os.path.join(d, "decoder.int8.onnx"),
+            joiner=os.path.join(d, "joiner.int8.onnx"), tokens=os.path.join(d, "tokens.txt"),
+            num_threads=PARAKEET_THREADS, model_type="nemo_transducer")
+    folder = mapped_encoder(d, notify)
+    if folder:
+        try:
+            with in_folder(folder):
+                return load(os.path.join(folder, "encoder.onnx"))
+        except Exception as exc:
+            unmade(folder, "Parakeet", exc)
+    return load(os.path.join(d, "encoder.int8.onnx"))
+
+
+# A long turn heard in pieces (20 November 2026). ONNX Runtime keeps the working memory of the longest audio it has
+# ever been given, for good, and takes it in doubling steps: measured here, 138 MB of her own after a 3 s command,
+# 239 after 10 s, 638 after 30 s and 1,167 after 45 s of room talk heard as one turn, which is most of the 1,000 to
+# 2,000 MB the owner saw. So Parakeet is never given more than PIECE_MOST seconds at once: a longer turn is cut where
+# it's quietest between PIECE_LEAST and PIECE_MOST seconds in, a pause between words, and its pieces' words joined
+PIECE_MOST, PIECE_LEAST = 8.0, 5.0  # seconds: 158 MB of her own after 6 s, 190 after 10
+
+
+def in_pieces(audio, most=PIECE_MOST, least=PIECE_LEAST):
+    """audio (16 kHz) as pieces of at most `most` seconds, in order: whole if it's that short, else cut at the
+    quietest fifth of a second between `least` and `most` seconds into what's left, never leaving a last piece
+    under a second."""
+    audio = np.asarray(audio, dtype=np.float32)
+    n_most, n_least, hop = int(most * RATE), int(least * RATE), RATE // 50  # 20 ms
+    out = []
+    while len(audio) > n_most:
+        end = max(n_least + hop * 10, min(n_most, len(audio) - RATE))
+        window = audio[n_least:end]
+        frames = len(window) // hop
+        loud = (window[:frames * hop].reshape(frames, hop) ** 2).mean(axis=1)
+        quiet = np.convolve(loud, np.ones(10, np.float32) / 10, mode="valid")  # over 0.2 s: a pause, not one sample
+        cut = n_least + (int(np.argmin(quiet)) + 5) * hop
+        out.append(audio[:cut])
+        audio = audio[cut:]
+    out.append(audio)
+    return out
+
+
 def transcriber(engine="parakeet", notify=None):
     """A function from 16 kHz audio to (text, ms), for Parakeet or Whisper small.en, which hear a phrase whole."""
     if engine == "whisper":
@@ -228,21 +372,21 @@ def transcriber(engine="parakeet", notify=None):
             sure = float(np.exp(np.mean([s.avg_logprob for s in segs]))) if segs else 1.0
             return " ".join(s.text.strip() for s in segs), sure
     else:
-        import sherpa_onnx
         d = model_path("parakeet", notify)
         if notify:
             notify("Loading Parakeet\u2026")
-        rec = sherpa_onnx.OfflineRecognizer.from_transducer(
-            encoder=os.path.join(d, "encoder.int8.onnx"), decoder=os.path.join(d, "decoder.int8.onnx"),
-            joiner=os.path.join(d, "joiner.int8.onnx"), tokens=os.path.join(d, "tokens.txt"),
-            num_threads=PARAKEET_THREADS, model_type="nemo_transducer")
+        rec = _parakeet(d, notify)
 
         def run(audio):
-            s = rec.create_stream()
-            s.accept_waveform(RATE, audio)
-            rec.decode_stream(s)
-            probs = np.exp(np.asarray(list(getattr(s.result, "ys_log_probs", None) or [0.0]), dtype=np.float32))
-            return s.result.text, float(probs.mean())
+            words, logs = [], []
+            for piece in in_pieces(audio):  # a long turn a piece at a time, for her memory (PIECE_MOST)
+                s = rec.create_stream()
+                s.accept_waveform(RATE, piece)
+                rec.decode_stream(s)
+                words.append(s.result.text.strip())
+                logs.extend(getattr(s.result, "ys_log_probs", None) or [])
+            probs = np.exp(np.asarray(logs or [0.0], dtype=np.float32))
+            return " ".join(w for w in words if w), float(probs.mean())
 
     lock = threading.Lock()  # push to talk and the open mic can both want it at once
 
@@ -252,6 +396,12 @@ def transcriber(engine="parakeet", notify=None):
             t = time.time()
             text, sure = run(audio)
         return heard(text.strip(), sure), int((time.time() - t) * 1000)
+    if engine != "whisper":
+        # the first thing it hears is the slow one, more so with its weights mapped (they're read from disk as they're
+        # first used: 4.3 s for the first clip against 1.1 after, 20 November 2026): so it hears 3 s of nothing now, on
+        # a thread of its own, and a turn that comes meanwhile waits its turn at the lock
+        threading.Thread(target=lambda: transcribe(np.random.default_rng(0).normal(0, 1e-3, 3 * RATE).astype(
+            np.float32)), name="parakeet-warm", daemon=True).start()
     return transcribe
 
 
@@ -268,10 +418,15 @@ class Whole:
     def text(self):
         return ""
 
+    def audio(self, quiet=0.0):
+        """The turn's audio so far. quiet: seconds of quiet at its end, left out but for the last 0.3, counted in
+        samples: so a turn written at its pause (Listener.AHEAD) is given the very audio it would be at its end."""
+        audio = np.concatenate(self.parts) if self.parts else np.zeros(0, np.float32)
+        return audio[:max(0, len(audio) - max(0, int(round(quiet * RATE)) - int(0.3 * RATE)))]
+
     def finish(self, quiet=0.0):
         """(Heard, ms). quiet: seconds of quiet at the end, left out but for the last 0.3."""
-        audio = np.concatenate(self.parts) if self.parts else np.zeros(0, np.float32)
-        return self.transcribe(audio[:max(0, len(audio) - int(max(0.0, quiet - 0.3) * RATE))])
+        return self.transcribe(self.audio(quiet))
 
 
 class Live:
@@ -411,10 +566,25 @@ class Speaker:
     quiet is taken out first with Silero: with it left in, Windows' voices matched Hari's clips as well as his own did.
     About 20 to 50 ms for 1 to 4 s of speech here, on one thread, while speech-to-text finishes."""
 
+    PRINT_MOST = 8.0  # seconds of speech a voice print is made from: 1 to 4 s is a command's
+
     def __init__(self, notify=None):
         import sherpa_onnx
-        config = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=model_path("speaker", notify), num_threads=1)
-        self.extractor = sherpa_onnx.SpeakerEmbeddingExtractor(config)
+        source = model_path("speaker", notify)
+
+        def load(model):
+            return sherpa_onnx.SpeakerEmbeddingExtractor(
+                sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=model, num_threads=1))
+        # its weights mapped from disk, as Parakeet's are (mapped_model): 41 MB of her own for 72, the same print
+        folder = mapped_model(source, source + ".mapped", threads=1, what="voice ID")
+        self.extractor = None
+        if folder:
+            try:
+                with in_folder(folder):
+                    self.extractor = load(os.path.join(folder, "model.onnx"))
+            except Exception as exc:
+                unmade(folder, "voice ID", exc)
+        self.extractor = self.extractor or load(source)
         self.vad = Voice(notify)
         self.lock = threading.Lock()
 
@@ -434,7 +604,9 @@ class Speaker:
         if secs < 0.3:
             return None, secs
         stream = self.extractor.create_stream()
-        stream.accept_waveform(RATE, audio)
+        # the first PRINT_MOST seconds of speech are whose voice it is: ONNX Runtime keeps the working memory of the
+        # longest it's been given (see PIECE_MOST), 166 MB after 59 s of speech and 1.5 s to make (20 November 2026)
+        stream.accept_waveform(RATE, audio[:int(self.PRINT_MOST * RATE)])
         stream.input_finished()
         if not self.extractor.is_ready(stream):
             return None, secs
@@ -475,6 +647,20 @@ class Listener:
              "quick": {"QUIET": 0.0, "FINISHED": 0.5, "MAYBE": 0.15, "SETTLE": 0.5, "LONGEST": 1.2}}
     WAIT = "patient"  # Hari: "a little delay is fine"
     QUIET, FINISHED, MAYBE, SETTLE, LONGEST = WAITS[WAIT].values()  # each wait has them in this order
+    # Written ahead (20 November 2026, the owner: hearing is sometimes slow). Parakeet and Whisper write a turn whole,
+    # and wrote it once the turn had ended: 0.7 s of quiet waited through with nothing done, then the writing, 0.2 to
+    # 1.5 s more by the turn's length. Now it's written on a thread of its own once the pause is AHEAD seconds old,
+    # from the audio it would be given at the end (Whole.audio keeps 0.3 s of the quiet, so not before that), and if
+    # nothing more is said the turn ends with its words there or nearly: the same words, about 0.4 s sooner. Said on
+    # and it's thrown away and written again at the next pause. When Smart Turn thinks they haven't finished, which
+    # is when they most often go on, it isn't started till SETTLE, so little is written for nothing
+    AHEAD = 0.3
+    # All but certain (20 November 2026, the owner: "I need stupid fast"). When Smart Turn is SURE you've finished,
+    # the turn ends after SOON seconds of quiet rather than QUIET: 0.3 s sooner. In her log 485 of the 819 turns it
+    # was asked about were at 95% or over. On the 22 room recordings kept that day, with 31 pauses inside their
+    # turns, not one pause of 0.4 to 0.7 s that someone went on after was at 95%; at 90% one was (0.54 s, 94%), so
+    # it's 95. Under that it waits as before, which is what keeps "open settings [pause] and Windows update" whole
+    SURE, SOON = 0.95, 0.4
 
     def __init__(self, vad, ears, on_phrase, on_speech=lambda: None, turn=None, on_words=None, hold_for=None,
                  is_hers=None, speaker=None, wait=None):
@@ -491,6 +677,7 @@ class Listener:
         self.is_hers = is_hers or (lambda words: False)
         self.speaker = speaker
         self.prints = ThreadPoolExecutor(1) if speaker else None
+        self.writers = ThreadPoolExecutor(1, thread_name_prefix="written-ahead")  # see AHEAD
         self.dictating = False
         self.reset()
 
@@ -506,6 +693,7 @@ class Listener:
         self.cut = 0  # where the last turn cut at MAX_TURN ended, so the next one doesn't hear any of it again
         self.chance, self.turn_ms, self.words = None, 0, ""
         self.early = None  # (words, ms) of a short turn Parakeet or Whisper wrote at its pause, see feed
+        self.ahead = None  # the turn's words being written at its pause, a future of (words, ms): see AHEAD
         self.ended = (None, 0.0)
 
     def arm(self, secs):
@@ -560,7 +748,7 @@ class Listener:
         self.session, self.words, self.talking, self.early = None, "", False, None
         self.ended = (self.chance, quiet)  # why it ended, for the log: Smart Turn's chance and the quiet
         whose = self.prints.submit(self.speaker, audio) if self.prints and kind != "dictation" else None
-        text, ms = early or session.finish(quiet)
+        text, ms = early or self._written(session, quiet)
         if whose is not None:
             text = text if isinstance(text, Heard) else heard(text)
             try:
@@ -568,6 +756,34 @@ class Listener:
             except Exception as exc:
                 print(f"  voice print failed: {exc!r}")
         self.on_phrase(audio, kind, text, ms + self.turn_ms)
+
+    def _ahead_due(self, quiet):
+        """True once the pause is old enough for the turn's words to be written ahead: AHEAD seconds when Smart Turn
+        thinks they may have finished, or wasn't asked; SETTLE when it thinks they haven't."""
+        likely = self.chance is None or self.chance >= self.MAYBE
+        return quiet >= (self.AHEAD if likely else max(self.AHEAD, self.SETTLE))
+
+    def _whole_sentence(self):
+        """True if the turn's words are written ahead and end as a sentence does: "Turn the volume up." For a turn
+        too short to ask Smart Turn about (SHORT), which waited SETTLE, a second, for want of anything to go on:
+        Parakeet's full stop is something, and such a turn ends after QUIET like one Smart Turn calls finished. A
+        quarter of the turns in her log were these (20 November 2026, the owner: "I need stupid fast")."""
+        ahead = self.ahead
+        if ahead is None or not ahead.done() or ahead.exception() is not None:
+            return False
+        return str(ahead.result()[0]).rstrip().endswith((".", "!", "?"))
+
+    def _written(self, session, quiet):
+        """(words, ms) of the turn: what was written ahead at its pause, waited for if it's still being written, else
+        written now. ms: how long they took from here, which is what you wait."""
+        ahead, self.ahead = self.ahead, None
+        if ahead is not None:
+            t = time.time()
+            try:
+                return ahead.result()[0], int((time.time() - t) * 1000)
+            except Exception as exc:
+                print(f"  writing ahead failed ({exc!r}), written now")
+        return session.finish(quiet)
 
     def feed(self, block, dictating=False):
         if dictating != self.dictating:
@@ -604,7 +820,8 @@ class Listener:
         if talking:
             if not was:
                 self.speech_start = self.pos - len(block)
-            self.chance = self.early = None  # still talking, so what Smart Turn said or was written no longer counts
+            # still talking, so what Smart Turn said or was written no longer counts
+            self.chance = self.early = self.ahead = None
         else:
             self.speech_start = None
         if self.session.live:
@@ -629,17 +846,23 @@ class Listener:
                 print(f"  smart turn failed: {exc!r}")
                 self.chance = None
             self.turn_ms = int((time.time() - t) * 1000)
+        if self.ahead is None and self.early is None and not self.session.live and self._ahead_due(quiet):
+            # its audio taken here, on the mic's thread, so what's written is this pause's and no later block's
+            self.ahead = self.writers.submit(self.session.transcribe, self.session.audio(quiet))
         # "Hello" and a pause is the start of "Hello [breath] Harry": ending there cut her name off, 3 times in 3 one
         # evening, so with only a greeting written it waits the longest for the rest
         held = self.hold_for(self.words)
         done = self.chance is not None and self.chance >= self.FINISHED
-        if quiet >= self.LONGEST or (not held and quiet >= self.QUIET and (
-                done or (quiet >= self.SETTLE and (self.chance is None or self.chance >= self.MAYBE)))):
+        if self.chance is None and self.turn and not self.dictating and spoke < self.SHORT and quiet >= self.QUIET:
+            done = self._whole_sentence()
+        sure = self.chance is not None and self.chance >= self.SURE and quiet >= self.SOON  # see SOON
+        if quiet >= self.LONGEST or (not held and (sure or (quiet >= self.QUIET and (
+                done or (quiet >= self.SETTLE and (self.chance is None or self.chance >= self.MAYBE)))))):
             if not self.session.live and spoke < self.SHORT and quiet < self.LONGEST:
                 # Parakeet and Whisper only write once you stop, so a short turn is written here, when it would end
                 # anyway, and waits the same if that's only a greeting: "Hello [700 ms] Harry" came out as "Hello." and
                 # "Jeff". Anything else ends as soon as before, without being written twice
-                self.early = self.early or self.session.finish(quiet)
+                self.early = self.early or self._written(self.session, quiet)
                 if self.hold_for(self.early[0]):
                     return
             self._end()

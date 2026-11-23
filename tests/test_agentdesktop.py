@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-from tests.support import DESKTOP_ORIGINAL, TRIPPED  # noqa: F401, installs the real-command tripwire first
+from tests.support import DESKTOP_ORIGINAL, TRIPPED, WIN_ORIGINAL  # noqa: F401, installs the real-command tripwire first
 import agentdesktop as desktop
 
 
@@ -98,6 +98,13 @@ class Client(unittest.TestCase):
             with self.assertRaisesRegex(desktop.DesktopError, "As is"):
                 desktop.call("click", "@s:e1")
 
+    def test_a_click_at_a_place_is_sent_only_what_mouse_click_takes(self):
+        """agent-desktop 1.1.0's mouse-click has no --timeout-ms: given one, it turned every click by place down
+        (INVALID_ARGS) till 9 November 2026."""
+        with mock.patch.object(desktop, "_execute", return_value=result(envelope({}))) as ran:
+            desktop.mouse_click((10, 20, 110, 60))
+        self.assertEqual(ran.call_args.args[0], ("mouse-click", "--xy", "60,40", "--headed"))
+
     def test_a_whole_read_with_refs_it_cant_tell_apart_isnt_a_cut_one(self):
         whole = desktop.Snapshot({"complete": True, "identity_unproven": True, "tree": {"role": "window"}})
         self.assertEqual((whole.cut, whole.identity_unproven), (False, True))
@@ -123,6 +130,42 @@ class Client(unittest.TestCase):
                 DESKTOP_ORIGINAL(("click", "@s:e1"), 30, lambda: asked.append(1) or len(asked) > 1)
         self.assertEqual((got.exception.code, got.exception.safe, running.killed, len(asked)),
                          ("TIMEOUT", False, True, 2))
+
+
+class Twins(unittest.TestCase):
+    """Two controls alike in a window, an album's Play and the bar's: agent-desktop turns a press of either down
+    (AMBIGUOUS_TARGET), and only a click at its place can pick it (9 November 2026: refused 8 times running)."""
+
+    def play(self):
+        data = {"app": "bytune.exe", "complete": True, "identity_unproven": True, "window": {"id": "w-5"},
+                "tree": {"role": "window", "children": [
+                    {"role": "button", "name": "Play", "ref_id": "@s:e1", "available_actions": ["Click"],
+                     "bounds": {"x": 600, "y": 420, "width": 80, "height": 40}}]}}
+        return desktop.Snapshot(data).elements[1]
+
+    def refused(self, *args, **kw):
+        raise desktop.DesktopError("twins", "AMBIGUOUS_TARGET", {"disposition": {"delivery": "not_delivered",
+                                                                                  "retry": "safe"}})
+
+    def test_its_clicked_where_it_was_read(self):
+        clicked = []
+        with mock.patch.object(desktop, "act", self.refused), \
+                mock.patch.object(desktop, "mouse_click", clicked.append):
+            self.assertEqual(WIN_ORIGINAL["ui_act"](self.play()), "clicked")
+        self.assertEqual(clicked, [(600.0, 420.0, 680.0, 460.0)])
+
+    def test_never_by_place_for_a_job_without_the_screen_or_after_a_press_that_may_have_landed(self):
+        with mock.patch.object(desktop, "act", self.refused), \
+                mock.patch.object(desktop, "mouse_click", lambda rect: self.fail("clicked")):
+            with self.assertRaises(desktop.DesktopError):
+                WIN_ORIGINAL["ui_act"](self.play(), focus_free=True)
+
+        def landed(*args, **kw):
+            raise desktop.DesktopError("odd", "AMBIGUOUS_TARGET", {"disposition": {"delivery": "delivered_unverified"}})
+        with mock.patch.object(desktop, "act", landed), \
+                mock.patch.object(desktop, "mouse_click", lambda rect: self.fail("clicked twice")):
+            with self.assertRaises(desktop.DesktopError):
+                WIN_ORIGINAL["ui_act"](self.play())
 
 
 if __name__ == "__main__":

@@ -86,6 +86,29 @@ class QuickActions(unittest.TestCase):
         found[0][3]()
         p.app.controls.put.assert_called_once_with(("typed", "what's the weather"))
 
+    def test_each_settings_row_is_found_by_its_name_and_its_part_opens_first(self):
+        """20 November 2026, the owner: typed "voice" and found nothing, as only Settings' parts were in it."""
+        card = SimpleNamespace(unfold=mock.Mock())
+        label = object()
+        pages = {key: SimpleNamespace() for _, keys in assistant_ui.NAV for key in keys}
+        pages["settings"] = SimpleNamespace(parts=[("Her", "violet", card)], rows=[("Voice", card, label)])
+        app = mock.Mock(pages=pages, mode=assistant_ui.MODES[0], on_top=False)
+        app.root.after.side_effect = lambda ms, f: f()
+        app.chat.chats.listed.return_value = [("c1", "open Notepad", 0.0)]
+        actions = assistant_ui.AssistantWindow.quick_actions(app)
+        chats = [a for a in actions if a[2] == "Chat"]  # and your chats, a new one first
+        self.assertEqual([a[1] for a in chats], ["New chat", "open Notepad"])
+        chats[1][3]()
+        app.open_chat.assert_called_once_with("c1")
+        voice = [a for a in actions if a[1] == "Settings: Voice"]
+        self.assertEqual([a[2] for a in voice], ["Setting"])
+        p = SimpleNamespace(actions=actions, app=app)
+        self.assertEqual(self.names(p, "voice")[0], "Settings: Voice")
+        voice[0][3]()
+        app._select_tab.assert_called_with("settings")
+        card.unfold.assert_called_once_with()
+        app._jump.assert_called_with(pages["settings"], label)
+
     def test_the_one_picked_is_done_once_theyre_put_away(self):
         p, did = self.palette()
         order = []
