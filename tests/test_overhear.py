@@ -138,27 +138,28 @@ class Stopping(unittest.TestCase):
         self.assertFalse(voice_bits.take_speech_interrupted())
 
     def test_a_stopped_answers_queued_lines_arent_made_in_her_voice_on_this_pc(self):
-        """Her voice on this PC (Pocket then, Kokoro now): a streamed answer had three sentences queued, each line's voice already
+        """Her voice on this PC (Pocket then, Kokoro, Woof, tiny-voca now): a streamed answer had three sentences queued, each line's voice already
         on its way, and you talked over her with a new request. Playing them was skipped, but end() cleared stop, so
         they were made in full anyway, one after another under the engine's one lock, and the next answer's first
         word came 3 to 10 s late."""
         made = []
 
         class TTS:
-            def generate(self, text, sid=0):
-                time.sleep(0.15)  # about 0.5 s a sentence on the PC
+            def __call__(self, text, voice=None):
+                time.sleep(0.15)  # about 0.5 s a sentence on the PC then
                 made.append(text)
-                return types.SimpleNamespace(samples=np.zeros(100, np.float32))
-        engine = siri.kokoro.Engine.__new__(siri.kokoro.Engine)
+                return np.zeros(100, np.float32)
+        engine = siri.voca.Engine.__new__(siri.voca.Engine)
         engine.tts, engine.used, engine.lock = TTS(), 0.0, threading.Lock()
+        engine.turns, engine.live = threading.Condition(), 0
         line = ORIGINAL["Line"]
-        with mock.patch.object(siri.kokoro, "engine", lambda: engine):
-            queued = [line(f"Sentence number {i} of the answer.", "kokoro:af_heart") for i in range(3)]
+        with mock.patch.object(siri.voca, "engine", lambda: engine):
+            queued = [line(f"Sentence number {i} of the answer.", "voca:F2") for i in range(3)]
             time.sleep(0.05)  # the first is being made
             siri.HER.cut("a new request")
             siri.HER.end()
             t = time.time()
-            nxt = line("The next answer.", "kokoro:af_heart")
+            nxt = line("The next answer.", "voca:F2")
             while nxt.audio.get(timeout=2) is not None:
                 pass
             waited = time.time() - t
@@ -213,7 +214,7 @@ class Stopping(unittest.TestCase):
             def close(self):
                 pass
         with mock.patch.object(siri.sd, "RawOutputStream", Out), \
-                mock.patch.object(siri.kokoro, "available", lambda voice=None: self.fail("another voice")), \
+                mock.patch.object(siri.voca, "available", lambda voice=None: self.fail("another voice")), \
                 mock.patch.object(siri.win, "speak_native", lambda *a, **k: self.fail("Windows' voice")):
             line._play()
         self.assertTrue(outs[0].aborted)

@@ -424,17 +424,29 @@ class PatientWait(Case):
                 spoken = ear.pos if value else spoken
         return spoken
 
-    def test_a_pause_in_a_sentence_doesnt_end_it_however_sure_smart_turn_is(self):
+    def test_a_pause_in_a_sentence_doesnt_end_it_though_smart_turn_thinks_youre_done(self):
         for wait, turns in (("patient", 1), ("quick", 2)):
             with self.subTest(wait=wait):
-                ear, phrases = listener(FakeEars(), turn=FakeTurn(0.95), wait=wait)
+                ear, phrases = listener(FakeEars(), turn=FakeTurn(0.9), wait=wait)
                 self.feed(ear, (0.5, 0.0), (1.2, 1.0), (0.6, 0.0), (0.8, 1.0), (3.0, 0.0))
                 self.assertEqual(len(phrases), turns)
 
     def test_it_ends_once_its_quiet_is_up_when_smart_turn_says_youre_done(self):
-        ear, phrases = listener(FakeEars(), turn=FakeTurn(0.95), wait="patient")
+        ear, phrases = listener(FakeEars(), turn=FakeTurn(0.9), wait="patient")
         spoken = self.feed(ear, (0.5, 0.0), (1.2, 1.0), (3.0, 0.0))
         self.assertAlmostEqual((phrases[0][3] - spoken) / RATE, 0.7, delta=0.05)
+
+    def test_all_but_certain_youre_done_it_ends_sooner(self):
+        """20 November 2026, the owner: "I need stupid fast". At 95% and over she waits 0.4 s, not 0.7; a hair under,
+        as before."""
+        for chance, waited in ((0.99, 0.4), (0.95, 0.4), (0.94, 0.7)):
+            with self.subTest(chance=chance):
+                ear, phrases = listener(FakeEars(), turn=FakeTurn(chance), wait="patient")
+                spoken = self.feed(ear, (0.5, 0.0), (1.2, 1.0), (3.0, 0.0))
+                self.assertAlmostEqual((phrases[0][3] - spoken) / RATE, waited, delta=0.05)
+        ear, phrases = listener(FakeEars(), turn=FakeTurn(0.99), wait="patient")
+        self.feed(ear, (0.5, 0.0), (1.2, 1.0), (0.3, 0.0), (0.8, 1.0), (3.0, 0.0))
+        self.assertEqual(len(phrases), 1)  # a breath of 0.3 s is still inside the sentence
 
     def test_unsure_or_without_smart_turn_it_waits_longer(self):
         for chance, waited in ((None, 1.0), (0.4, 1.0), (0.1, 2.5)):

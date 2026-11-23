@@ -61,8 +61,19 @@ class Encoder:
         so.inter_op_num_threads, so.intra_op_num_threads = 1, 2  # leaves the rest to speech-to-text
         so.add_session_config_entry("session.intra_op.allow_spinning", "0")
         so.enable_cpu_mem_arena = False  # what a sentence needs is given back after it: 3 MB less off Windows
-        self.session = ort.InferenceSession(os.path.join(d, "model_quint8_avx2.onnx"), sess_options=so,
-                                            providers=["CPUExecutionProvider"])
+        source = os.path.join(d, "model_quint8_avx2.onnx")
+        # its weights mapped from disk, as Parakeet's are (speech.mapped_model): 4 MB of her own for 28, the
+        # same numbers
+        folder = speech.mapped_model(source, os.path.join(d, "mapped"), threads=2, what="the decider")
+        self.session = None
+        if folder:
+            try:
+                self.session = ort.InferenceSession(os.path.join(folder, "model.onnx"), sess_options=so,
+                                                    providers=["CPUExecutionProvider"])
+            except Exception as exc:
+                speech.unmade(folder, "the decider", exc)
+        self.session = self.session or ort.InferenceSession(source, sess_options=so,
+                                                             providers=["CPUExecutionProvider"])
         self.tokenizer = Tokenizer.from_file(os.path.join(d, "tokenizer.json"))
         self.tokenizer.enable_truncation(64)
         self.lock = threading.Lock()

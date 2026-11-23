@@ -1017,8 +1017,9 @@ class Repair(Live):
         siri.handle(NIGHT)
         self.assertEqual(self.said[-1], "Done, and I've updated how I do it.")
         self.assertIn("didn't work: the Display button, it isn't on screen", script.text(0))
-        self.assertTrue(script.picture(0))  # stuck: it looks at a screenshot
-        self.assertEqual(len(self.shots), 1)  # only that one: once it's found the way, the controls are enough
+        # stuck: it looks again at the window's controls, agent-desktop's, with no screenshot (9 November 2026)
+        self.assertFalse(script.picture(0))
+        self.assertEqual(len(self.shots), 0)
         proc = self.learned()["turn-on-night-light"]
         self.assertEqual([s.get("name") or s.get("app") or s.get("has") for s in proc["steps"]],
                          ["Settings", "Screen", "Night light", "Night light"])  # steps[:1] kept, then what worked
@@ -1145,10 +1146,52 @@ class Vision(Live):
         self.assertEqual(r.outcome, "stuck")
         self.assertEqual(len(script.sent), agent.AGENT_STUCK)
         self.assertIn("changed nothing", script.text(2))
-        self.assertLessEqual(len(self.shots), agent.AGENT_SHOTS)
-        self.assertTrue(script.picture(1))  # told it did nothing, with a screenshot
+        self.assertEqual(len(self.shots), 0)
+        self.assertFalse(script.picture(1))  # told it did nothing, from the controls: no screenshot (9 November 2026)
         self.assertIn("changed nothing", script.text(1))
         self.assertEqual(self.learned(), {})
+
+    def test_asked_to_look_it_reads_more_of_the_controls_not_a_picture(self):
+        """9 November 2026, the owner: her computer use is agent-desktop's. 432 of 536 rounds had had a screenshot,
+        most after the model asked to look."""
+        w = self.app.window("big", "big.exe", "Big App")
+        w.controls = [Control(f"Setting {n}") for n in range(100)]
+        self.app.show("big")
+        read = []
+        real = self.app.ui_snapshot
+        self.patch(winplatform, "ui_snapshot", lambda hwnd=None, most=60: read.append(most) or real(hwnd, most))
+        script = self.model({"steps": [], "look": True}, {"steps": [], "done": True, "say": "It's Big App."})
+        line, _ = self.run_task("what's on my screen")
+        self.assertEqual((line, len(self.shots), script.picture(0), script.picture(1)), ("It's Big App.", 0, False,
+                                                                                        False))
+        self.assertEqual(read[-1], agent.LOOK_MOST)
+        self.assertIn('"Setting 99"', script.text(1))  # past the 60 a round reads
+
+    def test_a_round_that_changed_the_screen_is_read_again_without_waiting_a_second(self):
+        """A whole second after every round of clicks was a fifth of a task's time (9 November 2026). One that
+        changed nothing yet still gets all of it before the model's told so."""
+        settings(self.app)
+        self.app.show("settings")
+        self.model(lambda: {"steps": [{"do": "click", "id": self.app.id("Display")}]},
+                   {"steps": [], "done": True, "say": "Display's open."})
+        self.run_task("open display in Settings")
+        self.assertAlmostEqual(self.clock[0], agent.QUICK)
+
+        self.clock[0] = 0.0
+        settings(self.app)
+        self.app.show("settings")
+        self.app.control("Sound").on = lambda: setattr(self.app, "version", self.app.version - 1)  # does nothing
+        self.model(lambda: {"steps": [{"do": "click", "id": self.app.id("Sound")}]},
+                   {"steps": [], "done": True, "say": "Done."})
+        self.run_task("turn the sound up in Settings")
+        self.assertAlmostEqual(self.clock[0], 1.0)  # settle's second, read early then again
+
+    def test_a_window_it_reads_is_never_a_screenshot_for_a_question_about_it(self):
+        settings(self.app)
+        self.app.show("settings")
+        script = self.model({"steps": [], "done": True, "say": "It's Settings."})
+        self.run_task("what's this on my screen")
+        self.assertEqual((len(self.shots), script.picture(0)), (0, False))
 
     def test_a_slow_window_goes_by_screenshot(self):
         settings(self.app)

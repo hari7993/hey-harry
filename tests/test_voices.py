@@ -80,7 +80,7 @@ class Saved(unittest.TestCase):
     def test_her_voice_may_be_a_providers(self):
         self.assertEqual(siri.voice_id("sarvam:bulbul:v3/shubh"), "sarvam:bulbul:v3/shubh")
         self.assertEqual(siri.voice_name("deepgram:aura-2-thalia-en"), "Deepgram")
-        self.assertEqual(siri.voice_name("kokoro:af_heart"), "her voice on this PC")
+        self.assertEqual(siri.voice_name("voca:F2"), "her voice on this PC")
         a, b = siri.tts_path("Hi.", "elevenlabs:eleven_flash_v2_5/abc"), siri.tts_path("Hi.", "elevenlabs:eleven_v3/abc")
         self.assertNotEqual(a, b)  # a line kept in one model is never played for another
 
@@ -244,7 +244,7 @@ class Speaking(unittest.TestCase):
             raise RuntimeError("Deepgram: 402 Insufficient credits")
             yield  # noqa: unreachable, a generator
         with mock.patch.object(voices, "stream", broken), \
-                mock.patch.object(siri.kokoro, "available", lambda: False), \
+                mock.patch.object(siri.voca, "available", lambda: False), \
                 mock.patch.object(siri.win, "speak_native", lambda text, **kw: said.append(text)):
             ORIGINAL["Line"]("Sorry about that.", "deepgram:aura-2-thalia-en").play()
         self.assertEqual(said, ["Sorry about that."])
@@ -265,8 +265,9 @@ class Speaking(unittest.TestCase):
         with mock.patch.object(settings, "get", lambda name: "elevenlabs:eleven_flash_v2_5/abc" if name == "voice"
                                else settings.DEFAULTS.get(name)), \
                 mock.patch.object(siri, "fetch_tts", side_effect=AssertionError("made ahead")), \
+                mock.patch.object(siri, "CACHE_DIR", tempfile.mkdtemp()), \
                 mock.patch.object(siri, "all_scripted_lines", lambda: iter(["Okay.", "On it."])):
-            ORIGINAL["warm_cache"]()
+            ORIGINAL["warm_cache"]()  # in a folder of its own: it clears out lines it didn't list, a day old
 
 
 def until(check, seconds=5.0):

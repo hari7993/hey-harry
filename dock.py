@@ -49,6 +49,8 @@ MODES = ("smart", "peek", "fixed")
 TASKBAR_PINS = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Internet Explorer", "Quick Launch",
                             "User Pinned", "TaskBar")
 FLAG = os.path.join(win.APPDATA_DIR, "taskbar-hidden")  # there while she has Windows' taskbar hidden
+# Flow Launcher's search box takes Windows' search's place when it's installed (20 November 2026, the owner's ask)
+FLOW = os.path.join(os.environ.get("LOCALAPPDATA", ""), "FlowLauncher", "Flow.Launcher.exe")
 
 _user32 = ctypes.WinDLL("user32")  # its own, so these signatures don't change winplatform's
 _user32.FindWindowW.argtypes = [wt.LPCWSTR, wt.LPCWSTR]
@@ -1016,7 +1018,14 @@ class Dock:
 
     @staticmethod
     def _search():
-        """Windows' own search, as Windows+S opens it: type and your apps come up first, then files and settings."""
+        """Flow Launcher's search box when it's installed; else Windows' own search, as Windows+S opens it: type and
+        your apps come up first, then files and settings."""
+        if os.path.isfile(FLOW):
+            try:
+                os.startfile(FLOW)  # Flow's already running in the tray, so starting it again only shows its box
+                return
+            except OSError as exc:
+                print(f"  dock: couldn't open Flow Launcher: {exc!r}")
         _user32.keybd_event(0x5B, 0, 0, 0)  # VK_LWIN
         _user32.keybd_event(0x53, 0, 0, 0)  # S
         _user32.keybd_event(0x53, 0, 2, 0)

@@ -31,7 +31,8 @@ class Kept(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.mkdtemp(prefix="heyharry-timeline-")
         self.addCleanup(shutil.rmtree, self.folder, True)
-        for p in (mock.patch.object(timeline, "FOLDER", self.folder), mock.patch.object(timeline, "_pruned", [None])):
+        for p in (mock.patch.object(timeline, "FOLDER", self.folder), mock.patch.object(timeline, "_pruned",
+                                                                              [datetime.date.today()])):
             p.start()
             self.addCleanup(p.stop)
         self.noon, self.day = at((2026, 11, 7), 12), datetime.date(2026, 11, 7)
@@ -67,6 +68,7 @@ class Kept(unittest.TestCase):
         self.assertEqual(len(timeline.load(self.day)), 1)
 
     def test_days_older_than_a_week_are_let_go_once_a_day(self):
+        timeline._pruned[0] = None  # not looked at yet today (setUp has it done, for its fixed days)
         for day in ("2026-10-30", "2026-10-31", "2026-11-06"):
             open(os.path.join(self.folder, day + ".jsonl"), "w").close()
         timeline.prune(self.day)
@@ -86,7 +88,8 @@ class Told(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.mkdtemp(prefix="heyharry-timeline-")
         self.addCleanup(shutil.rmtree, self.folder, True)
-        for p in (mock.patch.object(timeline, "FOLDER", self.folder), mock.patch.object(timeline, "_pruned", [None])):
+        for p in (mock.patch.object(timeline, "FOLDER", self.folder), mock.patch.object(timeline, "_pruned",
+                                                                              [datetime.date.today()])):
             p.start()
             self.addCleanup(p.stop)
         self.now = at((2026, 11, 7), 15)  # a Saturday afternoon

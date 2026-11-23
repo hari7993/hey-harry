@@ -318,12 +318,32 @@ class SaysWhatHappened(unittest.TestCase):
             failed, _, _, spoken = self.close(lambda app: time.sleep(0.2) or order.append("closed"))
         self.assertEqual(order, ["closed", "Closed Messages."])
 
-    def test_opening_is_still_said_while_it_opens(self):
+    def test_that_its_open_is_said_once_it_has_opened(self):
+        """20 November 2026, the owner: just open it, and say it's open once it is. Till then "Opening it now." was
+        said while it opened."""
         order = []
         with mock.patch.object(siri, "say", lambda line, notify: order.append(line)), \
                 mock.patch.object(siri.win, "open_app", lambda app: time.sleep(0.2) or order.append("opened")):
             siri.run_plan({"steps": [{"do": "open", "app": "Notepad"}], "say": "Opening it now."}, None)
-        self.assertEqual(order, ["Opening it now.", "opened"])
+        self.assertEqual(order[0], "opened")
+        self.assertIn(order[1], [siri.identity.named(line) for line in siri.REPLIES["app_opened"]])
+        self.assertEqual(len(order), 2)
+
+    def test_a_line_that_says_more_than_opening_it_is_kept_and_said_after(self):
+        order = []
+        with mock.patch.object(siri, "say", lambda line, notify: order.append(line)), \
+                mock.patch.object(siri.win, "open_app", lambda app: time.sleep(0.2) or order.append("opened")):
+            siri.run_plan({"steps": [{"do": "open", "app": "Notepad"}], "say": "Here you go."}, None)
+        self.assertEqual(order, ["opened", "Here you go."])
+
+    def test_an_app_that_never_opened_isnt_said_to_be_open(self):
+        order = []
+        with mock.patch.object(siri, "say", lambda line, notify: order.append(line)), \
+                mock.patch.object(siri.win, "open_app", lambda app: False):
+            failed, _, _, _ = siri.run_plan({"steps": [{"do": "open", "app": "Notepad"}], "say": "Opening it now."},
+                                            None)
+        self.assertTrue(failed)
+        self.assertFalse([line for line in order if line in siri.REPLIES["app_opened"] or "pening" in line])
 
 
 class Turn(unittest.TestCase):
@@ -423,6 +443,57 @@ class Offered(unittest.TestCase):
         for line in ("Done. Anything else?", "Hi! What can I do for you?", "Is there anything you'd like me to do?",
                      "It's 32 degrees in Delhi.", ""):
             self.assertEqual(self.offered(line), "", line)
+
+
+class TypeWithoutHerName(Turn):
+    """20 November 2026, the owner: "type straight away". Said without her name, "type ..." waited on the answer
+    model to decide it was for her, 1.3 s; with settings type_unnamed on it's typed at once. Off by default."""
+
+    def setUp(self):
+        super().setUp()
+        self.pasted, self.asked = [], []
+        for target, name, value in ((siri.win, "paste", self.pasted.append),
+                                    (siri, "think", lambda *a, **kw: self.asked.append(a[0]) or None)):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(siri.settings.put, "type_unnamed", None)
+
+    def test_off_the_model_decides_first_as_before(self):
+        self.assertFalse(siri.settings.DEFAULTS["type_unnamed"])
+        siri.handle("Type hello world", gate="cold")
+        self.assertEqual((self.pasted, self.asked), ([], ["Type hello world"]))
+
+    def test_on_its_typed_straight_away(self):
+        siri.settings.put("type_unnamed", True)
+        siri.handle("Type hello world", gate="cold")
+        self.assertEqual((self.pasted, self.asked), (["hello world"], []))
+
+    def test_on_enter_closing_and_the_rest_still_wait_for_the_model(self):
+        siri.settings.put("type_unnamed", True)
+        for words in ("Type hello and press enter", "Close Notepad", "Minimise Notepad"):
+            siri.handle(words, gate="cold")
+        self.assertEqual(self.pasted, [])
+        self.assertEqual(self.pressed, [])
+        self.assertEqual(len(self.asked), 3)
+
+    def test_on_words_that_arent_the_text_still_go_to_the_model(self):
+        siri.settings.put("type_unnamed", True)
+        for words in ("Type your password here", "Write an email to Sam", "Just type your name there"):
+            siri.handle(words, gate="cold")
+        self.assertEqual(self.pasted, [])
+
+    def test_where_it_goes_isnt_typed(self):
+        with mock.patch.object(siri, "known_app", lambda name: ("Notepad", "Notepad") if name.lower() == "notepad"
+                               else ("Google Chrome", "Chrome") if name.lower() == "google chrome" else None):
+            for said, text in (("type on notepad, I'm very fast", "I'm very fast"),
+                               ("type in Notepad hello there", "hello there"),
+                               ("write into my notepad: buy milk", "buy milk"),
+                               ("type in google chrome hello", "hello"),
+                               ("type on notepad", "on notepad"),  # nothing after it: that is the text
+                               ("type in new york it rains", "in new york it rains"),
+                               ("type hello world", "hello world")):
+                self.assertEqual(siri._literal(said)["steps"], [{"do": "type", "text": text}], said)
 
 
 class CloseTab(Turn):
@@ -793,7 +864,7 @@ class Voice(unittest.TestCase):
             raise requests.ReadTimeout("read timed out")
         with mock.patch.object(siri, "FISH", SimpleNamespace(post=post)), \
                 mock.patch.object(siri, "fish", original("fish")), mock.patch.object(siri, "Line", ORIGINAL["Line"]), \
-                mock.patch.object(siri.kokoro, "available", lambda voice=None: False), \
+                mock.patch.object(siri.voca, "available", lambda voice=None: False), \
                 mock.patch.object(siri.win, "speak_native", lambda text, **kw: native.append(text)):
             original("speak")("A line nobody has cached, 1729.")
         self.assertEqual(native, ["A line nobody has cached, 1729."])
@@ -812,11 +883,11 @@ class Voice(unittest.TestCase):
             return q
         with mock.patch.object(siri, "FISH", SimpleNamespace(post=post)), \
                 mock.patch.object(siri, "fish", original("fish")), mock.patch.object(siri, "Line", ORIGINAL["Line"]), \
-                mock.patch.object(siri.kokoro, "available", lambda voice=None: True), \
-                mock.patch.object(siri.kokoro, "stream", stream), \
+                mock.patch.object(siri.voca, "available", lambda voice=None: True), \
+                mock.patch.object(siri.voca, "stream", stream), \
                 mock.patch.object(siri.win, "speak_native", lambda text, **kw: self.fail("Windows' voice")):
             original("speak")("A line nobody has cached, 1729.", "9a9cf47702da476aa4629e2506d4a857")
-        self.assertEqual(made, [("A line nobody has cached, 1729.", "af_heart")])
+        self.assertEqual(made, [("A line nobody has cached, 1729.", "F2")])
 
 
 if __name__ == "__main__":

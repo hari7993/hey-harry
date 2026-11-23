@@ -40,6 +40,8 @@ OLD_KNOWN_STEPS = {"open", "close", "minimise", "website", "youtube", "google", 
 OLD_SPEAK_FIRST = ("lock", "sleep", "procedure", "screen")
 OLD_SAY_AFTER = {"close", "minimise", "message_send", "install_run", "contact", "task_control", "memory", "skill",
                  "note", "send_screenshot", "todo", "todo_clear", "open_file", "watch_start", "device"}
+# 20 November 2026, the owner: an app or a site is said to be open once it is, not while it opens
+NEW_OPENED = {"open", "website"}
 OLD_WAIT_AFTER = {"open": 0.8, "new_tab": 0.5, "website": 3.0, "youtube": 3.0, "google": 2.5}
 OLD_ASKS_FOR = {"type": siri.EDIT_WORDS.pattern, "keys": siri.EDIT_WORDS.pattern,
                 "close": r"\b(?:close|quit|exit|kill|shut)", "minimise": r"\b(?:minimi[sz]e|hide)", "lock": r"\block",
@@ -82,7 +84,7 @@ class Golden(unittest.TestCase):
                           ("POWER_STEPS", OLD_POWER_STEPS), ("ASKS_YES", OLD_ASKS_YES),
                           ("ROUTINE_STEPS", OLD_ROUTINE_STEPS | NEW_PLACE | NEW_DREAM | NEW_FOCUS | {"spotify"}),
                           ("SPEAK_FIRST", set(OLD_SPEAK_FIRST) | {"task", "show"}),
-                          ("SAY_AFTER", OLD_SAY_AFTER | NEW_PLACE | {"event", "helper", "meeting"})):
+                          ("SAY_AFTER", OLD_SAY_AFTER | NEW_PLACE | {"event", "helper", "meeting"} | NEW_OPENED)):
             with self.subTest(name):
                 self.assertEqual(set(getattr(siri, name)), old)
                 self.assertIsInstance(getattr(siri, name), frozenset)

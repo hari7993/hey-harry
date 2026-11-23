@@ -1,9 +1,16 @@
 """Windows versions of everything the Mac build did with AppleScript, afplay, pbcopy and pmset."""
-import asyncio
-import contextlib
-import ctypes
-import json
 import os
+
+# numpy's OpenBLAS on one thread, said before anything imports numpy (this is the first of her modules app.py
+# imports): it starts a thread for every CPU thread, 12 here, and sets aside 32 MB for each as it loads, 354 MB of
+# her commit that nothing she does ever touches (20 November 2026, measured: 372 MB after "import numpy", 18 with
+# this). speech.few_maths_threads sets the same while she runs, which stops the threads but can't give that back
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
+import asyncio  # noqa: E402
+import contextlib  # noqa: E402
+import ctypes  # noqa: E402
+import json  # noqa: E402
 import re
 import struct
 import subprocess
@@ -2730,6 +2737,13 @@ def _ref_action(el, command, value=None, headed=False, settled=None):
         raise
 
 
+def _twin(exc):
+    """True when agent-desktop turned a press down as one of twins (AMBIGUOUS_TARGET): another control in the window
+    with the same role and name, two "Play" buttons. Nothing was sent, and on Windows only a click at its place can
+    pick one (its own guide): on 9 November 2026 an album's Play was refused 8 times running, a round each."""
+    return exc.code == "AMBIGUOUS_TARGET" and exc.delivery in (None, "not_delivered")
+
+
 def ui_focus_free(el, text=None, state=None):
     """True if ui_act can do this semantically without focus, keyboard or pointer side effects."""
     if state in ("on", "off"):
@@ -2812,6 +2826,9 @@ def ui_act(el, text=None, state=None, caret=False, focus_free=False):
         try:
             _ref_action(el, "click", settled=_modal_opened(el))
         except _desktop.DesktopError as exc:
+            if _twin(exc) and not focus_free:
+                _desktop.mouse_click(el.rect)  # where this snapshot had it: the one the model picked of the twins
+                return "clicked"
             # A WinForms or Win32 button that opens a modal question (Are you sure?, Save As) doesn't come back
             # from its Invoke till the question closes, so agent-desktop waits on, though it was pressed (3
             # November, the smoke window's Ask First). What's on the screen next says if it worked: it's never

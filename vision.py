@@ -2,6 +2,7 @@
 way back from a point in it to a point on the screen. Only taken when you ask her to look, see siri.see()."""
 import base64
 import struct
+import time
 import zlib
 
 import numpy as np
@@ -101,4 +102,16 @@ def capture(pointer=None):
     ringed = pointer is not None and left <= pointer[0] < right and top <= pointer[1] < bottom
     if ringed:
         part = mark(part, int(pointer[0] - left), int(pointer[1] - top))
-    return Shot(part, (left, top, right, bottom), ringed)
+    shot = Shot(part, (left, top, right, bottom), ringed)
+    try:  # the window's name with it, for her chat's frame of what she saw (chat.Page._screen_frame)
+        title = win.front_title()
+    except Exception:
+        title = ""
+    LAST[:] = [shot, time.time(), title]
+    return shot
+
+
+# the last look at the window in front, as (Shot, when, its window's title): her chat shows it as a frame, the app as
+# it really looks, when her turn looked at the screen (22 November 2026, the owner: "use their original theme while
+# showing their apps"). Only what was already taken for her answer; nothing more is captured for it, and it stays here
+LAST = [None, 0.0, ""]

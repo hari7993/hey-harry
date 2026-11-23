@@ -422,6 +422,23 @@ class ChatApps(unittest.TestCase):
         self.assertFalse(siri.in_terminal("sometool.exe", named))
         self.assertTrue(siri.in_terminal("sometool.exe", win.ui_info(desktopfakes.element("Terminal input", "edit"))))
 
+
+    def test_typing_into_notepad_and_the_like_doesnt_wait_on_reading_the_focus(self):
+        """20 November 2026: that read took 0.9 to 1.8 s, every time anything was typed. A program with no terminal
+        in it needs none; a command window is still one without it, and any other program is read as before."""
+        def read():
+            raise AssertionError("the focused control was read")
+        with mock.patch.object(siri.win, "ui_focused", read):
+            for exe in ("notepad.exe", "winword.exe", "excel.exe"):
+                self.assertFalse(siri.in_terminal(exe), exe)
+            self.assertTrue(siri.in_terminal("powershell.exe"))
+            with self.assertRaises(AssertionError):
+                siri.in_terminal("sometool.exe")
+            with self.assertRaises(AssertionError):
+                siri.in_terminal("chrome.exe")  # a page can be a terminal
+            with self.assertRaises(AssertionError):
+                siri.in_terminal("code.exe")
+        self.assertFalse(siri.PLAIN & (siri.SHELLS | siri.IDES | siri.CHATS))
     def test_start_search_is_never_typed_into(self):
         """A plan pressed Win+S, typed a command into Start's search and pressed Enter, which runs it."""
         search = r"C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe"
